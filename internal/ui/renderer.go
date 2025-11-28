@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"gioui.org/f32"
 	"gioui.org/font"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
@@ -47,7 +46,7 @@ type UIEntry struct {
 	Size          int64
 	ModTime       time.Time
 	Clickable     widget.Clickable
-	RightClickTag struct{} // Unique tag address for right-click handling
+	RightClickTag struct{} // Unique tag for context menu
 	LastClick     time.Time
 }
 
@@ -81,7 +80,7 @@ type Renderer struct {
 	copyBtn     widget.Clickable
 	
 	// Global Mouse Tracking
-	mousePos f32.Point
+	mousePos image.Point 
 	mouseTag struct{}
 }
 
@@ -106,7 +105,6 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 	keyTag := &r.listState
 	event.Op(gtx.Ops, keyTag)
 
-	// Auto-Focus
 	if !r.focused {
 		if r.Debug {
 			log.Println("[DEBUG] Executing Initial FocusCmd on listState")
@@ -115,27 +113,23 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 		r.focused = true
 	}
 
-	// 3. Process Global Mouse Movement (for Context Menu positioning)
-	// We use a separate tag for mouse tracking
+	// 3. Global Mouse Tracking
 	mouseTag := &r.mouseTag
 	event.Op(gtx.Ops, mouseTag)
-	
-	// Process Mouse Events to update position
 	for {
 		ev, ok := gtx.Event(pointer.Filter{Target: mouseTag, Kinds: pointer.Move})
 		if !ok {
 			break
 		}
 		if x, ok := ev.(pointer.Event); ok {
-			r.mousePos = x.Position
+			// Convert f32 point to image.Point
+			r.mousePos = image.Point{X: int(x.Position.X), Y: int(x.Position.Y)}
 		}
 	}
 
 	// 4. Process Global Key Events
 	for {
-		e, ok := gtx.Event(
-			key.Filter{Focus: true, Name: ""}, 
-		)
+		e, ok := gtx.Event(key.Filter{Focus: true, Name: ""})
 		if !ok {
 			break
 		}
@@ -163,12 +157,10 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 					} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
 						newIndex = len(state.Entries) - 1
 					}
-					
 					if newIndex != -1 {
 						eventOut = UIEvent{Action: ActionSelect, NewIndex: newIndex}
 						r.listState.ScrollTo(newIndex)
 					}
-
 				case "Down":
 					newIndex := -1
 					if state.SelectedIndex < len(state.Entries)-1 {
@@ -176,12 +168,10 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 					} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
 						newIndex = 0
 					}
-
 					if newIndex != -1 {
 						eventOut = UIEvent{Action: ActionSelect, NewIndex: newIndex}
 						r.listState.ScrollTo(newIndex)
 					}
-
 				case "Left":
 					if e.Modifiers.Contain(key.ModAlt) && state.CanBack {
 						eventOut = UIEvent{Action: ActionBack}
@@ -267,6 +257,9 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 						if s, ok := evt.(widget.SubmitEvent); ok {
 							r.isEditing = false
 							cleanPath := strings.TrimSpace(s.Text)
+							if r.Debug {
+								log.Printf("[DEBUG] Editor Submitted: '%s'", cleanPath)
+							}
 							eventOut = UIEvent{Action: ActionNavigate, Path: cleanPath}
 							gtx.Execute(key.FocusCmd{Tag: keyTag})
 						}
@@ -315,11 +308,11 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 			item := &state.Entries[index]
 			isSelected := index == state.SelectedIndex
 
-			// Handle Left Clicks (Selection/Navigation)
 			if item.Clickable.Clicked(gtx) {
-				if r.isEditing {
-					r.isEditing = false
+				if r.Debug {
+					log.Printf("[DEBUG] Item %d Left Clicked", index)
 				}
+				if r.isEditing { r.isEditing = false }
 				
 				eventOut = UIEvent{Action: ActionSelect, NewIndex: index}
 				gtx.Execute(key.FocusCmd{Tag: keyTag})
@@ -333,31 +326,25 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 				item.LastClick = now
 			}
 
-			// Handle Right Clicks (Context Menu)
-			// We check specifically for the Secondary button on this item's tag
 			rightClickTag := &item.RightClickTag
-			event.Op(gtx.Ops, rightClickTag)
-
+			event.Op(gtx.Ops, rightClickTag) 
+			
 			for {
 				ev, ok := gtx.Event(pointer.Filter{
 					Target: rightClickTag,
-					Kinds:  pointer.Release,
+					Kinds:  pointer.Press | pointer.Release,
 				})
 				if !ok {
 					break
 				}
 				if e, ok := ev.(pointer.Event); ok {
-					// Check if it was the Secondary button (Right Click)
-					if e.Buttons.Contain(pointer.ButtonSecondary) {
+					if e.Kind == pointer.Press && e.Buttons.Contain(pointer.ButtonSecondary) {
 						if r.Debug {
 							log.Printf("[DEBUG] Right Click detected on item %d at %v", index, r.mousePos)
 						}
-						// Open Menu
 						r.menuVisible = true
-						r.menuPos = image.Point{X: int(r.mousePos.X), Y: int(r.mousePos.Y)}
+						r.menuPos = r.mousePos
 						r.menuIndex = index
-						
-						// Also select the item
 						eventOut = UIEvent{Action: ActionSelect, NewIndex: index}
 					}
 				}
@@ -367,17 +354,14 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 		})
 	}
 
-	// Main Stack
 	layout.Stack{}.Layout(gtx,
-		// 1. Background Listener
+		// 1. Global Background Listener
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			if r.bgClick.Clicked(gtx) {
 				if r.Debug {
 					log.Println("[DEBUG] Background Clicked -> Deselecting")
 				}
 				if r.isEditing { r.isEditing = false }
-				
-				// Hide Menu on background click
 				if r.menuVisible { r.menuVisible = false }
 
 				eventOut = UIEvent{Action: ActionSelect, NewIndex: -1}
@@ -406,42 +390,45 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 			)
 		}),
 
-		// 3. Context Menu Overlay (Highest Z-Order)
+		// 3. Context Menu Overlay
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			if !r.menuVisible {
 				return layout.Dimensions{}
 			}
 			
-			// Position the menu using offset
+			// Position the menu
 			offset := op.Offset(r.menuPos).Push(gtx.Ops)
 			defer offset.Pop()
 
-			// Draw Menu Background
-			return layout.Stack{}.Layout(gtx,
-				layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-					// Shadow/Background
-					paint.FillShape(gtx.Ops, color.NRGBA{R: 255, G: 255, B: 255, A: 255}, clip.Rect{Max: image.Pt(150, 40)}.Op())
-					// Border
-					return widget.Border{Color: color.NRGBA{R: 200, G: 200, B: 200, A: 255}, Width: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						return layout.Dimensions{Size: image.Pt(150, 40)}
-					})
-				}),
-				layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-					if r.copyBtn.Clicked(gtx) {
-						if r.Debug {
-							log.Println("[DEBUG] Copy Action Triggered (Noop)")
-						}
-						r.menuVisible = false // Close menu
-					}
-					
-					// Draw Button
-					return material.Clickable(gtx, &r.copyBtn, func(gtx layout.Context) layout.Dimensions {
-						return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							return material.Body2(r.Theme, "Copy (noop)").Layout(gtx)
+			if r.copyBtn.Clicked(gtx) {
+				if r.Debug {
+					log.Println("[DEBUG] Copy Action Triggered")
+				}
+				r.menuVisible = false
+			}
+
+			// Render Menu with Auto-Sizing
+			return widget.Border{Color: color.NRGBA{R: 200, G: 200, B: 200, A: 255}, Width: unit.Dp(1), CornerRadius: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Stack{}.Layout(gtx,
+					// Layer 1: White Background (Fills the size of Layer 2)
+					layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+						paint.FillShape(gtx.Ops, color.NRGBA{R: 255, G: 255, B: 255, A: 255}, clip.Rect{Max: gtx.Constraints.Min}.Op())
+						return layout.Dimensions{Size: gtx.Constraints.Min}
+					}),
+					// Layer 2: Clickable Content (Determines Size)
+					layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+						return material.Clickable(gtx, &r.copyBtn, func(gtx layout.Context) layout.Dimensions {
+							return layout.UniformInset(unit.Dp(12)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								// Ensure text is black and minimum width is set
+								gtx.Constraints.Min.X = gtx.Dp(150)
+								txt := material.Body2(r.Theme, "Copy (noop)")
+								txt.Color = color.NRGBA{R: 0, G: 0, B: 0, A: 255}
+								return txt.Layout(gtx)
+							})
 						})
-					})
-				}),
-			)
+					}),
+				)
+			})
 		}),
 	)
 
@@ -449,71 +436,81 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 }
 
 func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, selected bool) layout.Dimensions {
-	return material.Clickable(gtx, &item.Clickable, func(gtx layout.Context) layout.Dimensions {
-		return layout.Stack{}.Layout(gtx,
-			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-				if selected {
-					paint.FillShape(gtx.Ops, color.NRGBA{R: 200, G: 220, B: 255, A: 255}, clip.Rect{Max: gtx.Constraints.Min}.Op())
-				}
-				return layout.Dimensions{}
-			}),
-			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-				name := item.Name
-				typeStr := "File"
-				sizeStr := formatSize(item.Size)
-				dateStr := item.ModTime.Format("01/02/06 03:04 PM")
-				
-				textColor := color.NRGBA{R: 0, G: 0, B: 0, A: 255}
-				weight := font.Normal
+	return layout.Stack{}.Layout(gtx,
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return material.Clickable(gtx, &item.Clickable, func(gtx layout.Context) layout.Dimensions {
+				return layout.Stack{}.Layout(gtx,
+					layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+						if selected {
+							paint.FillShape(gtx.Ops, color.NRGBA{R: 200, G: 220, B: 255, A: 255}, clip.Rect{Max: gtx.Constraints.Min}.Op())
+						}
+						return layout.Dimensions{}
+					}),
+					layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+						name := item.Name
+						typeStr := "File"
+						sizeStr := formatSize(item.Size)
+						dateStr := item.ModTime.Format("01/02/06 03:04 PM")
+						textColor := color.NRGBA{R: 0, G: 0, B: 0, A: 255}
+						weight := font.Normal
 
-				if item.IsDir {
-					name = item.Name + "/"
-					typeStr = "File Folder"
-					sizeStr = ""
-					textColor = color.NRGBA{R: 0, G: 0, B: 128, A: 255}
-					weight = font.Bold
-				} else {
-					ext := filepath.Ext(item.Name)
-					if len(ext) > 1 {
-						typeStr = strings.ToUpper(ext[1:]) + " File"
-					}
-				}
+						if item.IsDir {
+							name = item.Name + "/"
+							typeStr = "File Folder"
+							sizeStr = ""
+							textColor = color.NRGBA{R: 0, G: 0, B: 128, A: 255}
+							weight = font.Bold
+						} else {
+							ext := filepath.Ext(item.Name)
+							if len(ext) > 1 {
+								typeStr = strings.ToUpper(ext[1:]) + " File"
+							}
+						}
 
-				return layout.Inset{
-					Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12),
-				}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween, Alignment: layout.Middle}.Layout(gtx,
-						layout.Flexed(0.5, func(gtx layout.Context) layout.Dimensions {
-							lbl := material.Body1(r.Theme, name)
-							lbl.Color = textColor
-							lbl.Font.Weight = weight
-							lbl.MaxLines = 1
-							return lbl.Layout(gtx)
-						}),
-						layout.Flexed(0.25, func(gtx layout.Context) layout.Dimensions {
-							lbl := material.Body2(r.Theme, dateStr)
-							lbl.Color = color.NRGBA{R: 100, G: 100, B: 100, A: 255}
-							lbl.MaxLines = 1
-							return lbl.Layout(gtx)
-						}),
-						layout.Flexed(0.15, func(gtx layout.Context) layout.Dimensions {
-							lbl := material.Body2(r.Theme, typeStr)
-							lbl.Color = color.NRGBA{R: 100, G: 100, B: 100, A: 255}
-							lbl.MaxLines = 1
-							return lbl.Layout(gtx)
-						}),
-						layout.Flexed(0.10, func(gtx layout.Context) layout.Dimensions {
-							lbl := material.Body2(r.Theme, sizeStr)
-							lbl.Color = color.NRGBA{R: 100, G: 100, B: 100, A: 255}
-							lbl.Alignment = text.End
-							lbl.MaxLines = 1
-							return lbl.Layout(gtx)
-						}),
-					)
-				})
-			}),
-		)
-	})
+						return layout.Inset{
+							Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12),
+						}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween, Alignment: layout.Middle}.Layout(gtx,
+								layout.Flexed(0.5, func(gtx layout.Context) layout.Dimensions {
+									lbl := material.Body1(r.Theme, name)
+									lbl.Color = textColor
+									lbl.Font.Weight = weight
+									lbl.MaxLines = 1
+									return lbl.Layout(gtx)
+								}),
+								layout.Flexed(0.25, func(gtx layout.Context) layout.Dimensions {
+									lbl := material.Body2(r.Theme, dateStr)
+									lbl.Color = color.NRGBA{R: 100, G: 100, B: 100, A: 255}
+									lbl.MaxLines = 1
+									return lbl.Layout(gtx)
+								}),
+								layout.Flexed(0.15, func(gtx layout.Context) layout.Dimensions {
+									lbl := material.Body2(r.Theme, typeStr)
+									lbl.Color = color.NRGBA{R: 100, G: 100, B: 100, A: 255}
+									lbl.MaxLines = 1
+									return lbl.Layout(gtx)
+								}),
+								layout.Flexed(0.10, func(gtx layout.Context) layout.Dimensions {
+									lbl := material.Body2(r.Theme, sizeStr)
+									lbl.Color = color.NRGBA{R: 100, G: 100, B: 100, A: 255}
+									lbl.Alignment = text.End
+									lbl.MaxLines = 1
+									return lbl.Layout(gtx)
+								}),
+							)
+						})
+					}),
+				)
+			})
+		}),
+
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			event.Op(gtx.Ops, &item.RightClickTag)
+			clip.Rect{Max: gtx.Constraints.Min}.Push(gtx.Ops).Pop()
+			defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+			return layout.Dimensions{Size: gtx.Constraints.Min}
+		}),
+	)
 }
 
 func formatSize(bytes int64) string {
