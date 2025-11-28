@@ -1,40 +1,35 @@
 * Razor File Explorer Implementation Strategy
 
 ** Core Architecture & Philosophy
-   - [X] *Event Driven Architecture*: 
-     - [X] Use unbuffered or buffered channels for all File I/O.
-     - [X] Ensure the UI thread (Main Goroutine) never waits on a blocking operation.
-     - [X] Implement a central event loop that `select`s on UI events and Data channels.
-   - [X] *Performance First*: 
-     - [X] Usage of `github.com/charlievieth/fastwalk` for rapid directory enumeration.
-     - [X] Zero-allocation logic where possible in hot paths (rendering loops).
-   - [X] *Project Structure*:
-     - [X] Use `internal/` to encapsulate core logic.
-     - [X] Example: `cmd/razor` (entry), `internal/ui` (widgets), `internal/fs` (file ops).
+   - [X] *Event Driven Architecture*
+   - [X] *Performance First*
+   - [X] *Project Structure*
 
 ** Phase 1: Core Skeleton & Event Loop
    - [X] Initialize Go Workspace and Modules.
-   - [X] Setup `internal/ui` package for Gio-specific code.
-   - [X] Setup `internal/fs` package for `fastwalk` integration.
-   - [X] Implement the main Event Loop (Channel Select Pattern).
-   - [X] Verify `fastwalk` runs in a separate goroutine and pipes data back to UI.
+   - [X] Setup `internal/ui` package.
+   - [X] Setup `internal/fs` package.
+   - [X] Implement main Event Loop.
 
 ** Phase 2: Navigation & State Management
-   - [ ] Create `AppState` struct to hold `CurrentPath`, `History`, and `Selection`.
-   - [X] Basic Directory Navigation (Double Click to Enter).
-   - [ ] Implement `Breadcrumbs` widget for path navigation.
-   - [ ] Implement History Stack (Back/Forward functionality).
+   - [X] Create `AppState`.
+   - [X] Basic Directory Navigation.
+   - [X] Menu Bar with Path Label.
+   - [X] History Stack (Back/Forward functionality).
+   - [ ] Implement `Breadcrumbs` widget (Interactive path segments).
+   - [ ] *Editable Address Bar*: Click path label to type directory (Enter to navigate).
    - [ ] *OS Handling*: 
      - [ ] Windows Drive enumeration (C:\, D:\).
      - [ ] Unix/Linux Root (/).
 
 ** Phase 3: High-Performance UI Rendering
-   - [X] Implement Virtualization for the File List (`layout.List`).
-   - [ ] Efficient Icon Rendering (Cache commonly used icons).
-   - [ ] Mouse/Keyboard Interaction:
-     - [ ] Single click to select (highlight).
+   - [X] Implement Virtualization (`layout.List`).
+   - [X] Mouse/Keyboard Interaction:
+     - [X] Single click to select (highlight).
      - [X] Double click to traverse/open.
-     - [ ] Keyboard navigation (Arrow keys).
+     - [X] Keyboard navigation (Arrow keys + Enter).
+     - [X] Keyboard Shortcuts (Alt+Left/Right).
+   - [ ] Efficient Icon Rendering.
 
 ** Phase 4: Advanced Features
    - [ ] *Search*: 
@@ -46,5 +41,6 @@
 
 ** Phase 5: Optimization & Hardening
    - [ ] *Profiling*: Use `pprof`.
+   - [ ] *Debug Mode*: Implement --debug flag and verbose logging.
    - [ ] *Context Cancellation*.
    - [ ] *Cross-Platform Checks*.
