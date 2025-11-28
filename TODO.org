@@ -1,0 +1,56 @@
+* Razor File Explorer Implementation Strategy
+
+** Core Architecture & Philosophy
+   - [ ] *Event Driven Architecture*: 
+     - Use unbuffered or buffered channels for all File I/O.
+     - Ensure the UI thread (Main Goroutine) never waits on a blocking operation.
+     - Implement a central event loop that `select`s on UI events and Data channels.
+   - [ ] *Performance First*: 
+     - Usage of `github.com/charlievieth/fastwalk` for rapid directory enumeration.
+     - Zero-allocation logic where possible in hot paths (rendering loops).
+   - [ ] *Project Structure*:
+     - Use `internal/` to encapsulate core logic and prevent external imports of private APIs.
+     - maintain strict separation of concerns to avoid circular dependencies.
+     - Example: `cmd/razor` (entry), `internal/ui` (widgets), `internal/fs` (file ops).
+   - [ ] *Code Efficiency*:
+     - DRY (Don't Repeat Yourself) principles.
+     - Avoid verbose boilerplate; prefer composition over deep inheritance or complex constructors.
+     - Minimal use of compiler directives (build tags) only when OS-specific syscalls are absolutely required.
+
+** Phase 1: Core Skeleton & Event Loop
+   - [ ] Initialize Go Workspace and Modules.
+   - [ ] Setup `internal/ui` package for Gio-specific code.
+   - [ ] Setup `internal/fs` package for `fastwalk` integration.
+   - [ ] Implement the main Event Loop (Channel Select Pattern).
+   - [ ] Verify `fastwalk` runs in a separate goroutine and pipes data back to UI.
+
+** Phase 2: Navigation & State Management
+   - [ ] Create `AppState` struct to hold `CurrentPath`, `History`, and `Selection`.
+   - [ ] Implement `Breadcrumbs` widget for path navigation.
+   - [ ] Implement History Stack (Back/Forward functionality).
+   - [ ] *OS Handling*: 
+     - [ ] Windows Drive enumeration (C:\, D:\).
+     - [ ] Unix/Linux Root (/).
+
+** Phase 3: High-Performance UI Rendering
+   - [ ] Implement Virtualization for the File List (`layout.List`).
+     - Ensure only visible items are processed/rendered.
+   - [ ] Efficient Icon Rendering (Cache commonly used icons).
+   - [ ] Mouse/Keyboard Interaction:
+     - [ ] Single click to select.
+     - [ ] Double click to traverse/open.
+     - [ ] Keyboard navigation (Arrow keys).
+
+** Phase 4: Advanced Features
+   - [ ] *Search*: 
+     - Multi-threaded recursive search using `fastwalk`.
+     - Real-time filtering of the displayed list.
+   - [ ] *Async Metadata*: 
+     - Calculate directory sizes on a background thread (Right-click -> Properties).
+   - [ ] *Preview Pane*: 
+     - Light-weight text/image preview for selected files.
+
+** Phase 5: Optimization & Hardening
+   - [ ] *Profiling*: Use `pprof` to identify memory leaks during heavy walks (100k+ files).
+   - [ ] *Context Cancellation*: Ensure walkers are cancelled immediately when the user switches directories.
+   - [ ] *Cross-Platform Checks*: Verify behavior on Windows, Linux, and macOS.
