@@ -2,17 +2,20 @@ package ui
 
 import (
 	"fmt"
+	"image"
 	"image/color"
 	"log"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"gioui.org/f32"
 	"gioui.org/font"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/text"
@@ -38,13 +41,14 @@ type UIEvent struct {
 }
 
 type UIEntry struct {
-	Name      string
-	Path      string
-	IsDir     bool
-	Size      int64
-	ModTime   time.Time
-	Clickable widget.Clickable
-	LastClick time.Time
+	Name          string
+	Path          string
+	IsDir         bool
+	Size          int64
+	ModTime       time.Time
+	Clickable     widget.Clickable
+	RightClickTag struct{} // Unique tag address for right-click handling
+	LastClick     time.Time
 }
 
 type State struct {
@@ -69,6 +73,16 @@ type Renderer struct {
 	pathEditor widget.Editor
 	pathClick  widget.Clickable
 	isEditing  bool
+
+	// Context Menu
+	menuVisible bool
+	menuPos     image.Point
+	menuIndex   int
+	copyBtn     widget.Clickable
+	
+	// Global Mouse Tracking
+	mousePos f32.Point
+	mouseTag struct{}
 }
 
 func NewRenderer() *Renderer {
@@ -88,7 +102,7 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 	area := clip.Rect{Max: gtx.Constraints.Max}
 	defer area.Push(gtx.Ops).Pop()
 
-	// 2. Global Key Listener on listState
+	// 2. Global Key Listener
 	keyTag := &r.listState
 	event.Op(gtx.Ops, keyTag)
 
@@ -101,7 +115,23 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 		r.focused = true
 	}
 
-	// 3. Process Global Events
+	// 3. Process Global Mouse Movement (for Context Menu positioning)
+	// We use a separate tag for mouse tracking
+	mouseTag := &r.mouseTag
+	event.Op(gtx.Ops, mouseTag)
+	
+	// Process Mouse Events to update position
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: mouseTag, Kinds: pointer.Move})
+		if !ok {
+			break
+		}
+		if x, ok := ev.(pointer.Event); ok {
+			r.mousePos = x.Position
+		}
+	}
+
+	// 4. Process Global Key Events
 	for {
 		e, ok := gtx.Event(
 			key.Filter{Focus: true, Name: ""}, 
@@ -120,16 +150,11 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 				log.Printf("[DEBUG] Focus State: %v", e.Focus)
 			}
 		case key.Event:
-			// If editing, ignore global navigation keys (Editor handles them)
 			if r.isEditing {
 				continue
 			}
 
 			if e.State == key.Press {
-				if r.Debug {
-					log.Printf("[DEBUG] Processing Key: '%s' (Mod: %v)", e.Name, e.Modifiers)
-				}
-
 				switch e.Name {
 				case "Up":
 					newIndex := -1
@@ -232,7 +257,6 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 			}),
 			layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
 
-			// Editable Path Label / Editor
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 				if r.isEditing {
 					for {
@@ -243,13 +267,8 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 						if s, ok := evt.(widget.SubmitEvent); ok {
 							r.isEditing = false
 							cleanPath := strings.TrimSpace(s.Text)
-							
-							if r.Debug {
-								log.Printf("[DEBUG] Editor Submitted. Raw: '%s', Clean: '%s'", s.Text, cleanPath)
-							}
-							
 							eventOut = UIEvent{Action: ActionNavigate, Path: cleanPath}
-							gtx.Execute(key.FocusCmd{Tag: keyTag}) 
+							gtx.Execute(key.FocusCmd{Tag: keyTag})
 						}
 					}
 					
@@ -258,7 +277,6 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 					ed.Color = color.NRGBA{R: 0, G: 0, B: 0, A: 255}
 					border := widget.Border{Color: color.NRGBA{R: 0, G: 0, B: 0, A: 255}, Width: unit.Dp(1), CornerRadius: unit.Dp(4)}
 					return border.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						// Grab focus for editor if just enabled
 						if r.pathClick.Clicked(gtx) { 
 							gtx.Execute(key.FocusCmd{Tag: &r.pathEditor})
 						}
@@ -287,7 +305,6 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 	}
 
 	list := func(gtx layout.Context) layout.Dimensions {
-		// FIX: Add PassOp HERE, so clicks on the list (and only the list) fall through
 		defer pointer.PassOp{}.Push(gtx.Ops).Pop()
 
 		if r.Debug {
@@ -298,11 +315,8 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 			item := &state.Entries[index]
 			isSelected := index == state.SelectedIndex
 
+			// Handle Left Clicks (Selection/Navigation)
 			if item.Clickable.Clicked(gtx) {
-				if r.Debug {
-					log.Printf("[DEBUG] Item %d Clicked", index)
-				}
-				
 				if r.isEditing {
 					r.isEditing = false
 				}
@@ -319,34 +333,63 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 				item.LastClick = now
 			}
 
+			// Handle Right Clicks (Context Menu)
+			// We check specifically for the Secondary button on this item's tag
+			rightClickTag := &item.RightClickTag
+			event.Op(gtx.Ops, rightClickTag)
+
+			for {
+				ev, ok := gtx.Event(pointer.Filter{
+					Target: rightClickTag,
+					Kinds:  pointer.Release,
+				})
+				if !ok {
+					break
+				}
+				if e, ok := ev.(pointer.Event); ok {
+					// Check if it was the Secondary button (Right Click)
+					if e.Buttons.Contain(pointer.ButtonSecondary) {
+						if r.Debug {
+							log.Printf("[DEBUG] Right Click detected on item %d at %v", index, r.mousePos)
+						}
+						// Open Menu
+						r.menuVisible = true
+						r.menuPos = image.Point{X: int(r.mousePos.X), Y: int(r.mousePos.Y)}
+						r.menuIndex = index
+						
+						// Also select the item
+						eventOut = UIEvent{Action: ActionSelect, NewIndex: index}
+					}
+				}
+			}
+
 			return r.renderRow(gtx, item, isSelected)
 		})
 	}
 
+	// Main Stack
 	layout.Stack{}.Layout(gtx,
-		// Global Background Listener
+		// 1. Background Listener
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			if r.bgClick.Clicked(gtx) {
 				if r.Debug {
 					log.Println("[DEBUG] Background Clicked -> Deselecting")
 				}
+				if r.isEditing { r.isEditing = false }
 				
-				if r.isEditing {
-					r.isEditing = false
-				}
-				
+				// Hide Menu on background click
+				if r.menuVisible { r.menuVisible = false }
+
 				eventOut = UIEvent{Action: ActionSelect, NewIndex: -1}
 				gtx.Execute(key.FocusCmd{Tag: keyTag})
 			}
-			
 			return r.bgClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Dimensions{Size: gtx.Constraints.Max}
 			})
 		}),
 		
+		// 2. Main UI
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-			// FIX: Removed global PassOp here. Now clicks on MenuBar stay on MenuBar.
-
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, menuBar)
@@ -360,6 +403,44 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 					})
 				}),
 				layout.Flexed(1, list),
+			)
+		}),
+
+		// 3. Context Menu Overlay (Highest Z-Order)
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			if !r.menuVisible {
+				return layout.Dimensions{}
+			}
+			
+			// Position the menu using offset
+			offset := op.Offset(r.menuPos).Push(gtx.Ops)
+			defer offset.Pop()
+
+			// Draw Menu Background
+			return layout.Stack{}.Layout(gtx,
+				layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+					// Shadow/Background
+					paint.FillShape(gtx.Ops, color.NRGBA{R: 255, G: 255, B: 255, A: 255}, clip.Rect{Max: image.Pt(150, 40)}.Op())
+					// Border
+					return widget.Border{Color: color.NRGBA{R: 200, G: 200, B: 200, A: 255}, Width: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Dimensions{Size: image.Pt(150, 40)}
+					})
+				}),
+				layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+					if r.copyBtn.Clicked(gtx) {
+						if r.Debug {
+							log.Println("[DEBUG] Copy Action Triggered (Noop)")
+						}
+						r.menuVisible = false // Close menu
+					}
+					
+					// Draw Button
+					return material.Clickable(gtx, &r.copyBtn, func(gtx layout.Context) layout.Dimensions {
+						return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return material.Body2(r.Theme, "Copy (noop)").Layout(gtx)
+						})
+					})
+				}),
 			)
 		}),
 	)
@@ -377,7 +458,6 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, selected bool) l
 				return layout.Dimensions{}
 			}),
 			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-				
 				name := item.Name
 				typeStr := "File"
 				sizeStr := formatSize(item.Size)
