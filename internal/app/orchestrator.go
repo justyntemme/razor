@@ -18,24 +18,32 @@ type Orchestrator struct {
 	ui     *ui.Renderer
 	state  ui.State
 
-	// History Management
 	history      []string
 	historyIndex int
+	debug        bool
 }
 
-func NewOrchestrator() *Orchestrator {
+// NewOrchestrator now accepts debug flag
+func NewOrchestrator(debug bool) *Orchestrator {
+	renderer := ui.NewRenderer()
+	renderer.Debug = debug // Inject debug state into UI
+
 	return &Orchestrator{
 		window:       new(app.Window),
 		fs:           fs.NewSystem(),
-		ui:           ui.NewRenderer(),
-		// Default SelectedIndex to -1 (No Selection)
+		ui:           renderer,
 		state:        ui.State{CurrentPath: "Initializing...", SelectedIndex: -1},
 		history:      make([]string, 0),
-		historyIndex: -1, // Empty state
+		historyIndex: -1,
+		debug:        debug,
 	}
 }
 
 func (o *Orchestrator) Run() error {
+	if o.debug {
+		log.Println("Starting Razor in DEBUG mode")
+	}
+
 	go o.fs.Start()
 	go o.processFSEvents()
 
@@ -52,6 +60,11 @@ func (o *Orchestrator) Run() error {
 			
 			evt := o.ui.Layout(gtx, &o.state)
 			
+			// Log significant UI events
+			if o.debug && evt.Action != ui.ActionNone {
+				log.Printf("[DEBUG] UI Action: %d, Path: %s, Index: %d", evt.Action, evt.Path, evt.NewIndex)
+			}
+
 			switch evt.Action {
 			case ui.ActionNavigate:
 				o.navigate(evt.Path)
@@ -70,41 +83,29 @@ func (o *Orchestrator) Run() error {
 }
 
 func (o *Orchestrator) navigate(path string) {
-	// 1. Truncate history at current index (remove forward history)
+	if o.debug {
+		log.Printf("[DEBUG] Navigate requested: %s", path)
+	}
 	if o.historyIndex >= 0 && o.historyIndex < len(o.history)-1 {
 		o.history = o.history[:o.historyIndex+1]
 	}
-
-	// 2. Append new path
 	o.history = append(o.history, path)
-	
-	// 3. Update index
 	o.historyIndex = len(o.history) - 1
-
 	o.requestDir(path)
 }
 
 func (o *Orchestrator) goBack() {
 	current := o.state.CurrentPath
 	parent := filepath.Dir(current)
-	
-	// Prevent going up past root
 	if parent == current {
 		return
 	}
-
-	// Optimization: If the PREVIOUS item in history is already the parent,
-	// just use standard history traversal.
 	if o.historyIndex > 0 && o.history[o.historyIndex-1] == parent {
 		o.historyIndex--
 		o.requestDir(parent)
 		return
 	}
-
-	// "Insert Parent" Logic:
-	// Insert the Parent at the CURRENT index to allow "Forward" to return here.
 	o.history = append(o.history[:o.historyIndex], append([]string{parent}, o.history[o.historyIndex:]...)...)
-	
 	o.requestDir(parent)
 }
 
@@ -117,8 +118,6 @@ func (o *Orchestrator) goForward() {
 }
 
 func (o *Orchestrator) requestDir(path string) {
-	log.Printf("Navigating to: %s", path)
-	// Reset selection to -1 (None) when changing folders
 	o.state.SelectedIndex = -1
 	o.fs.RequestChan <- fs.Request{Op: fs.FetchDir, Path: path}
 }
@@ -128,6 +127,10 @@ func (o *Orchestrator) processFSEvents() {
 		if resp.Err != nil {
 			log.Printf("FS Error: %v", resp.Err)
 			continue
+		}
+
+		if o.debug {
+			log.Printf("[DEBUG] Loaded %d entries for %s", len(resp.Entries), resp.Path)
 		}
 
 		uiEntries := make([]ui.UIEntry, len(resp.Entries))
@@ -146,7 +149,6 @@ func (o *Orchestrator) processFSEvents() {
 		o.state.CanBack = parent != resp.Path
 		o.state.CanForward = o.historyIndex < len(o.history)-1
 
-		// Reset selection if out of bounds (or keep at -1)
 		if o.state.SelectedIndex >= len(uiEntries) {
 			o.state.SelectedIndex = -1
 		}
@@ -155,9 +157,10 @@ func (o *Orchestrator) processFSEvents() {
 	}
 }
 
-func Main() {
+// Main now accepts a debug parameter
+func Main(debug bool) {
 	go func() {
-		orchestrator := NewOrchestrator()
+		orchestrator := NewOrchestrator(debug)
 		if err := orchestrator.Run(); err != nil {
 			log.Fatal(err)
 		}

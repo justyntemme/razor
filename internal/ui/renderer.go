@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image/color"
+	"log"
 	"time"
 
 	"gioui.org/font"
@@ -52,6 +53,7 @@ type Renderer struct {
 	listState layout.List
 	backBtn   widget.Clickable
 	fwdBtn    widget.Clickable
+	Debug     bool // New flag for internal UI debugging
 }
 
 func NewRenderer() *Renderer {
@@ -81,19 +83,22 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 		}
 
 		if k, ok := e.(key.Event); ok && k.State == key.Press {
+			// Verbose logging for key events
+			if r.Debug {
+				log.Printf("[DEBUG] Key Pressed: %s (Mod: %v)", k.Name, k.Modifiers)
+			}
+
 			switch k.Name {
 			case "Up":
 				if state.SelectedIndex > 0 {
 					eventOut = UIEvent{Action: ActionSelect, NewIndex: state.SelectedIndex - 1}
 				} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
-					// If nothing selected, Up wraps to the bottom
 					eventOut = UIEvent{Action: ActionSelect, NewIndex: len(state.Entries) - 1}
 				}
 			case "Down":
 				if state.SelectedIndex < len(state.Entries)-1 {
 					eventOut = UIEvent{Action: ActionSelect, NewIndex: state.SelectedIndex + 1}
 				} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
-					// If nothing selected, Down selects the first item
 					eventOut = UIEvent{Action: ActionSelect, NewIndex: 0}
 				}
 			case "Left":
@@ -122,7 +127,6 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 			Alignment: layout.Middle,
 			Spacing:   layout.SpaceEnd,
 		}.Layout(gtx,
-			// Back Button ("<") - Acts as UP
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				btnGtx := gtx
 				if !state.CanBack {
@@ -137,7 +141,6 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 			}),
 			layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
 			
-			// Forward Button (">") - Acts as Historical Forward
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				btnGtx := gtx
 				if !state.CanForward {
@@ -152,7 +155,6 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 			}),
 			layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
 
-			// Path Label
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 				txt := state.CurrentPath
 				if txt == "" {

@@ -1,10 +1,14 @@
 package main
 
 import (
+	"flag"
 	"github.com/justyntemme/razor/internal/app"
 )
 
 func main() {
-	// Delegate strictly to the internal application logic.
-	app.Main()
+	debug := flag.Bool("debug", false, "Enable verbose debug logging")
+	flag.Parse()
+
+	// Pass the debug flag to the application core
+	app.Main(*debug)
 }
