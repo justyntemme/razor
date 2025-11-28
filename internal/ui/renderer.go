@@ -235,13 +235,11 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 			// Editable Path Label / Editor
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 				if r.isEditing {
-					// Handle Editor Events
 					for {
 						evt, ok := r.pathEditor.Update(gtx)
 						if !ok {
 							break
 						}
-						// Check for Submit (Enter Key)
 						if s, ok := evt.(widget.SubmitEvent); ok {
 							r.isEditing = false
 							cleanPath := strings.TrimSpace(s.Text)
@@ -251,7 +249,7 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 							}
 							
 							eventOut = UIEvent{Action: ActionNavigate, Path: cleanPath}
-							gtx.Execute(key.FocusCmd{Tag: keyTag}) // Return focus to list
+							gtx.Execute(key.FocusCmd{Tag: keyTag}) 
 						}
 					}
 					
@@ -261,7 +259,7 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 					border := widget.Border{Color: color.NRGBA{R: 0, G: 0, B: 0, A: 255}, Width: unit.Dp(1), CornerRadius: unit.Dp(4)}
 					return border.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						// Grab focus for editor if just enabled
-						if r.pathClick.Clicked(gtx) { // Safety fallback
+						if r.pathClick.Clicked(gtx) { 
 							gtx.Execute(key.FocusCmd{Tag: &r.pathEditor})
 						}
 						return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(4), Right: unit.Dp(4)}.Layout(gtx, ed.Layout)
@@ -289,6 +287,9 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 	}
 
 	list := func(gtx layout.Context) layout.Dimensions {
+		// FIX: Add PassOp HERE, so clicks on the list (and only the list) fall through
+		defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+
 		if r.Debug {
 			paint.FillShape(gtx.Ops, color.NRGBA{R: 240, G: 240, B: 240, A: 255}, clip.Rect{Max: gtx.Constraints.Max}.Op())
 		}
@@ -344,7 +345,7 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 		}),
 		
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-			defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+			// FIX: Removed global PassOp here. Now clicks on MenuBar stay on MenuBar.
 
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
