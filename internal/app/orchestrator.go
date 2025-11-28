@@ -6,23 +6,18 @@ import (
 
 	"gioui.org/app"
 	"gioui.org/op"
-	
-	// Updated import paths
+
 	"github.com/justyntemme/razor/internal/fs"
 	"github.com/justyntemme/razor/internal/ui"
 )
 
-// Orchestrator manages the application lifecycle and state.
 type Orchestrator struct {
 	window *app.Window
 	fs     *fs.System
 	ui     *ui.Renderer
-	
-	// Application State
-	state ui.State
+	state  ui.State
 }
 
-// NewOrchestrator wires up the dependencies.
 func NewOrchestrator() *Orchestrator {
 	return &Orchestrator{
 		window: new(app.Window),
@@ -32,18 +27,14 @@ func NewOrchestrator() *Orchestrator {
 	}
 }
 
-// Run is the main entry point for the logic.
 func (o *Orchestrator) Run() error {
-	// 1. Start the File System worker in the background.
 	go o.fs.Start()
-
-	// 2. Start a goroutine to listen for FS responses.
 	go o.processFSEvents()
 
-	// 3. Trigger an initial load
-	o.fs.RequestChan <- fs.Request{Op: fs.FetchDir, Path: "."}
+	// Initial directory fetch (Current Working Directory)
+	cwd, _ := os.Getwd()
+	o.fs.RequestChan <- fs.Request{Op: fs.FetchDir, Path: cwd}
 
-	// 4. Run the main UI loop.
 	var ops op.Ops
 	for {
 		switch e := o.window.Event().(type) {
@@ -57,21 +48,30 @@ func (o *Orchestrator) Run() error {
 	}
 }
 
-// processFSEvents listens to the FS system and updates state.
 func (o *Orchestrator) processFSEvents() {
 	for resp := range o.fs.ResponseChan {
-		// Update State safely
+		if resp.Err != nil {
+			log.Printf("FS Error: %v", resp.Err)
+			continue
+		}
+
+		// Map FS entries to UI entries
+		// This separation prevents UI from depending on FS types
+		uiEntries := make([]ui.UIEntry, len(resp.Entries))
+		for i, e := range resp.Entries {
+			uiEntries[i] = ui.UIEntry{
+				Name:  e.Name,
+				IsDir: e.IsDir,
+			}
+		}
+
 		o.state.CurrentPath = resp.Path
-		o.state.Files = resp.Items
+		o.state.Entries = uiEntries
 
-		log.Printf("App: Received data for %s", resp.Path)
-
-		// Wake up the UI thread!
 		o.window.Invalidate()
 	}
 }
 
-// Main is called by cmd/razor.
 func Main() {
 	go func() {
 		orchestrator := NewOrchestrator()

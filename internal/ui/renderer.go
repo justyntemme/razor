@@ -3,51 +3,86 @@ package ui
 import (
 	"image/color"
 
+	"gioui.org/font" // Added this import
 	"gioui.org/layout"
-	"gioui.org/text"
+	"gioui.org/unit"
 	"gioui.org/widget/material"
 )
 
-// Renderer holds the visual state and theme.
-type Renderer struct {
-	Theme *material.Theme
-	// Add reusable widgets here to avoid allocation in the hot path
+// UIEntry duplicates minimal data needed for rendering to decouple from FS.
+type UIEntry struct {
+	Name  string
+	IsDir bool
 }
 
-// NewRenderer creates the theme.
-func NewRenderer() *Renderer {
-	return &Renderer{
-		Theme: material.NewTheme(),
-	}
-}
-
-// State represents the data the UI needs to render.
 type State struct {
 	CurrentPath string
-	Files       []string
+	Entries     []UIEntry
 }
 
-// Layout draws the interface.
-// It follows the DRY principle and avoids complex logic.
+type Renderer struct {
+	Theme *material.Theme
+	// listState persists scroll position across frames
+	listState layout.List
+}
+
+func NewRenderer() *Renderer {
+	r := &Renderer{
+		Theme: material.NewTheme(),
+	}
+	// Vertical list setup
+	r.listState.Axis = layout.Vertical
+	return r
+}
+
 func (r *Renderer) Layout(gtx layout.Context, state State) layout.Dimensions {
-	// Define the text content based on state
-	txt := "Hello, Gio"
-	if state.CurrentPath != "" {
-		txt = "Browsing: " + state.CurrentPath
+	// 1. Header Layout
+	header := func(gtx layout.Context) layout.Dimensions {
+		txt := "Loading..."
+		if state.CurrentPath != "" {
+			txt = state.CurrentPath
+		}
+		h2 := material.H6(r.Theme, txt)
+		h2.Color = color.NRGBA{R: 50, G: 50, B: 50, A: 255}
+		return layout.Inset{
+			Top: unit.Dp(16), Bottom: unit.Dp(16), Left: unit.Dp(8),
+		}.Layout(gtx, h2.Layout)
 	}
 
-	title := material.H1(r.Theme, txt)
-	
-	// Maroon color as requested in original spec
-	title.Color = color.NRGBA{R: 127, G: 0, B: 0, A: 255}
-	title.Alignment = text.Middle
+	// 2. List Layout (Virtualization happens here)
+	list := func(gtx layout.Context) layout.Dimensions {
+		return r.listState.Layout(gtx, len(state.Entries), func(gtx layout.Context, index int) layout.Dimensions {
+			item := state.Entries[index]
+			return r.renderRow(gtx, item)
+		})
+	}
 
-	return layout.Flex{
-		Axis:    layout.Vertical,
-		Spacing: layout.SpaceAround,
-	}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return title.Layout(gtx)
-		}),
+	// Combine vertical flex
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(header),
+		layout.Flexed(1, list),
 	)
+}
+
+// renderRow draws a single file item. 
+// This is a "hot path" function; keep it allocation-light.
+func (r *Renderer) renderRow(gtx layout.Context, item UIEntry) layout.Dimensions {
+	// Determine styling based on type
+	txt := item.Name
+	col := color.NRGBA{R: 0, G: 0, B: 0, A: 255} // Black text
+	weight := font.Normal                          // Corrected: using font package
+
+	if item.IsDir {
+		txt = "[DIR] " + item.Name
+		col = color.NRGBA{R: 0, G: 0, B: 128, A: 255} // Navy for folders
+		weight = font.Bold                            // Corrected: using font package
+	}
+
+	lbl := material.Body1(r.Theme, txt)
+	lbl.Color = col
+	lbl.Font.Weight = weight
+
+	return layout.Inset{
+		Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(8), Right: unit.Dp(8),
+	}.Layout(gtx, lbl.Layout)
 }
