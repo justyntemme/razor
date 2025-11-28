@@ -2,10 +2,7 @@ module github.com/justyntemme/razor
 
 go 1.25.4
 
-require (
-	gioui.org v0.9.0
-	github.com/charlievieth/fastwalk v1.0.14
-)
+require gioui.org v0.9.0
 
 require (
 	gioui.org/shader v1.0.8 // indirect
