@@ -42,7 +42,7 @@
      - Light-weight text/image preview.
   - Search configurable with ripgrep via settings menu
 ** Settings menu
-
+- we can configure search (ripgrep vs inbuilt search)
 ** Phase 5: Optimization & Hardening
    - [ ] *Profiling*: Use `pprof`.
    - [ ] *Debug Mode*: Implement --debug flag and verbose logging.
