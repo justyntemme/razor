@@ -23,10 +23,9 @@ type Orchestrator struct {
 	debug        bool
 }
 
-// NewOrchestrator now accepts debug flag
 func NewOrchestrator(debug bool) *Orchestrator {
 	renderer := ui.NewRenderer()
-	renderer.Debug = debug // Inject debug state into UI
+	renderer.Debug = debug
 
 	return &Orchestrator{
 		window:       new(app.Window),
@@ -60,7 +59,6 @@ func (o *Orchestrator) Run() error {
 			
 			evt := o.ui.Layout(gtx, &o.state)
 			
-			// Log significant UI events
 			if o.debug && evt.Action != ui.ActionNone {
 				log.Printf("[DEBUG] UI Action: %d, Path: %s, Index: %d", evt.Action, evt.Path, evt.NewIndex)
 			}
@@ -135,10 +133,13 @@ func (o *Orchestrator) processFSEvents() {
 
 		uiEntries := make([]ui.UIEntry, len(resp.Entries))
 		for i, e := range resp.Entries {
+			// Map FS fields to UI fields
 			uiEntries[i] = ui.UIEntry{
-				Name:  e.Name,
-				Path:  e.Path,
-				IsDir: e.IsDir,
+				Name:    e.Name,
+				Path:    e.Path,
+				IsDir:   e.IsDir,
+				Size:    e.Size,    // Mapped
+				ModTime: e.ModTime, // Mapped
 			}
 		}
 
@@ -157,7 +158,6 @@ func (o *Orchestrator) processFSEvents() {
 	}
 }
 
-// Main now accepts a debug parameter
 func Main(debug bool) {
 	go func() {
 		orchestrator := NewOrchestrator(debug)

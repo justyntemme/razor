@@ -24,11 +24,12 @@
 
 ** Phase 3: High-Performance UI Rendering
    - [X] Implement Virtualization (`layout.List`).
+   - [X] Windows-style Column Layout (Name, Date, Type, Size).
    - [X] Mouse/Keyboard Interaction:
      - [X] Single click to select (highlight).
      - [X] Double click to traverse/open.
-     - [X] Keyboard navigation (Arrow keys + Enter).
-     - [X] Keyboard Shortcuts (Alt+Left/Right).
+     - [X] Keyboard navigation (Enter).
+     - [ ] BUG: Up/Down arrow key navigation is inconsistent on some platforms.
    - [ ] Efficient Icon Rendering.
 
 ** Phase 4: Advanced Features
