@@ -8,6 +8,7 @@ import (
 	"gioui.org/font"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
@@ -71,7 +72,6 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 	var eventOut UIEvent
 
 	// CRITICAL: Define the interactive area for this UI.
-	// This ensures macOS properly routes input events to our tags.
 	area := clip.Rect{Max: gtx.Constraints.Max}
 	defer area.Push(gtx.Ops).Pop()
 
@@ -240,8 +240,6 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 				gtx.Execute(key.FocusCmd{Tag: keyTag})
 			}
 			
-			// We use widget.Clickable.Layout directly instead of material.Clickable
-			// This provides interaction WITHOUT visual artifacts (ripples/shadows)
 			return r.bgClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Dimensions{Size: gtx.Constraints.Max}
 			})
@@ -249,6 +247,11 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 		
 		// Layer 2 (Front): Main UI
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			
+			// PASS-THROUGH: Allow clicks that aren't handled by the list/menu to fall through 
+			// to the layer behind (Layer 1).
+			defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, menuBar)
