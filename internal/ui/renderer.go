@@ -53,7 +53,10 @@ type Renderer struct {
 	listState layout.List
 	backBtn   widget.Clickable
 	fwdBtn    widget.Clickable
-	Debug     bool // New flag for internal UI debugging
+	
+	bgClick   widget.Clickable
+	focused   bool
+	Debug     bool
 }
 
 func NewRenderer() *Renderer {
@@ -67,8 +70,25 @@ func NewRenderer() *Renderer {
 func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 	var eventOut UIEvent
 
-	// 1. Process Global Key Events
-	event.Op(gtx.Ops, &r.listState)
+	// CRITICAL: Define the interactive area for this UI.
+	// This ensures macOS properly routes input events to our tags.
+	area := clip.Rect{Max: gtx.Constraints.Max}
+	defer area.Push(gtx.Ops).Pop()
+
+	// 1. Global Key Listener
+	keyTag := &r.listState
+	event.Op(gtx.Ops, keyTag)
+
+	// Auto-Focus logic
+	if !r.focused {
+		if r.Debug {
+			log.Println("[DEBUG] Executing Initial FocusCmd")
+		}
+		gtx.Execute(key.FocusCmd{Tag: keyTag})
+		r.focused = true
+	}
+
+	// Process Events
 	for {
 		e, ok := gtx.Event(
 			key.Filter{Name: "Up", Optional: key.ModShift},
@@ -77,43 +97,50 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 			key.Filter{Name: key.NameEnter},
 			key.Filter{Name: "Left", Optional: key.ModAlt},
 			key.Filter{Name: "Right", Optional: key.ModAlt},
+			key.Filter{Focus: true, Name: ""}, 
 		)
 		if !ok {
 			break
 		}
 
-		if k, ok := e.(key.Event); ok && k.State == key.Press {
-			// Verbose logging for key events
-			if r.Debug {
-				log.Printf("[DEBUG] Key Pressed: %s (Mod: %v)", k.Name, k.Modifiers)
-			}
+		if r.Debug {
+			log.Printf("[DEBUG] Event: %T %+v", e, e)
+		}
 
-			switch k.Name {
-			case "Up":
-				if state.SelectedIndex > 0 {
-					eventOut = UIEvent{Action: ActionSelect, NewIndex: state.SelectedIndex - 1}
-				} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
-					eventOut = UIEvent{Action: ActionSelect, NewIndex: len(state.Entries) - 1}
-				}
-			case "Down":
-				if state.SelectedIndex < len(state.Entries)-1 {
-					eventOut = UIEvent{Action: ActionSelect, NewIndex: state.SelectedIndex + 1}
-				} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
-					eventOut = UIEvent{Action: ActionSelect, NewIndex: 0}
-				}
-			case "Left":
-				if k.Modifiers.Contain(key.ModAlt) && state.CanBack {
-					eventOut = UIEvent{Action: ActionBack}
-				}
-			case "Right":
-				if k.Modifiers.Contain(key.ModAlt) && state.CanForward {
-					eventOut = UIEvent{Action: ActionForward}
-				}
-			case key.NameReturn, key.NameEnter:
-				if state.SelectedIndex >= 0 && state.SelectedIndex < len(state.Entries) {
-					item := state.Entries[state.SelectedIndex]
-					if item.IsDir {
-						eventOut = UIEvent{Action: ActionNavigate, Path: item.Path}
+		switch e := e.(type) {
+		case key.FocusEvent:
+			if r.Debug {
+				log.Printf("[DEBUG] Focus State: %v", e.Focus)
+			}
+		case key.Event:
+			if e.State == key.Press {
+				switch e.Name {
+				case "Up":
+					if state.SelectedIndex > 0 {
+						eventOut = UIEvent{Action: ActionSelect, NewIndex: state.SelectedIndex - 1}
+					} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
+						eventOut = UIEvent{Action: ActionSelect, NewIndex: len(state.Entries) - 1}
+					}
+				case "Down":
+					if state.SelectedIndex < len(state.Entries)-1 {
+						eventOut = UIEvent{Action: ActionSelect, NewIndex: state.SelectedIndex + 1}
+					} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
+						eventOut = UIEvent{Action: ActionSelect, NewIndex: 0}
+					}
+				case "Left":
+					if e.Modifiers.Contain(key.ModAlt) && state.CanBack {
+						eventOut = UIEvent{Action: ActionBack}
+					}
+				case "Right":
+					if e.Modifiers.Contain(key.ModAlt) && state.CanForward {
+						eventOut = UIEvent{Action: ActionForward}
+					}
+				case key.NameReturn, key.NameEnter:
+					if state.SelectedIndex >= 0 && state.SelectedIndex < len(state.Entries) {
+						item := state.Entries[state.SelectedIndex]
+						if item.IsDir {
+							eventOut = UIEvent{Action: ActionNavigate, Path: item.Path}
+						}
 					}
 				}
 			}
@@ -134,6 +161,7 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 				}
 				if r.backBtn.Clicked(btnGtx) {
 					eventOut = UIEvent{Action: ActionBack}
+					gtx.Execute(key.FocusCmd{Tag: keyTag})
 				}
 				btn := material.Button(r.Theme, &r.backBtn, "<")
 				btn.Inset = layout.UniformInset(unit.Dp(10))
@@ -148,6 +176,7 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 				}
 				if r.fwdBtn.Clicked(btnGtx) {
 					eventOut = UIEvent{Action: ActionForward}
+					gtx.Execute(key.FocusCmd{Tag: keyTag})
 				}
 				btn := material.Button(r.Theme, &r.fwdBtn, ">")
 				btn.Inset = layout.UniformInset(unit.Dp(10))
@@ -170,12 +199,22 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 
 	// 3. List Layout
 	list := func(gtx layout.Context) layout.Dimensions {
+		if r.Debug {
+			paint.FillShape(gtx.Ops, color.NRGBA{R: 240, G: 240, B: 240, A: 255}, clip.Rect{Max: gtx.Constraints.Max}.Op())
+		}
+
 		return r.listState.Layout(gtx, len(state.Entries), func(gtx layout.Context, index int) layout.Dimensions {
 			item := &state.Entries[index]
 			isSelected := index == state.SelectedIndex
 
 			if item.Clickable.Clicked(gtx) {
+				if r.Debug {
+					log.Printf("[DEBUG] Item %d Clicked", index)
+				}
 				eventOut = UIEvent{Action: ActionSelect, NewIndex: index}
+				
+				gtx.Execute(key.FocusCmd{Tag: keyTag})
+
 				now := time.Now()
 				if !item.LastClick.IsZero() && now.Sub(item.LastClick) < 500*time.Millisecond {
 					if item.IsDir {
@@ -189,16 +228,39 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 		})
 	}
 
-	layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, menuBar)
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return widget.Border{Color: color.NRGBA{A: 50}, Width: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Spacer{Height: unit.Dp(1), Width: unit.Dp(1)}.Layout(gtx)
+	// 4. Root Layout with Global Background Clicker
+	layout.Stack{}.Layout(gtx,
+		// Layer 1 (Back): Global Background Listener (Invisible)
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			if r.bgClick.Clicked(gtx) {
+				if r.Debug {
+					log.Println("[DEBUG] Background Clicked -> Deselecting")
+				}
+				eventOut = UIEvent{Action: ActionSelect, NewIndex: -1}
+				gtx.Execute(key.FocusCmd{Tag: keyTag})
+			}
+			
+			// We use widget.Clickable.Layout directly instead of material.Clickable
+			// This provides interaction WITHOUT visual artifacts (ripples/shadows)
+			return r.bgClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Dimensions{Size: gtx.Constraints.Max}
 			})
 		}),
-		layout.Flexed(1, list),
+		
+		// Layer 2 (Front): Main UI
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, menuBar)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return widget.Border{Color: color.NRGBA{A: 50}, Width: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Spacer{Height: unit.Dp(1), Width: unit.Dp(1)}.Layout(gtx)
+					})
+				}),
+				layout.Flexed(1, list),
+			)
+		}),
 	)
 
 	return eventOut

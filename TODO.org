@@ -34,6 +34,7 @@
 ** Phase 4: Advanced Features
    - [ ] *Search*: 
      - Multi-threaded recursive search using `fastwalk`.
+     - Utilize https://github.com/raiyanyahya/fast-text-search for searching for files in searchbar.
    - [ ] *Async Metadata*: 
      - Calculate directory sizes on a background thread.
    - [ ] *Preview Pane*: 
