@@ -2,87 +2,234 @@ package ui
 
 import (
 	"image/color"
+	"time"
 
-	"gioui.org/font" // Added this import
+	"gioui.org/font"
+	"gioui.org/io/event"
+	"gioui.org/io/key"
 	"gioui.org/layout"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/unit"
+	"gioui.org/widget"
 	"gioui.org/widget/material"
 )
 
-// UIEntry duplicates minimal data needed for rendering to decouple from FS.
+type UIAction int
+
+const (
+	ActionNone UIAction = iota
+	ActionNavigate
+	ActionBack
+	ActionForward
+	ActionSelect
+)
+
+type UIEvent struct {
+	Action   UIAction
+	Path     string
+	NewIndex int
+}
+
 type UIEntry struct {
-	Name  string
-	IsDir bool
+	Name      string
+	Path      string
+	IsDir     bool
+	Clickable widget.Clickable
+	LastClick time.Time
 }
 
 type State struct {
-	CurrentPath string
-	Entries     []UIEntry
+	CurrentPath   string
+	Entries       []UIEntry
+	SelectedIndex int
+	CanBack       bool
+	CanForward    bool
 }
 
 type Renderer struct {
-	Theme *material.Theme
-	// listState persists scroll position across frames
+	Theme     *material.Theme
 	listState layout.List
+	backBtn   widget.Clickable
+	fwdBtn    widget.Clickable
 }
 
 func NewRenderer() *Renderer {
 	r := &Renderer{
 		Theme: material.NewTheme(),
 	}
-	// Vertical list setup
 	r.listState.Axis = layout.Vertical
 	return r
 }
 
-func (r *Renderer) Layout(gtx layout.Context, state State) layout.Dimensions {
-	// 1. Header Layout
-	header := func(gtx layout.Context) layout.Dimensions {
-		txt := "Loading..."
-		if state.CurrentPath != "" {
-			txt = state.CurrentPath
+func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
+	var eventOut UIEvent
+
+	// 1. Process Global Key Events
+	event.Op(gtx.Ops, &r.listState)
+	for {
+		e, ok := gtx.Event(
+			key.Filter{Name: "Up", Optional: key.ModShift},
+			key.Filter{Name: "Down", Optional: key.ModShift},
+			key.Filter{Name: key.NameReturn},
+			key.Filter{Name: key.NameEnter},
+			key.Filter{Name: "Left", Optional: key.ModAlt},
+			key.Filter{Name: "Right", Optional: key.ModAlt},
+		)
+		if !ok {
+			break
 		}
-		h2 := material.H6(r.Theme, txt)
-		h2.Color = color.NRGBA{R: 50, G: 50, B: 50, A: 255}
-		return layout.Inset{
-			Top: unit.Dp(16), Bottom: unit.Dp(16), Left: unit.Dp(8),
-		}.Layout(gtx, h2.Layout)
+
+		if k, ok := e.(key.Event); ok && k.State == key.Press {
+			switch k.Name {
+			case "Up":
+				if state.SelectedIndex > 0 {
+					eventOut = UIEvent{Action: ActionSelect, NewIndex: state.SelectedIndex - 1}
+				} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
+					// If nothing selected, Up wraps to the bottom
+					eventOut = UIEvent{Action: ActionSelect, NewIndex: len(state.Entries) - 1}
+				}
+			case "Down":
+				if state.SelectedIndex < len(state.Entries)-1 {
+					eventOut = UIEvent{Action: ActionSelect, NewIndex: state.SelectedIndex + 1}
+				} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
+					// If nothing selected, Down selects the first item
+					eventOut = UIEvent{Action: ActionSelect, NewIndex: 0}
+				}
+			case "Left":
+				if k.Modifiers.Contain(key.ModAlt) && state.CanBack {
+					eventOut = UIEvent{Action: ActionBack}
+				}
+			case "Right":
+				if k.Modifiers.Contain(key.ModAlt) && state.CanForward {
+					eventOut = UIEvent{Action: ActionForward}
+				}
+			case key.NameReturn, key.NameEnter:
+				if state.SelectedIndex >= 0 && state.SelectedIndex < len(state.Entries) {
+					item := state.Entries[state.SelectedIndex]
+					if item.IsDir {
+						eventOut = UIEvent{Action: ActionNavigate, Path: item.Path}
+					}
+				}
+			}
+		}
 	}
 
-	// 2. List Layout (Virtualization happens here)
+	// 2. Menu Bar
+	menuBar := func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{
+			Axis:      layout.Horizontal,
+			Alignment: layout.Middle,
+			Spacing:   layout.SpaceEnd,
+		}.Layout(gtx,
+			// Back Button ("<") - Acts as UP
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				btnGtx := gtx
+				if !state.CanBack {
+					btnGtx = gtx.Disabled()
+				}
+				if r.backBtn.Clicked(btnGtx) {
+					eventOut = UIEvent{Action: ActionBack}
+				}
+				btn := material.Button(r.Theme, &r.backBtn, "<")
+				btn.Inset = layout.UniformInset(unit.Dp(10))
+				return btn.Layout(btnGtx)
+			}),
+			layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
+			
+			// Forward Button (">") - Acts as Historical Forward
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				btnGtx := gtx
+				if !state.CanForward {
+					btnGtx = gtx.Disabled()
+				}
+				if r.fwdBtn.Clicked(btnGtx) {
+					eventOut = UIEvent{Action: ActionForward}
+				}
+				btn := material.Button(r.Theme, &r.fwdBtn, ">")
+				btn.Inset = layout.UniformInset(unit.Dp(10))
+				return btn.Layout(btnGtx)
+			}),
+			layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
+
+			// Path Label
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				txt := state.CurrentPath
+				if txt == "" {
+					txt = "Loading..."
+				}
+				label := material.H6(r.Theme, txt)
+				label.Color = color.NRGBA{R: 50, G: 50, B: 50, A: 255}
+				label.MaxLines = 1
+				return label.Layout(gtx)
+			}),
+		)
+	}
+
+	// 3. List Layout
 	list := func(gtx layout.Context) layout.Dimensions {
 		return r.listState.Layout(gtx, len(state.Entries), func(gtx layout.Context, index int) layout.Dimensions {
-			item := state.Entries[index]
-			return r.renderRow(gtx, item)
+			item := &state.Entries[index]
+			isSelected := index == state.SelectedIndex
+
+			if item.Clickable.Clicked(gtx) {
+				eventOut = UIEvent{Action: ActionSelect, NewIndex: index}
+				now := time.Now()
+				if !item.LastClick.IsZero() && now.Sub(item.LastClick) < 500*time.Millisecond {
+					if item.IsDir {
+						eventOut = UIEvent{Action: ActionNavigate, Path: item.Path}
+					}
+				}
+				item.LastClick = now
+			}
+
+			return r.renderRow(gtx, item, isSelected)
 		})
 	}
 
-	// Combine vertical flex
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(header),
+	layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, menuBar)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return widget.Border{Color: color.NRGBA{A: 50}, Width: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Spacer{Height: unit.Dp(1), Width: unit.Dp(1)}.Layout(gtx)
+			})
+		}),
 		layout.Flexed(1, list),
 	)
+
+	return eventOut
 }
 
-// renderRow draws a single file item. 
-// This is a "hot path" function; keep it allocation-light.
-func (r *Renderer) renderRow(gtx layout.Context, item UIEntry) layout.Dimensions {
-	// Determine styling based on type
-	txt := item.Name
-	col := color.NRGBA{R: 0, G: 0, B: 0, A: 255} // Black text
-	weight := font.Normal                          // Corrected: using font package
+func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, selected bool) layout.Dimensions {
+	return material.Clickable(gtx, &item.Clickable, func(gtx layout.Context) layout.Dimensions {
+		return layout.Stack{}.Layout(gtx,
+			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+				if selected {
+					paint.FillShape(gtx.Ops, color.NRGBA{R: 200, G: 220, B: 255, A: 255}, clip.Rect{Max: gtx.Constraints.Min}.Op())
+				}
+				return layout.Dimensions{}
+			}),
+			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+				txt := item.Name
+				textColor := color.NRGBA{R: 0, G: 0, B: 0, A: 255}
+				weight := font.Normal
 
-	if item.IsDir {
-		txt = "[DIR] " + item.Name
-		col = color.NRGBA{R: 0, G: 0, B: 128, A: 255} // Navy for folders
-		weight = font.Bold                            // Corrected: using font package
-	}
+				if item.IsDir {
+					txt = item.Name + "/"
+					textColor = color.NRGBA{R: 0, G: 0, B: 128, A: 255}
+					weight = font.Bold
+				}
 
-	lbl := material.Body1(r.Theme, txt)
-	lbl.Color = col
-	lbl.Font.Weight = weight
+				lbl := material.Body1(r.Theme, txt)
+				lbl.Color = textColor
+				lbl.Font.Weight = weight
 
-	return layout.Inset{
-		Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(8), Right: unit.Dp(8),
-	}.Layout(gtx, lbl.Layout)
+				return layout.Inset{
+					Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12),
+				}.Layout(gtx, lbl.Layout)
+			}),
+		)
+	})
 }
