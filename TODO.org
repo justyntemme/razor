@@ -40,6 +40,8 @@
      - Calculate directory sizes on a background thread.
    - [ ] *Preview Pane*: 
      - Light-weight text/image preview.
+  - Search configurable with ripgrep via settings menu
+** Settings menu
 
 ** Phase 5: Optimization & Hardening
    - [ ] *Profiling*: Use `pprof`.
