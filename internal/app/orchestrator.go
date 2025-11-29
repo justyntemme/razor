@@ -15,6 +15,7 @@ import (
 	"gioui.org/op"
 
 	"github.com/justyntemme/razor/internal/fs"
+	"github.com/justyntemme/razor/internal/search"
 	"github.com/justyntemme/razor/internal/store"
 	"github.com/justyntemme/razor/internal/ui"
 )
@@ -36,20 +37,55 @@ type Orchestrator struct {
 	homePath       string
 	searchGen      int64 // Tracks search generation to ignore stale results
 	searchGenMu    sync.Mutex
+	
+	// Conflict resolution state
+	conflictResolution ui.ConflictResolution // Current resolution mode
+	conflictResponse   chan ui.ConflictResolution // Channel for dialog response
+	conflictAbort      bool // True if user clicked Stop
+	
+	// Search engine settings
+	searchEngines    []search.EngineInfo // Detected search engines
+	selectedEngine   search.SearchEngine // Currently selected engine
+	selectedEngineCmd string             // Command for the selected engine
 }
 
 func NewOrchestrator() *Orchestrator {
 	home, _ := os.UserHomeDir()
-	return &Orchestrator{
-		window:       new(app.Window),
-		fs:           fs.NewSystem(),
-		store:        store.NewDB(),
-		ui:           ui.NewRenderer(),
-		state:        ui.State{SelectedIndex: -1, Favorites: make(map[string]bool)},
-		historyIndex: -1,
-		sortAsc:      true,
-		homePath:     home,
+	
+	// Detect available search engines
+	engines := search.DetectEngines()
+	
+	// Convert to UI format
+	uiEngines := make([]ui.SearchEngineInfo, len(engines))
+	for i, e := range engines {
+		uiEngines[i] = ui.SearchEngineInfo{
+			Name:      e.Name,
+			ID:        e.Engine.String(),
+			Command:   e.Command,
+			Available: e.Available,
+			Version:   e.Version,
+		}
 	}
+	
+	o := &Orchestrator{
+		window:           new(app.Window),
+		fs:               fs.NewSystem(),
+		store:            store.NewDB(),
+		ui:               ui.NewRenderer(),
+		state:            ui.State{SelectedIndex: -1, Favorites: make(map[string]bool)},
+		historyIndex:     -1,
+		sortAsc:          true,
+		homePath:         home,
+		conflictResponse: make(chan ui.ConflictResolution, 1),
+		searchEngines:    engines,
+		selectedEngine:   search.EngineBuiltin,
+	}
+	
+	// Set up UI with detected engines
+	o.ui.SearchEngines = uiEngines
+	o.ui.SelectedEngine = "builtin"
+	
+	return o
 }
 
 // expandPath expands and normalizes a path string, handling:
@@ -258,13 +294,20 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 	case ui.ActionCreateFolder:
 		go o.doCreateFolder(evt.FileName)
 	case ui.ActionClearSearch:
+		log.Printf("[CLEAR] ActionClearSearch called")
+		// Send cancel request to stop any ongoing search
+		o.fs.RequestChan <- fs.Request{Op: fs.CancelSearch}
 		// Clear all search state and restore original directory contents
 		o.state.IsSearchResult = false
 		o.state.SearchQuery = ""
+		// Clear progress bar
+		o.setProgress(false, "", 0, 0)
 		// Increment generation to invalidate any pending search results
 		o.searchGenMu.Lock()
 		o.searchGen++
+		newGen := o.searchGen
 		o.searchGenMu.Unlock()
+		log.Printf("[CLEAR] Generation incremented to %d", newGen)
 		// Restore from cached directory entries (no disk access needed)
 		if len(o.dirEntries) > 0 {
 			o.rawEntries = o.dirEntries
@@ -274,7 +317,25 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 			// Fallback: re-fetch if dirEntries is empty
 			o.requestDir(o.state.CurrentPath)
 		}
+	case ui.ActionConflictReplace:
+		o.handleConflictResolution(ui.ConflictReplaceAll)
+	case ui.ActionConflictKeepBoth:
+		o.handleConflictResolution(ui.ConflictKeepBothAll)
+	case ui.ActionConflictSkip:
+		o.handleConflictResolution(ui.ConflictSkipAll)
+	case ui.ActionConflictStop:
+		o.handleConflictResolution(ui.ConflictAsk) // Stop uses Ask to signal abort
+		o.conflictAbort = true
+	case ui.ActionChangeSearchEngine:
+		o.handleSearchEngineChange(evt.SearchEngine)
 	}
+}
+
+func (o *Orchestrator) handleSearchEngineChange(engineID string) {
+	engine := search.GetEngineByName(engineID)
+	o.selectedEngine = engine
+	o.selectedEngineCmd = search.GetEngineCommand(engine, o.searchEngines)
+	log.Printf("[SEARCH] Changed search engine to: %s (cmd: %s)", engineID, o.selectedEngineCmd)
 }
 
 func (o *Orchestrator) openNewWindow() {
@@ -327,12 +388,18 @@ func (o *Orchestrator) requestDir(path string) {
 }
 
 func (o *Orchestrator) doSearch(query string) {
+	log.Printf("[SEARCH] doSearch called with query: %q", query)
 	o.state.SelectedIndex = -1
 	
 	// Empty query clears the search and restores directory
 	if query == "" {
+		log.Printf("[SEARCH] Empty query, restoring directory")
+		// Cancel any ongoing search
+		o.fs.RequestChan <- fs.Request{Op: fs.CancelSearch}
 		o.state.IsSearchResult = false
 		o.state.SearchQuery = ""
+		// Clear progress bar
+		o.setProgress(false, "", 0, 0)
 		// Increment generation to invalidate any pending search results
 		o.searchGenMu.Lock()
 		o.searchGen++
@@ -351,6 +418,7 @@ func (o *Orchestrator) doSearch(query string) {
 	// Check if query contains directive prefix but no value (e.g., "contents:" alone)
 	// These are incomplete and should not trigger a search
 	if isIncompleteDirective(query) {
+		log.Printf("[SEARCH] Incomplete directive, ignoring: %q", query)
 		// Don't search, just wait for user to complete the directive
 		// But also don't clear the current results
 		return
@@ -365,7 +433,11 @@ func (o *Orchestrator) doSearch(query string) {
 		hasCompleteDirective(query, "ext:") ||
 		hasCompleteDirective(query, "size:") ||
 		hasCompleteDirective(query, "modified:") ||
-		hasCompleteDirective(query, "filename:")
+		hasCompleteDirective(query, "filename:") ||
+		hasCompleteDirective(query, "recursive:") ||
+		hasCompleteDirective(query, "depth:")
+	
+	log.Printf("[SEARCH] isDirectiveSearch=%v, hasContents=%v", isDirectiveSearch, hasCompleteDirective(query, "contents:"))
 	
 	if isDirectiveSearch {
 		// Show progress for directive searches
@@ -382,15 +454,28 @@ func (o *Orchestrator) doSearch(query string) {
 	gen := o.searchGen
 	o.searchGenMu.Unlock()
 	
-	o.fs.RequestChan <- fs.Request{Op: fs.SearchDir, Path: o.state.CurrentPath, Query: query, Gen: gen}
+	log.Printf("[SEARCH] Sending search request: path=%q query=%q gen=%d engine=%d", o.state.CurrentPath, query, gen, o.selectedEngine)
+	o.fs.RequestChan <- fs.Request{
+		Op:           fs.SearchDir,
+		Path:         o.state.CurrentPath,
+		Query:        query,
+		Gen:          gen,
+		SearchEngine: int(o.selectedEngine),
+		EngineCmd:    o.selectedEngineCmd,
+	}
 }
 
 // hasCompleteDirective checks if query has a directive with an actual value
+// Note: recursive: and depth: are allowed to have empty values (defaults to 10)
 func hasCompleteDirective(query, prefix string) bool {
 	lowerQuery := strings.ToLower(query)
 	idx := strings.Index(lowerQuery, prefix)
 	if idx < 0 {
 		return false
+	}
+	// For recursive: and depth:, presence alone is enough
+	if prefix == "recursive:" || prefix == "depth:" {
+		return true
 	}
 	// Check there's something after the prefix
 	afterPrefix := query[idx+len(prefix):]
@@ -405,11 +490,15 @@ func hasCompleteDirective(query, prefix string) bool {
 // isIncompleteDirective checks if query ends with a directive prefix but no value
 func isIncompleteDirective(query string) bool {
 	lowerQuery := strings.ToLower(strings.TrimSpace(query))
-	prefixes := []string{"contents:", "ext:", "size:", "modified:", "filename:"}
+	prefixes := []string{"contents:", "ext:", "size:", "modified:", "filename:", "recursive:", "depth:"}
 	
 	for _, prefix := range prefixes {
 		// Check if query ends with just the prefix (no value)
 		if strings.HasSuffix(lowerQuery, prefix) {
+			// For recursive:, empty value is allowed (defaults to depth 10)
+			if prefix == "recursive:" || prefix == "depth:" {
+				return false
+			}
 			return true
 		}
 		// Check if query contains prefix with no value (prefix at end of a word boundary)
@@ -417,7 +506,8 @@ func isIncompleteDirective(query string) bool {
 			idx := strings.Index(lowerQuery, prefix)
 			afterPrefix := strings.TrimSpace(lowerQuery[idx+len(prefix):])
 			// If nothing after the prefix, or next char is another directive prefix, incomplete
-			if afterPrefix == "" {
+			// (except for recursive: which can be empty)
+			if afterPrefix == "" && prefix != "recursive:" && prefix != "depth:" {
 				return true
 			}
 		}
@@ -430,15 +520,41 @@ func (o *Orchestrator) processEvents() {
 		select {
 		case resp := <-o.fs.ResponseChan:
 			o.handleFSResponse(resp)
+		case progress := <-o.fs.ProgressChan:
+			o.handleProgress(progress)
 		case resp := <-o.store.ResponseChan:
 			o.handleStoreResponse(resp)
 		}
 	}
 }
 
+func (o *Orchestrator) handleProgress(p fs.Progress) {
+	// Check if this is for the current search
+	o.searchGenMu.Lock()
+	currentGen := o.searchGen
+	o.searchGenMu.Unlock()
+	
+	if p.Gen != currentGen {
+		// Stale progress, ignore
+		return
+	}
+	
+	o.setProgress(true, p.Label, p.Current, p.Total)
+	o.window.Invalidate()
+}
+
 func (o *Orchestrator) handleFSResponse(resp fs.Response) {
+	log.Printf("[FS_RESP] Received response: op=%d path=%q entries=%d gen=%d err=%v cancelled=%v", 
+		resp.Op, resp.Path, len(resp.Entries), resp.Gen, resp.Err, resp.Cancelled)
+	
 	// Clear any progress indicator
 	o.setProgress(false, "", 0, 0)
+	
+	// If cancelled, just ignore the response
+	if resp.Cancelled {
+		log.Printf("[FS_RESP] Response was cancelled, ignoring")
+		return
+	}
 	
 	// Check if this is a stale response (a newer request has been made)
 	o.searchGenMu.Lock()
@@ -447,6 +563,7 @@ func (o *Orchestrator) handleFSResponse(resp fs.Response) {
 	
 	if resp.Gen < currentGen {
 		// Stale response, ignore it
+		log.Printf("[FS_RESP] STALE response (gen %d < current %d), ignoring", resp.Gen, currentGen)
 		debugLog("Ignoring stale FS response (gen %d < current %d)", resp.Gen, currentGen)
 		return
 	}
@@ -472,9 +589,11 @@ func (o *Orchestrator) handleFSResponse(resp fs.Response) {
 		o.state.IsSearchResult = false
 		o.state.SearchQuery = ""
 		o.state.CurrentPath = resp.Path
+		log.Printf("[FS_RESP] FetchDir completed, %d entries stored in dirEntries", len(entries))
 	} else {
 		// Search result: only update rawEntries, keep dirEntries intact
 		o.rawEntries = entries
+		log.Printf("[FS_RESP] SearchDir completed, %d results found", len(entries))
 		// IsSearchResult and SearchQuery were already set in doSearch
 	}
 
@@ -622,33 +741,73 @@ func (o *Orchestrator) doCreateFolder(name string) {
 	o.requestDir(o.state.CurrentPath)
 }
 
+// handleConflictResolution is called when user responds to conflict dialog
+func (o *Orchestrator) handleConflictResolution(resolution ui.ConflictResolution) {
+	// If "Apply to All" was checked, update the resolution mode
+	if o.state.Conflict.ApplyToAll {
+		o.conflictResolution = resolution
+	}
+	// Send response to waiting paste operation
+	select {
+	case o.conflictResponse <- resolution:
+	default:
+	}
+}
+
 func (o *Orchestrator) doPaste() {
 	clip := o.state.Clipboard
 	if clip == nil {
 		return
 	}
 
+	// Reset conflict resolution state
+	o.conflictResolution = ui.ConflictAsk
+	o.conflictAbort = false
+
 	src := clip.Path
 	dstDir := o.state.CurrentPath
 	dstName := filepath.Base(src)
 	dst := filepath.Join(dstDir, dstName)
 
-	// Avoid overwriting - append suffix if exists
-	if _, err := os.Stat(dst); err == nil {
-		ext := filepath.Ext(dstName)
-		base := strings.TrimSuffix(dstName, ext)
-		for i := 1; ; i++ {
-			dst = filepath.Join(dstDir, base+"_copy"+itoa(i)+ext)
-			if _, err := os.Stat(dst); os.IsNotExist(err) {
-				break
-			}
-		}
-	}
-
-	info, err := os.Stat(src)
+	srcInfo, err := os.Stat(src)
 	if err != nil {
 		log.Printf("Paste error: %v", err)
 		return
+	}
+
+	// Check for conflict
+	dstInfo, err := os.Stat(dst)
+	if err == nil {
+		// Destination exists - need to resolve conflict
+		resolution := o.resolveConflict(src, dst, srcInfo, dstInfo)
+		
+		switch resolution {
+		case ui.ConflictReplaceAll:
+			// Replace - delete destination first
+			if dstInfo.IsDir() {
+				os.RemoveAll(dst)
+			} else {
+				os.Remove(dst)
+			}
+		case ui.ConflictKeepBothAll:
+			// Keep both - rename destination
+			ext := filepath.Ext(dstName)
+			base := strings.TrimSuffix(dstName, ext)
+			for i := 1; ; i++ {
+				dst = filepath.Join(dstDir, base+"_copy"+itoa(i)+ext)
+				if _, err := os.Stat(dst); os.IsNotExist(err) {
+					break
+				}
+			}
+		case ui.ConflictSkipAll:
+			// Skip this file
+			o.requestDir(o.state.CurrentPath)
+			return
+		case ui.ConflictAsk:
+			// User clicked Stop or dialog was aborted
+			o.requestDir(o.state.CurrentPath)
+			return
+		}
 	}
 
 	label := "Copying"
@@ -656,11 +815,11 @@ func (o *Orchestrator) doPaste() {
 		label = "Moving"
 	}
 
-	if info.IsDir() {
+	if srcInfo.IsDir() {
 		o.setProgress(true, label+" folder...", 0, 0)
 		err = o.copyDir(src, dst, clip.Op == ui.ClipCut)
 	} else {
-		o.setProgress(true, label+" "+filepath.Base(src), 0, info.Size())
+		o.setProgress(true, label+" "+filepath.Base(src), 0, srcInfo.Size())
 		err = o.copyFile(src, dst, clip.Op == ui.ClipCut)
 	}
 
@@ -673,6 +832,37 @@ func (o *Orchestrator) doPaste() {
 	}
 
 	o.requestDir(o.state.CurrentPath)
+}
+
+// resolveConflict shows the conflict dialog and waits for user response
+func (o *Orchestrator) resolveConflict(src, dst string, srcInfo, dstInfo os.FileInfo) ui.ConflictResolution {
+	// If we have a remembered resolution from "Apply to All", use it
+	if o.conflictResolution != ui.ConflictAsk {
+		return o.conflictResolution
+	}
+	
+	// If abort was requested, return immediately
+	if o.conflictAbort {
+		return ui.ConflictAsk
+	}
+
+	// Set up the conflict state and show dialog
+	o.state.Conflict = ui.ConflictState{
+		Active:     true,
+		SourcePath: src,
+		DestPath:   dst,
+		SourceSize: srcInfo.Size(),
+		DestSize:   dstInfo.Size(),
+		SourceTime: srcInfo.ModTime(),
+		DestTime:   dstInfo.ModTime(),
+		IsDir:      srcInfo.IsDir(),
+		ApplyToAll: false,
+	}
+	o.window.Invalidate()
+
+	// Wait for user response
+	resolution := <-o.conflictResponse
+	return resolution
 }
 
 func (o *Orchestrator) copyFile(src, dst string, move bool) error {

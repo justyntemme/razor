@@ -1,6 +1,8 @@
 package search
 
 import (
+	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,6 +19,7 @@ const (
 	DirExt
 	DirSize
 	DirModified
+	DirRecursive
 )
 
 // Comparison operators for size/date
@@ -131,6 +134,16 @@ func parseDirective(s string) Directive {
 			op, dateStr := parseOperator(value)
 			t := parseDate(dateStr)
 			return Directive{Type: DirModified, Value: value, Operator: op, TimeVal: t}
+
+		case "recursive", "recurse", "r", "depth":
+			// Parse depth value, default to 10 if not specified or invalid
+			depth := int64(10)
+			if value != "" {
+				if d, err := strconv.ParseInt(value, 10, 64); err == nil && d > 0 {
+					depth = d
+				}
+			}
+			return Directive{Type: DirRecursive, Value: value, NumValue: depth}
 		}
 	}
 
@@ -225,14 +238,17 @@ func parseDate(s string) time.Time {
 
 // Matcher evaluates files against a query
 type Matcher struct {
-	query       *Query
-	contentFunc func(path string) (string, error)
+	query           *Query
+	contentFunc     func(path string) (string, error)
+	ctx             context.Context
+	externalResults map[string]bool // Results from external search engine (ripgrep/ugrep)
 }
 
 // NewMatcher creates a new Matcher for the given query
 func NewMatcher(q *Query) *Matcher {
 	return &Matcher{
 		query: q,
+		ctx:   context.Background(),
 		contentFunc: func(path string) (string, error) {
 			data, err := os.ReadFile(path)
 			if err != nil {
@@ -243,9 +259,66 @@ func NewMatcher(q *Query) *Matcher {
 	}
 }
 
+// NewMatcherWithContext creates a new Matcher with context for cancellation
+func NewMatcherWithContext(ctx context.Context, q *Query) *Matcher {
+	return &Matcher{
+		query: q,
+		ctx:   ctx,
+		contentFunc: func(path string) (string, error) {
+			// Check context before reading
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
+			
+			// Open file with a timeout approach - read in chunks and check context
+			f, err := os.Open(path)
+			if err != nil {
+				return "", err
+			}
+			defer f.Close()
+			
+			// Read file in chunks, checking context periodically
+			const chunkSize = 64 * 1024 // 64KB chunks
+			var buf strings.Builder
+			chunk := make([]byte, chunkSize)
+			
+			for {
+				if ctx.Err() != nil {
+					return "", ctx.Err()
+				}
+				
+				n, err := f.Read(chunk)
+				if n > 0 {
+					// Check for binary content (null bytes) - skip binary files
+					for i := 0; i < n; i++ {
+						if chunk[i] == 0 {
+							return "", nil // Empty string means no match for binary files
+						}
+					}
+					buf.Write(chunk[:n])
+				}
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					return "", err
+				}
+			}
+			
+			return buf.String(), nil
+		},
+	}
+}
+
 // SetContentFunc allows setting a custom content reader (e.g., for mmap or caching)
 func (m *Matcher) SetContentFunc(f func(path string) (string, error)) {
 	m.contentFunc = f
+}
+
+// SetExternalResults sets the results from an external search engine
+// When set, content matching will check against these results instead of reading files
+func (m *Matcher) SetExternalResults(results map[string]bool) {
+	m.externalResults = results
 }
 
 // Match checks if a file matches all directives in the query (AND logic)
@@ -267,12 +340,21 @@ func (m *Matcher) Match(path string, info os.FileInfo) bool {
 func (m *Matcher) matchDirective(d Directive, path string, info os.FileInfo) bool {
 	switch d.Type {
 	case DirFilename:
-		return matchGlob(strings.ToLower(info.Name()), strings.ToLower(d.Value))
+		return MatchGlob(strings.ToLower(info.Name()), strings.ToLower(d.Value))
 
 	case DirContents:
 		if info.IsDir() {
 			return false
 		}
+		
+		// If we have external results (from ripgrep/ugrep), use those
+		if m.externalResults != nil {
+			// Normalize path for comparison
+			absPath, _ := filepath.Abs(path)
+			return m.externalResults[absPath] || m.externalResults[path]
+		}
+		
+		// Builtin content search
 		// Skip large files (>10MB) for content search
 		if info.Size() > 10*1024*1024 {
 			return false
@@ -288,20 +370,24 @@ func (m *Matcher) matchDirective(d Directive, path string, info os.FileInfo) boo
 		return ext == d.Value
 
 	case DirSize:
-		return compareInt(info.Size(), d.NumValue, d.Operator)
+		return CompareInt(info.Size(), d.NumValue, d.Operator)
 
 	case DirModified:
 		if d.TimeVal.IsZero() {
 			return true
 		}
-		return compareTime(info.ModTime(), d.TimeVal, d.Operator)
+		return CompareTime(info.ModTime(), d.TimeVal, d.Operator)
+
+	case DirRecursive:
+		// Recursive is a control directive, not a filter - always matches
+		return true
 	}
 
 	return true
 }
 
-// matchGlob does simple glob matching with * wildcards
-func matchGlob(name, pattern string) bool {
+// MatchGlob does simple glob matching with * wildcards
+func MatchGlob(name, pattern string) bool {
 	// If pattern has no wildcards, do substring match
 	if !strings.Contains(pattern, "*") {
 		return strings.Contains(name, pattern)
@@ -340,7 +426,8 @@ func matchGlob(name, pattern string) bool {
 	return true
 }
 
-func compareInt(val, target int64, op Operator) bool {
+// CompareInt compares two integers with an operator
+func CompareInt(val, target int64, op Operator) bool {
 	switch op {
 	case OpGreater:
 		return val > target
@@ -355,7 +442,8 @@ func compareInt(val, target int64, op Operator) bool {
 	}
 }
 
-func compareTime(val, target time.Time, op Operator) bool {
+// CompareTime compares two times with an operator
+func CompareTime(val, target time.Time, op Operator) bool {
 	switch op {
 	case OpGreater:
 		return val.After(target)
@@ -381,6 +469,39 @@ func (q *Query) HasContentSearch() bool {
 		}
 	}
 	return false
+}
+
+// GetContentPattern returns the content search pattern (first contents: directive value)
+func (q *Query) GetContentPattern() string {
+	for _, d := range q.Directives {
+		if d.Type == DirContents {
+			return d.Value
+		}
+	}
+	return ""
+}
+
+// HasRecursive returns true if query includes recursive directive
+func (q *Query) HasRecursive() bool {
+	for _, d := range q.Directives {
+		if d.Type == DirRecursive {
+			return true
+		}
+	}
+	return false
+}
+
+// GetRecursiveDepth returns the recursive depth (default 10 if recursive but no depth specified)
+func (q *Query) GetRecursiveDepth() int {
+	for _, d := range q.Directives {
+		if d.Type == DirRecursive {
+			if d.NumValue > 0 {
+				return int(d.NumValue)
+			}
+			return 10 // Default depth
+		}
+	}
+	return 1 // Not recursive, depth 1
 }
 
 // IsEmpty returns true if query has no directives

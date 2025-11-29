@@ -37,7 +37,7 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			if r.bgClick.Clicked(gtx) {
 				r.menuVisible, r.fileMenuOpen = false, false
-				if !r.settingsOpen && !r.deleteConfirmOpen && !r.createDialogOpen {
+				if !r.settingsOpen && !r.deleteConfirmOpen && !r.createDialogOpen && !state.Conflict.Active {
 					eventOut = UIEvent{Action: ActionSelect, NewIndex: -1}
 					gtx.Execute(key.FocusCmd{Tag: keyTag})
 				}
@@ -96,6 +96,7 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutSettingsModal(gtx, &eventOut) }),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutDeleteConfirm(gtx, state, &eventOut) }),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutCreateDialog(gtx, state, &eventOut) }),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutConflictDialog(gtx, state, &eventOut) }),
 	)
 
 	return eventOut
@@ -206,7 +207,9 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 				strings.Contains(lowerText, "ext:") ||
 				strings.Contains(lowerText, "size:") ||
 				strings.Contains(lowerText, "modified:") ||
-				strings.Contains(lowerText, "filename:")
+				strings.Contains(lowerText, "filename:") ||
+				strings.Contains(lowerText, "recursive:") ||
+				strings.Contains(lowerText, "depth:")
 			
 			if hasDirectivePrefix {
 				// Directive detected - restore directory listing once
@@ -335,6 +338,9 @@ func (r *Renderer) renderDirectivePill(gtx layout.Context, d DetectedDirective) 
 	case "modified":
 		bgColor = color.NRGBA{R: 252, G: 228, B: 236, A: 255} // Light pink
 		textColor = color.NRGBA{R: 173, G: 20, B: 87, A: 255}  // Dark pink
+	case "recursive", "depth":
+		bgColor = color.NRGBA{R: 255, G: 249, B: 196, A: 255} // Light yellow
+		textColor = color.NRGBA{R: 158, G: 118, B: 0, A: 255}  // Dark yellow/gold
 	}
 	
 	// Short label for the directive type
@@ -348,6 +354,8 @@ func (r *Renderer) renderDirectivePill(gtx layout.Context, d DetectedDirective) 
 			typeLabel = "mod"
 		case "filename":
 			typeLabel = "name"
+		case "recursive":
+			typeLabel = "rec"
 		}
 	}
 	
@@ -874,6 +882,164 @@ func (r *Renderer) layoutCreateDialog(gtx layout.Context, state *State, eventOut
 	)
 }
 
+func (r *Renderer) layoutConflictDialog(gtx layout.Context, state *State, eventOut *UIEvent) layout.Dimensions {
+	if !state.Conflict.Active {
+		return layout.Dimensions{}
+	}
+
+	// Handle button clicks
+	applyToAll := r.conflictApplyToAll.Value
+	
+	if r.conflictReplaceBtn.Clicked(gtx) {
+		state.Conflict.Active = false
+		state.Conflict.ApplyToAll = applyToAll
+		*eventOut = UIEvent{Action: ActionConflictReplace}
+	}
+	if r.conflictKeepBothBtn.Clicked(gtx) {
+		state.Conflict.Active = false
+		state.Conflict.ApplyToAll = applyToAll
+		*eventOut = UIEvent{Action: ActionConflictKeepBoth}
+	}
+	if r.conflictSkipBtn.Clicked(gtx) {
+		state.Conflict.Active = false
+		state.Conflict.ApplyToAll = applyToAll
+		*eventOut = UIEvent{Action: ActionConflictSkip}
+	}
+	if r.conflictStopBtn.Clicked(gtx) {
+		state.Conflict.Active = false
+		*eventOut = UIEvent{Action: ActionConflictStop}
+	}
+
+	// Colors for the dialog
+	colWarning := color.NRGBA{R: 255, G: 152, B: 0, A: 255}
+	
+	return layout.Stack{}.Layout(gtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			paint.FillShape(gtx.Ops, color.NRGBA{A: 180}, clip.Rect{Max: gtx.Constraints.Max}.Op())
+			return layout.Dimensions{Size: gtx.Constraints.Max}
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return r.menuShell(gtx, 450, func(gtx layout.Context) layout.Dimensions {
+					return layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+							// Title
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								itemType := "File"
+								if state.Conflict.IsDir {
+									itemType = "Folder"
+								}
+								h6 := material.H6(r.Theme, itemType+" Already Exists")
+								h6.Color = colWarning
+								return h6.Layout(gtx)
+							}),
+							layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+							
+							// Conflict description
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								name := filepath.Base(state.Conflict.DestPath)
+								lbl := material.Body1(r.Theme, fmt.Sprintf("A file named \"%s\" already exists in this location.", name))
+								lbl.Color = colBlack
+								return lbl.Layout(gtx)
+							}),
+							layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+							
+							// Source file info
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								lbl := material.Body2(r.Theme, "Source:")
+								lbl.Font.Weight = font.Bold
+								lbl.Color = colGray
+								return lbl.Layout(gtx)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								sizeStr := formatSizeForDialog(state.Conflict.SourceSize)
+								timeStr := state.Conflict.SourceTime.Format("Jan 2, 2006 3:04 PM")
+								lbl := material.Body2(r.Theme, fmt.Sprintf("  %s • %s", sizeStr, timeStr))
+								lbl.Color = colBlack
+								return lbl.Layout(gtx)
+							}),
+							layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+							
+							// Destination file info
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								lbl := material.Body2(r.Theme, "Destination:")
+								lbl.Font.Weight = font.Bold
+								lbl.Color = colGray
+								return lbl.Layout(gtx)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								sizeStr := formatSizeForDialog(state.Conflict.DestSize)
+								timeStr := state.Conflict.DestTime.Format("Jan 2, 2006 3:04 PM")
+								lbl := material.Body2(r.Theme, fmt.Sprintf("  %s • %s", sizeStr, timeStr))
+								lbl.Color = colBlack
+								return lbl.Layout(gtx)
+							}),
+							layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+							
+							// Apply to all checkbox
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								cb := material.CheckBox(r.Theme, &r.conflictApplyToAll, "Apply to all conflicts")
+								cb.Color = colBlack
+								return cb.Layout(gtx)
+							}),
+							layout.Rigid(layout.Spacer{Height: unit.Dp(20)}.Layout),
+							
+							// Buttons row 1: Replace and Keep Both
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween}.Layout(gtx,
+									layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+										btn := material.Button(r.Theme, &r.conflictReplaceBtn, "Replace")
+										btn.Background = colDanger
+										return btn.Layout(gtx)
+									}),
+									layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+									layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+										btn := material.Button(r.Theme, &r.conflictKeepBothBtn, "Keep Both")
+										btn.Background = colSuccess
+										return btn.Layout(gtx)
+									}),
+								)
+							}),
+							layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+							
+							// Buttons row 2: Skip and Stop
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween}.Layout(gtx,
+									layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+										btn := material.Button(r.Theme, &r.conflictSkipBtn, "Skip")
+										btn.Background = colLightGray
+										btn.Color = colBlack
+										return btn.Layout(gtx)
+									}),
+									layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+									layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+										btn := material.Button(r.Theme, &r.conflictStopBtn, "Stop")
+										btn.Background = colGray
+										return btn.Layout(gtx)
+									}),
+								)
+							}),
+						)
+					})
+				})
+			})
+		}),
+	)
+}
+
+func formatSizeForDialog(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d bytes", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
 func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) layout.Dimensions {
 	if !r.settingsOpen {
 		return layout.Dimensions{}
@@ -885,6 +1051,23 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) la
 		r.ShowDotfiles = r.showDotfilesCheck.Value
 		*eventOut = UIEvent{Action: ActionToggleDotfiles, ShowDotfiles: r.ShowDotfiles}
 	}
+	
+	// Check for search engine selection changes
+	if r.searchEngine.Update(gtx) {
+		selected := r.searchEngine.Value
+		// Only allow selecting available engines
+		for _, eng := range r.SearchEngines {
+			if eng.ID == selected && eng.Available {
+				r.SelectedEngine = selected
+				*eventOut = UIEvent{Action: ActionChangeSearchEngine, SearchEngine: selected}
+				break
+			}
+		}
+		// Reset to previous if unavailable was clicked
+		if r.SelectedEngine != selected {
+			r.searchEngine.Value = r.SelectedEngine
+		}
+	}
 
 	return layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
@@ -895,8 +1078,8 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) la
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return r.menuShell(gtx, 300, func(gtx layout.Context) layout.Dimensions {
-					gtx.Constraints.Min.Y = gtx.Dp(200)
+				return r.menuShell(gtx, 350, func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Min.Y = gtx.Dp(280)
 					return layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -912,15 +1095,14 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) la
 							}),
 							layout.Rigid(layout.Spacer{Height: unit.Dp(20)}.Layout),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								lbl := material.Body1(r.Theme, "Search Engine:")
+								lbl := material.Body1(r.Theme, "Content Search Engine:")
 								lbl.Color = colBlack
 								return lbl.Layout(gtx)
 							}),
+							layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+							// Render each search engine as a radio button
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return material.RadioButton(r.Theme, &r.searchEngine, "default", "Default").Layout(gtx)
-							}),
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return material.RadioButton(r.Theme, &r.searchEngine, "ripgrep", "ripgrep").Layout(gtx)
+								return r.layoutSearchEngineOptions(gtx)
 							}),
 						)
 					})
@@ -928,4 +1110,41 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) la
 			})
 		}),
 	)
+}
+
+func (r *Renderer) layoutSearchEngineOptions(gtx layout.Context) layout.Dimensions {
+	var children []layout.FlexChild
+	
+	for _, eng := range r.SearchEngines {
+		eng := eng // capture loop variable
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return r.layoutSearchEngineOption(gtx, eng)
+		}))
+	}
+	
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+}
+
+func (r *Renderer) layoutSearchEngineOption(gtx layout.Context, eng SearchEngineInfo) layout.Dimensions {
+	// Build label with version if available
+	label := eng.Name
+	if eng.Version != "" && eng.Available {
+		label = eng.Name + " (" + eng.Version + ")"
+	}
+	
+	rb := material.RadioButton(r.Theme, &r.searchEngine, eng.ID, label)
+	
+	if !eng.Available {
+		// Grey out unavailable engines
+		rb.Color = colDisabled
+		rb.IconColor = colDisabled
+	} else if r.SelectedEngine == eng.ID {
+		rb.Color = colAccent
+	} else {
+		rb.Color = colBlack
+	}
+	
+	return layout.Inset{Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return rb.Layout(gtx)
+	})
 }

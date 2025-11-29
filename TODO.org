@@ -52,6 +52,32 @@
    - [X] Directive detection restores directory from cache immediately
    - [X] directiveRestored flag prevents redundant restore calls
    - [X] Gen counter incremented on restore to invalidate pending results
+   - [X] FIX: Default search depth now 1 (current dir only)
+   - [X] Added recursive: directive for deep search (recursive:N for depth N)
+   - [X] Added depth: alias for recursive:
+   - [X] Progress bar now updates during content search via ProgressChan
+   - [X] Yellow pill color for recursive/depth directives
+   - [X] SEARCH CANCELLATION: Clicking X now cancels ongoing searches
+   - [X] Context-based cancellation using context.Context
+   - [X] Skip system directories (/dev, /proc, /sys, /run, etc.)
+   - [X] Skip non-regular files (devices, sockets, etc.)
+   - [X] Graceful handling of permission errors (skip instead of fail)
+   - [X] FIX: Search runs in goroutine to allow cancel processing
+   - [X] FIX: FetchDir cancels any running search
+   - [X] Context-aware content reading with chunked I/O
+   - [X] Binary file detection (skip files with null bytes)
+
+** DONE Search Engine Integration
+   CLOSED: [2024-11-29]
+   - [X] Detect available search engines (ripgrep, ugrep)
+   - [X] Settings dropdown shows installed engines with versions
+   - [X] Unavailable engines shown greyed out (not selectable)
+   - [X] Engine selection persisted in Renderer state
+   - [X] External engine support for contents: directive
+   - [X] ripgrep integration with --files-with-matches
+   - [X] ugrep integration with -l flag
+   - [X] External results combined with other directive filters
+   - [X] Fallback to builtin on external engine error
 
 * In Progress
 ** TODO Rename File/Folder
@@ -89,6 +115,26 @@
    - [ ] Batch rename
    - [ ] File compression (zip/tar)
    - [ ] File extraction
+
+** DONE Copy/Paste Replace Dialog
+   CLOSED: [2024-11-29]
+   - [X] Detect file name collisions on paste
+   - [X] Mac-style dialog: "Keep Both", "Stop", "Replace"
+   - [X] "Apply to All" checkbox for batch operations
+   - [X] Skip option
+   - [X] Compare dates/sizes in dialog
+   - [ ] "Replace if Newer" setting option (FileZilla-style)
+   - [ ] Multi-file paste with batch conflict handling
+
+** TODO Network/Remote Access
+   - [ ] FTP connection support
+   - [ ] SFTP connection support
+   - [ ] SMB/CIFS network shares (Windows shares)
+   - [ ] NFS mount support
+   - [ ] WebDAV support
+   - [ ] Save connection profiles
+   - [ ] Quick connect dialog
+   - [ ] Connection manager sidebar
 
 ** TODO View Modes
    - [ ] Grid/icon view

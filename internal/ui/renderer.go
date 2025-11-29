@@ -48,6 +48,13 @@ const (
 	ActionCreateFile
 	ActionCreateFolder
 	ActionClearSearch
+	// Conflict resolution actions
+	ActionConflictReplace
+	ActionConflictKeepBoth
+	ActionConflictSkip
+	ActionConflictStop
+	// Settings actions
+	ActionChangeSearchEngine
 )
 
 type ClipOp int
@@ -56,6 +63,38 @@ const (
 	ClipCopy ClipOp = iota
 	ClipCut
 )
+
+// SearchEngineInfo contains information about a search engine
+type SearchEngineInfo struct {
+	Name      string // Display name (e.g., "ripgrep", "ugrep", "Built-in")
+	ID        string // Internal ID (e.g., "ripgrep", "ugrep", "builtin")
+	Command   string // Command path (empty for builtin)
+	Available bool   // Whether it's installed
+	Version   string // Version string if available
+}
+
+// ConflictResolution represents the user's choice for handling file conflicts
+type ConflictResolution int
+
+const (
+	ConflictAsk ConflictResolution = iota // Ask for each conflict
+	ConflictReplaceAll                    // Replace all conflicting files
+	ConflictKeepBothAll                   // Keep both for all conflicts
+	ConflictSkipAll                       // Skip all conflicting files
+)
+
+// ConflictState holds state for the file conflict dialog
+type ConflictState struct {
+	Active      bool   // Whether dialog is visible
+	SourcePath  string // Path of file being copied
+	DestPath    string // Path where file would be placed
+	SourceSize  int64  // Size of source file
+	DestSize    int64  // Size of existing destination file
+	SourceTime  time.Time
+	DestTime    time.Time
+	IsDir       bool   // Whether the conflict is for a directory
+	ApplyToAll  bool   // Checkbox state for "Apply to All"
+}
 
 type SortColumn int
 
@@ -81,6 +120,7 @@ type UIEvent struct {
 	ClipOp        ClipOp
 	FileName      string
 	AppPath       string
+	SearchEngine  string // Selected search engine ID
 }
 
 type UIEntry struct {
@@ -124,7 +164,7 @@ func parseDirectivesForDisplay(text string) ([]DetectedDirective, string) {
 	var remaining []string
 	
 	// Known directive prefixes
-	knownDirectives := []string{"contents:", "ext:", "size:", "modified:", "filename:"}
+	knownDirectives := []string{"contents:", "ext:", "size:", "modified:", "filename:", "recursive:", "depth:"}
 	
 	parts := strings.Fields(text)
 	for _, part := range parts {
@@ -133,7 +173,8 @@ func parseDirectivesForDisplay(text string) ([]DetectedDirective, string) {
 			if strings.HasPrefix(strings.ToLower(part), prefix) {
 				dirType := strings.TrimSuffix(prefix, ":")
 				value := part[len(prefix):]
-				if value != "" {
+				// For recursive, empty value is OK (defaults to depth 10)
+				if value != "" || dirType == "recursive" || dirType == "depth" {
 					directives = append(directives, DetectedDirective{
 						Type:  dirType,
 						Value: value,
@@ -166,6 +207,7 @@ type State struct {
 	Drives         []DriveItem
 	IsSearchResult bool
 	SearchQuery    string
+	Conflict       ConflictState // File conflict dialog state
 }
 
 type Renderer struct {
@@ -218,6 +260,13 @@ type Renderer struct {
 	createDialogOK     widget.Clickable
 	createDialogCancel widget.Clickable
 
+	// Conflict resolution dialog
+	conflictReplaceBtn  widget.Clickable
+	conflictKeepBothBtn widget.Clickable
+	conflictSkipBtn     widget.Clickable
+	conflictStopBtn     widget.Clickable
+	conflictApplyToAll  widget.Bool
+
 	// Column sorting
 	headerBtns    [4]widget.Clickable
 	SortColumn    SortColumn
@@ -226,6 +275,10 @@ type Renderer struct {
 	// Settings
 	ShowDotfiles      bool
 	showDotfilesCheck widget.Bool
+	
+	// Search engine settings
+	SearchEngines     []SearchEngineInfo // Available engines (detected on startup)
+	SelectedEngine    string             // Currently selected engine name
 }
 
 var (
@@ -255,7 +308,8 @@ func NewRenderer() *Renderer {
 	r.pathEditor.SingleLine, r.pathEditor.Submit = true, true
 	r.searchEditor.SingleLine, r.searchEditor.Submit = true, true
 	r.createDialogEditor.SingleLine, r.createDialogEditor.Submit = true, true
-	r.searchEngine.Value = "default"
+	r.searchEngine.Value = "builtin"
+	r.SelectedEngine = "builtin"
 	return r
 }
 
