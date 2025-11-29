@@ -115,6 +115,7 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 		)
 	}
 
+	// Sidebar now mirrors mainList structure exactly
 	sidebar := func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -123,20 +124,27 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 				})
 			}),
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				// KEY: Add pointer.PassOp at top level, exactly like mainList does
+				defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+
 				return r.favState.Layout(gtx, len(state.FavList), func(gtx layout.Context, index int) layout.Dimensions {
 					fav := &state.FavList[index]
+
+					// Handle left-click - check BEFORE renderFavoriteRow, exactly like mainList
 					if fav.Clickable.Clicked(gtx) {
 						eventOut = UIEvent{Action: ActionNavigate, Path: fav.Path}
 					}
-					// Use shared Right Click helper
+
+					// Handle right-click - check BEFORE renderFavoriteRow, exactly like mainList
 					if r.detectRightClick(gtx, &fav.RightClickTag) {
 						r.menuVisible = true
 						r.menuPos = r.mousePos
 						r.menuPath = fav.Path
+						r.menuIsDir = true // Favorites are always directories
 						r.menuIsFav = true
 					}
-					// Use shared Menu Item helper
-					return r.renderMenuItem(gtx, &fav.Clickable, fav.Name)
+
+					return r.renderFavoriteRow(gtx, fav, false)
 				})
 			}),
 		)
