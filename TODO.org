@@ -4,7 +4,7 @@
    - how does it define dotfiles, because some files are being classified dotfiles that are not dotfiles
 ** Quick Features
    remove debug if statements by using compiler directives to only build with the print statment if its a debug build
-
+ - home icon that goes to the home directory after the back button
 ** Core Architecture & Philosophy
    - [X] *Event Driven Architecture*
    - [X] *Performance First*
