@@ -235,7 +235,13 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx, r.renderColumns)
+									return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+										dims, evt := r.renderColumns(gtx)
+										if evt.Action != ActionNone {
+											eventOut = evt
+										}
+										return dims
+									})
 								}),
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 									return widget.Border{Color: color.NRGBA{A: 50}, Width: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {

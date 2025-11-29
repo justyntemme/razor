@@ -32,12 +32,24 @@ const (
 	ActionOpen
 	ActionAddFavorite
 	ActionRemoveFavorite
+	ActionSort
+)
+
+type SortColumn int
+
+const (
+	SortByName SortColumn = iota
+	SortByDate
+	SortByType
+	SortBySize
 )
 
 type UIEvent struct {
-	Action   UIAction
-	Path     string
-	NewIndex int
+	Action        UIAction
+	Path          string
+	NewIndex      int
+	SortColumn    SortColumn
+	SortAscending bool
 }
 
 type UIEntry struct {
@@ -105,6 +117,14 @@ type Renderer struct {
 
 	mousePos image.Point
 	mouseTag struct{}
+
+	// Column header sorting
+	nameHeaderBtn widget.Clickable
+	dateHeaderBtn widget.Clickable
+	typeHeaderBtn widget.Clickable
+	sizeHeaderBtn widget.Clickable
+	SortColumn    SortColumn
+	SortAscending bool
 }
 
 func NewRenderer() *Renderer {
@@ -120,6 +140,10 @@ func NewRenderer() *Renderer {
 	r.searchEditor.Submit = true
 
 	r.searchEngine.Value = "default"
+
+	// Default sort: by name, ascending
+	r.SortColumn = SortByName
+	r.SortAscending = true
 
 	return r
 }
@@ -213,24 +237,97 @@ func (r *Renderer) processGlobalInput(gtx layout.Context, state *State) UIEvent 
 	return eventOut
 }
 
+// getSortIndicator returns the appropriate arrow indicator for a column header
+func (r *Renderer) getSortIndicator(column SortColumn) string {
+	if r.SortColumn != column {
+		return ""
+	}
+	if r.SortAscending {
+		return " ▲"
+	}
+	return " ▼"
+}
+
+// renderColumnHeader creates a clickable column header with sort indicator
+func (r *Renderer) renderColumnHeader(gtx layout.Context, btn *widget.Clickable, label string, column SortColumn, alignment text.Alignment) layout.Dimensions {
+	// Build the label with sort indicator
+	displayLabel := label + r.getSortIndicator(column)
+
+	// Determine text color based on whether this column is sorted
+	textColor := color.NRGBA{R: 100, G: 100, B: 100, A: 255}
+	fontWeight := font.Normal
+	if r.SortColumn == column {
+		textColor = color.NRGBA{R: 0, G: 0, B: 0, A: 255}
+		fontWeight = font.Medium
+	}
+
+	return material.Clickable(gtx, btn, func(gtx layout.Context) layout.Dimensions {
+		lbl := material.Body2(r.Theme, displayLabel)
+		lbl.Color = textColor
+		lbl.Font.Weight = fontWeight
+		lbl.Alignment = alignment
+		return lbl.Layout(gtx)
+	})
+}
+
 // --- MAIN LAYOUT ---
-func (r *Renderer) renderColumns(gtx layout.Context) layout.Dimensions {
-	return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween}.Layout(gtx,
+func (r *Renderer) renderColumns(gtx layout.Context) (layout.Dimensions, UIEvent) {
+	var eventOut UIEvent
+
+	// Handle column header clicks
+	if r.nameHeaderBtn.Clicked(gtx) {
+		if r.SortColumn == SortByName {
+			r.SortAscending = !r.SortAscending
+		} else {
+			r.SortColumn = SortByName
+			r.SortAscending = true
+		}
+		eventOut = UIEvent{Action: ActionSort, SortColumn: r.SortColumn, SortAscending: r.SortAscending}
+	}
+	if r.dateHeaderBtn.Clicked(gtx) {
+		if r.SortColumn == SortByDate {
+			r.SortAscending = !r.SortAscending
+		} else {
+			r.SortColumn = SortByDate
+			r.SortAscending = true
+		}
+		eventOut = UIEvent{Action: ActionSort, SortColumn: r.SortColumn, SortAscending: r.SortAscending}
+	}
+	if r.typeHeaderBtn.Clicked(gtx) {
+		if r.SortColumn == SortByType {
+			r.SortAscending = !r.SortAscending
+		} else {
+			r.SortColumn = SortByType
+			r.SortAscending = true
+		}
+		eventOut = UIEvent{Action: ActionSort, SortColumn: r.SortColumn, SortAscending: r.SortAscending}
+	}
+	if r.sizeHeaderBtn.Clicked(gtx) {
+		if r.SortColumn == SortBySize {
+			r.SortAscending = !r.SortAscending
+		} else {
+			r.SortColumn = SortBySize
+			r.SortAscending = true
+		}
+		eventOut = UIEvent{Action: ActionSort, SortColumn: r.SortColumn, SortAscending: r.SortAscending}
+	}
+
+	dims := layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween}.Layout(gtx,
 		layout.Flexed(0.5, func(gtx layout.Context) layout.Dimensions {
-			return material.Body2(r.Theme, "Name").Layout(gtx)
+			return r.renderColumnHeader(gtx, &r.nameHeaderBtn, "Name", SortByName, text.Start)
 		}),
 		layout.Flexed(0.25, func(gtx layout.Context) layout.Dimensions {
-			return material.Body2(r.Theme, "Date Modified").Layout(gtx)
+			return r.renderColumnHeader(gtx, &r.dateHeaderBtn, "Date Modified", SortByDate, text.Start)
 		}),
 		layout.Flexed(0.15, func(gtx layout.Context) layout.Dimensions {
-			return material.Body2(r.Theme, "Type").Layout(gtx)
+			return r.renderColumnHeader(gtx, &r.typeHeaderBtn, "Type", SortByType, text.Start)
 		}),
 		layout.Flexed(0.10, func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body2(r.Theme, "Size")
-			lbl.Alignment = text.End
-			return lbl.Layout(gtx)
+			return r.renderColumnHeader(gtx, &r.sizeHeaderBtn, "Size", SortBySize, text.End)
 		}),
 	)
+
+	return dims, eventOut
 }
 
 func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, selected bool) layout.Dimensions {

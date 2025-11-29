@@ -4,6 +4,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"gioui.org/app"
 	"gioui.org/op"
@@ -23,6 +25,10 @@ type Orchestrator struct {
 	history      []string
 	historyIndex int
 	debug        bool
+
+	// Sort settings (persisted across navigation)
+	sortColumn    ui.SortColumn
+	sortAscending bool
 }
 
 func NewOrchestrator(debug bool) *Orchestrator {
@@ -30,14 +36,16 @@ func NewOrchestrator(debug bool) *Orchestrator {
 	renderer.Debug = debug
 
 	return &Orchestrator{
-		window:       new(app.Window),
-		fs:           fs.NewSystem(),
-		store:        store.NewDB(),
-		ui:           renderer,
-		state:        ui.State{CurrentPath: "Initializing...", SelectedIndex: -1, Favorites: make(map[string]bool)},
-		history:      make([]string, 0),
-		historyIndex: -1,
-		debug:        debug,
+		window:        new(app.Window),
+		fs:            fs.NewSystem(),
+		store:         store.NewDB(),
+		ui:            renderer,
+		state:         ui.State{CurrentPath: "Initializing...", SelectedIndex: -1, Favorites: make(map[string]bool)},
+		history:       make([]string, 0),
+		historyIndex:  -1,
+		debug:         debug,
+		sortColumn:    ui.SortByName,
+		sortAscending: true,
 	}
 }
 
@@ -58,7 +66,7 @@ func (o *Orchestrator) Run(startPath string) error {
 	// 2. Start Workers
 	go o.fs.Start()
 	go o.store.Start()
-	
+
 	// 3. Start Event Listener
 	go o.processEvents()
 
@@ -84,9 +92,9 @@ func (o *Orchestrator) Run(startPath string) error {
 			return e.Err
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, e)
-			
+
 			evt := o.ui.Layout(gtx, &o.state)
-			
+
 			if o.debug && evt.Action != ui.ActionNone {
 				log.Printf("[DEBUG] UI Action: %d, Path: %s, Index: %d", evt.Action, evt.Path, evt.NewIndex)
 			}
@@ -109,6 +117,11 @@ func (o *Orchestrator) Run(startPath string) error {
 				o.store.RequestChan <- store.Request{Op: store.AddFavorite, Path: evt.Path}
 			case ui.ActionRemoveFavorite:
 				o.store.RequestChan <- store.Request{Op: store.RemoveFavorite, Path: evt.Path}
+			case ui.ActionSort:
+				o.sortColumn = evt.SortColumn
+				o.sortAscending = evt.SortAscending
+				o.sortEntries()
+				o.window.Invalidate()
 			}
 
 			e.Frame(gtx.Ops)
@@ -177,9 +190,9 @@ func (o *Orchestrator) search(query string) {
 }
 
 func (o *Orchestrator) openFile(path string) {
-    if o.debug {
-        log.Printf("[DEBUG] Opening file via platform handler: %s", path)
-    }
+	if o.debug {
+		log.Printf("[DEBUG] Opening file via platform handler: %s", path)
+	}
 
 	// Delegate to the OS-specific implementation in platform_*.go
 	if err := platformOpen(path); err != nil {
@@ -221,7 +234,10 @@ func (o *Orchestrator) handleFSResponse(resp fs.Response) {
 
 	o.state.CurrentPath = resp.Path
 	o.state.Entries = uiEntries
-	
+
+	// Apply current sort settings to new entries
+	o.sortEntries()
+
 	parent := filepath.Dir(resp.Path)
 	o.state.CanBack = parent != resp.Path
 	o.state.CanForward = o.historyIndex < len(o.history)-1
@@ -242,7 +258,7 @@ func (o *Orchestrator) handleStoreResponse(resp store.Response) {
 	if resp.Op == store.FetchFavorites {
 		favMap := make(map[string]bool)
 		favList := make([]ui.FavoriteItem, len(resp.Favorites))
-		
+
 		for i, path := range resp.Favorites {
 			favMap[path] = true
 			favList[i] = ui.FavoriteItem{
@@ -250,11 +266,58 @@ func (o *Orchestrator) handleStoreResponse(resp store.Response) {
 				Name: filepath.Base(path),
 			}
 		}
-		
+
 		o.state.Favorites = favMap
 		o.state.FavList = favList
 		o.window.Invalidate()
 	}
+}
+
+// sortEntries sorts the current entries based on sortColumn and sortAscending
+func (o *Orchestrator) sortEntries() {
+	entries := o.state.Entries
+
+	sort.SliceStable(entries, func(i, j int) bool {
+		// Directories always come first
+		if entries[i].IsDir != entries[j].IsDir {
+			return entries[i].IsDir
+		}
+
+		// Compare based on the selected column
+		var less bool
+		switch o.sortColumn {
+		case ui.SortByName:
+			less = strings.ToLower(entries[i].Name) < strings.ToLower(entries[j].Name)
+		case ui.SortByDate:
+			less = entries[i].ModTime.Before(entries[j].ModTime)
+		case ui.SortByType:
+			extI := strings.ToLower(filepath.Ext(entries[i].Name))
+			extJ := strings.ToLower(filepath.Ext(entries[j].Name))
+			if extI == extJ {
+				// If same type, sort by name
+				less = strings.ToLower(entries[i].Name) < strings.ToLower(entries[j].Name)
+			} else {
+				less = extI < extJ
+			}
+		case ui.SortBySize:
+			if entries[i].Size == entries[j].Size {
+				// If same size, sort by name
+				less = strings.ToLower(entries[i].Name) < strings.ToLower(entries[j].Name)
+			} else {
+				less = entries[i].Size < entries[j].Size
+			}
+		default:
+			less = strings.ToLower(entries[i].Name) < strings.ToLower(entries[j].Name)
+		}
+
+		// Reverse if descending
+		if !o.sortAscending {
+			return !less
+		}
+		return less
+	})
+
+	o.state.Entries = entries
 }
 
 // Main now correctly matches the signature expected by cmd/razor
