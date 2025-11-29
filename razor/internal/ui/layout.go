@@ -407,23 +407,14 @@ func (r *Renderer) layoutSidebar(gtx layout.Context, state *State, eventOut *UIE
 			defer pointer.PassOp{}.Push(gtx.Ops).Pop()
 			return r.favState.Layout(gtx, len(state.FavList), func(gtx layout.Context, i int) layout.Dimensions {
 				fav := &state.FavList[i]
-				
-				// Render and get click states
-				rowDims, leftClicked, rightClicked := r.renderFavoriteRow(gtx, fav)
-				
-				// Handle left-click
-				if leftClicked {
+				if fav.Clickable.Clicked(gtx) {
 					*eventOut = UIEvent{Action: ActionNavigate, Path: fav.Path}
 				}
-				
-				// Handle right-click
-				if rightClicked {
+				if r.detectRightClick(gtx, &fav.RightClickTag) {
 					r.menuVisible, r.menuPos, r.menuPath = true, r.mousePos, fav.Path
 					r.menuIsDir, r.menuIsFav = true, true
-					r.menuIsBackground = false
 				}
-				
-				return rowDims
+				return r.renderFavoriteRow(gtx, fav)
 			})
 		}),
 
@@ -447,16 +438,10 @@ func (r *Renderer) layoutSidebar(gtx layout.Context, state *State, eventOut *UIE
 			defer pointer.PassOp{}.Push(gtx.Ops).Pop()
 			return r.driveState.Layout(gtx, len(state.Drives), func(gtx layout.Context, i int) layout.Dimensions {
 				drive := &state.Drives[i]
-				
-				// Render and get click state
-				rowDims, clicked := r.renderDriveRow(gtx, drive)
-				
-				// Handle click
-				if clicked {
+				if drive.Clickable.Clicked(gtx) {
 					*eventOut = UIEvent{Action: ActionNavigate, Path: drive.Path}
 				}
-				
-				return rowDims
+				return r.renderDriveRow(gtx, drive)
 			})
 		}),
 	)
@@ -481,60 +466,56 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 				})
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			// Register background right-click handler for the whole area FIRST
-			area := clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops)
-			event.Op(gtx.Ops, &r.bgRightClickTag)
-			area.Pop()
-			
-			// Track if any file row was right-clicked
-			fileRightClicked := false
-			
-			// Layout file list
-			dims := r.listState.Layout(gtx, len(state.Entries), func(gtx layout.Context, i int) layout.Dimensions {
-				item := &state.Entries[i]
-				
-				// Render row and get click states
-				rowDims, leftClicked, rightClicked := r.renderRow(gtx, item, i == state.SelectedIndex)
-				
-				// Handle left-click
-				if leftClicked {
-					r.isEditing, r.fileMenuOpen = false, false
-					*eventOut = UIEvent{Action: ActionSelect, NewIndex: i}
-					gtx.Execute(key.FocusCmd{Tag: keyTag})
-					if now := time.Now(); !item.LastClick.IsZero() && now.Sub(item.LastClick) < 500*time.Millisecond {
-						if item.IsDir {
-							*eventOut = UIEvent{Action: ActionNavigate, Path: item.Path}
-						} else {
-							*eventOut = UIEvent{Action: ActionOpen, Path: item.Path}
-						}
+			// Use a Stack to layer the background click handler behind the list
+			return layout.Stack{}.Layout(gtx,
+				// Background layer - captures right-clicks on empty space
+				layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+					// Register for pointer events on the background
+					area := clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops)
+					event.Op(gtx.Ops, &r.bgRightClickTag)
+					area.Pop()
+					
+					// Check for right-click on background
+					if r.detectRightClick(gtx, &r.bgRightClickTag) {
+						r.menuVisible = true
+						r.menuPos = r.mousePos
+						r.menuPath = state.CurrentPath
+						r.menuIsDir = true
+						r.menuIsFav = false
+						r.menuIsBackground = true
 					}
-					item.LastClick = time.Now()
-				}
-				
-				// Handle right-click
-				if rightClicked {
-					fileRightClicked = true
-					r.menuVisible, r.menuPos, r.menuPath = true, r.mousePos, item.Path
-					r.menuIsDir = item.IsDir
-					_, r.menuIsFav = state.Favorites[item.Path]
-					r.menuIsBackground = false
-					*eventOut = UIEvent{Action: ActionSelect, NewIndex: i}
-				}
-				
-				return rowDims
-			})
-			
-			// Check for background right-click ONLY if no file was right-clicked
-			if !fileRightClicked && r.detectRightClick(gtx, &r.bgRightClickTag) {
-				r.menuVisible = true
-				r.menuPos = r.mousePos
-				r.menuPath = state.CurrentPath
-				r.menuIsDir = true
-				r.menuIsFav = false
-				r.menuIsBackground = true
-			}
-			
-			return dims
+					
+					return layout.Dimensions{Size: gtx.Constraints.Max}
+				}),
+				// File list layer
+				layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+					defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+					return r.listState.Layout(gtx, len(state.Entries), func(gtx layout.Context, i int) layout.Dimensions {
+						item := &state.Entries[i]
+						if item.Clickable.Clicked(gtx) {
+							r.isEditing, r.fileMenuOpen = false, false
+							*eventOut = UIEvent{Action: ActionSelect, NewIndex: i}
+							gtx.Execute(key.FocusCmd{Tag: keyTag})
+							if now := time.Now(); !item.LastClick.IsZero() && now.Sub(item.LastClick) < 500*time.Millisecond {
+								if item.IsDir {
+									*eventOut = UIEvent{Action: ActionNavigate, Path: item.Path}
+								} else {
+									*eventOut = UIEvent{Action: ActionOpen, Path: item.Path}
+								}
+							}
+							item.LastClick = time.Now()
+						}
+						if r.detectRightClick(gtx, &item.RightClickTag) {
+							r.menuVisible, r.menuPos, r.menuPath = true, r.mousePos, item.Path
+							r.menuIsDir = item.IsDir
+							_, r.menuIsFav = state.Favorites[item.Path]
+							r.menuIsBackground = false
+							*eventOut = UIEvent{Action: ActionSelect, NewIndex: i}
+						}
+						return r.renderRow(gtx, item, i == state.SelectedIndex)
+					})
+				}),
+			)
 		}),
 	)
 }
@@ -1184,16 +1165,6 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) la
 			r.searchEngine.Value = r.SelectedEngine
 		}
 	}
-	
-	// Check for depth changes
-	if r.depthDecBtn.Clicked(gtx) && r.DefaultDepth > 1 {
-		r.DefaultDepth--
-		*eventOut = UIEvent{Action: ActionChangeDefaultDepth, DefaultDepth: r.DefaultDepth}
-	}
-	if r.depthIncBtn.Clicked(gtx) && r.DefaultDepth < 20 {
-		r.DefaultDepth++
-		*eventOut = UIEvent{Action: ActionChangeDefaultDepth, DefaultDepth: r.DefaultDepth}
-	}
 
 	return layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
@@ -1205,7 +1176,7 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) la
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return r.menuShell(gtx, 350, func(gtx layout.Context) layout.Dimensions {
-					gtx.Constraints.Min.Y = gtx.Dp(380)
+					gtx.Constraints.Min.Y = gtx.Dp(280)
 					return layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -1218,49 +1189,6 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) la
 								cb := material.CheckBox(r.Theme, &r.showDotfilesCheck, "Show dotfiles")
 								cb.Color = colBlack
 								return cb.Layout(gtx)
-							}),
-							layout.Rigid(layout.Spacer{Height: unit.Dp(20)}.Layout),
-							// Default recursive depth setting
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								lbl := material.Body1(r.Theme, "Default Recursive Depth:")
-								lbl.Color = colBlack
-								return lbl.Layout(gtx)
-							}),
-							layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-										btn := material.Button(r.Theme, &r.depthDecBtn, "-")
-										btn.Inset = layout.UniformInset(unit.Dp(8))
-										if r.DefaultDepth <= 1 {
-											btn.Background = colLightGray
-											btn.Color = colDisabled
-										}
-										return btn.Layout(gtx)
-									}),
-									layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
-									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-										lbl := material.H6(r.Theme, fmt.Sprintf("%d", r.DefaultDepth))
-										lbl.Color = colBlack
-										return lbl.Layout(gtx)
-									}),
-									layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
-									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-										btn := material.Button(r.Theme, &r.depthIncBtn, "+")
-										btn.Inset = layout.UniformInset(unit.Dp(8))
-										if r.DefaultDepth >= 20 {
-											btn.Background = colLightGray
-											btn.Color = colDisabled
-										}
-										return btn.Layout(gtx)
-									}),
-								)
-							}),
-							layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								lbl := material.Caption(r.Theme, "Used when recursive: has no value")
-								lbl.Color = colGray
-								return lbl.Layout(gtx)
 							}),
 							layout.Rigid(layout.Spacer{Height: unit.Dp(20)}.Layout),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {

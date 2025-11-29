@@ -136,8 +136,8 @@ func parseDirective(s string) Directive {
 			return Directive{Type: DirModified, Value: value, Operator: op, TimeVal: t}
 
 		case "recursive", "recurse", "r", "depth":
-			// Parse depth value, default to 2 if not specified or invalid
-			depth := int64(2)
+			// Parse depth value, default to 10 if not specified or invalid
+			depth := int64(10)
 			if value != "" {
 				if d, err := strconv.ParseInt(value, 10, 64); err == nil && d > 0 {
 					depth = d
@@ -491,15 +491,14 @@ func (q *Query) HasRecursive() bool {
 	return false
 }
 
-// GetRecursiveDepth returns the recursive depth
-// If recursive directive has a value, uses that; otherwise uses the provided default
-func (q *Query) GetRecursiveDepth(defaultDepth int) int {
+// GetRecursiveDepth returns the recursive depth (default 10 if recursive but no depth specified)
+func (q *Query) GetRecursiveDepth() int {
 	for _, d := range q.Directives {
 		if d.Type == DirRecursive {
 			if d.NumValue > 0 {
 				return int(d.NumValue)
 			}
-			return defaultDepth // Use configured default
+			return 10 // Default depth
 		}
 	}
 	return 1 // Not recursive, depth 1

@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -48,7 +47,6 @@ type Orchestrator struct {
 	searchEngines    []search.EngineInfo // Detected search engines
 	selectedEngine   search.SearchEngine // Currently selected engine
 	selectedEngineCmd string             // Command for the selected engine
-	defaultDepth     int                 // Default recursive search depth
 }
 
 func NewOrchestrator() *Orchestrator {
@@ -81,13 +79,11 @@ func NewOrchestrator() *Orchestrator {
 		conflictResponse: make(chan ui.ConflictResolution, 1),
 		searchEngines:    engines,
 		selectedEngine:   search.EngineBuiltin,
-		defaultDepth:     2, // Default recursive depth
 	}
 	
 	// Set up UI with detected engines
 	o.ui.SearchEngines = uiEngines
-	o.ui.SetSearchEngine("builtin")
-	o.ui.SetDefaultDepth(2)
+	o.ui.SelectedEngine = "builtin"
 	
 	return o
 }
@@ -334,12 +330,6 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		o.handleSearchEngineChange(evt.SearchEngine)
 		// Save setting to database
 		o.store.RequestChan <- store.Request{Op: store.SaveSetting, Key: "search_engine", Value: evt.SearchEngine}
-	case ui.ActionChangeDefaultDepth:
-		o.defaultDepth = evt.DefaultDepth
-		o.ui.DefaultDepth = evt.DefaultDepth
-		// Save setting to database
-		o.store.RequestChan <- store.Request{Op: store.SaveSetting, Key: "default_depth", Value: itoa(evt.DefaultDepth)}
-		log.Printf("[SETTINGS] Changed default depth to: %d", evt.DefaultDepth)
 	}
 }
 
@@ -356,7 +346,7 @@ func (o *Orchestrator) handleSearchEngineChange(engineID string) {
 	
 	o.selectedEngine = engine
 	o.selectedEngineCmd = engineCmd
-	o.ui.SetSearchEngine(engineID)
+	o.ui.SelectedEngine = engineID
 	log.Printf("[SEARCH] Changed search engine to: %s (cmd: %s)", engineID, o.selectedEngineCmd)
 }
 
@@ -476,7 +466,7 @@ func (o *Orchestrator) doSearch(query string) {
 	gen := o.searchGen
 	o.searchGenMu.Unlock()
 	
-	log.Printf("[SEARCH] Sending search request: path=%q query=%q gen=%d engine=%d defaultDepth=%d", o.state.CurrentPath, query, gen, o.selectedEngine, o.defaultDepth)
+	log.Printf("[SEARCH] Sending search request: path=%q query=%q gen=%d engine=%d", o.state.CurrentPath, query, gen, o.selectedEngine)
 	o.fs.RequestChan <- fs.Request{
 		Op:           fs.SearchDir,
 		Path:         o.state.CurrentPath,
@@ -484,7 +474,6 @@ func (o *Orchestrator) doSearch(query string) {
 		Gen:          gen,
 		SearchEngine: int(o.selectedEngine),
 		EngineCmd:    o.selectedEngineCmd,
-		DefaultDepth: o.defaultDepth,
 	}
 }
 
@@ -658,14 +647,6 @@ func (o *Orchestrator) handleStoreResponse(resp store.Response) {
 		// Load search engine setting
 		if val, ok := resp.Settings["search_engine"]; ok {
 			o.handleSearchEngineChange(val)
-		}
-		// Load default depth setting
-		if val, ok := resp.Settings["default_depth"]; ok {
-			if depth, err := strconv.Atoi(val); err == nil && depth >= 1 && depth <= 20 {
-				o.defaultDepth = depth
-				o.ui.SetDefaultDepth(depth)
-				log.Printf("[SETTINGS] Loaded default depth: %d", depth)
-			}
 		}
 	}
 	o.window.Invalidate()

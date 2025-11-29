@@ -28,7 +28,6 @@ type Request struct {
 	Gen          int64  // Generation counter to track stale requests
 	SearchEngine int    // Search engine type (0=builtin, 1=ripgrep, 2=ugrep)
 	EngineCmd    string // Command for external engine
-	DefaultDepth int    // Default recursive depth when not specified
 }
 
 type Entry struct {
@@ -120,11 +119,7 @@ func (s *System) Start() {
 			
 			// Run search in goroutine so we can process cancel requests
 			go func(ctx context.Context, req Request) {
-				defaultDepth := req.DefaultDepth
-				if defaultDepth <= 0 {
-					defaultDepth = 2 // Fallback default
-				}
-				resp := s.searchDir(ctx, req.Path, req.Query, req.Gen, search.SearchEngine(req.SearchEngine), req.EngineCmd, defaultDepth)
+				resp := s.searchDir(ctx, req.Path, req.Query, req.Gen, search.SearchEngine(req.SearchEngine), req.EngineCmd)
 				resp.Gen = req.Gen
 				
 				// Check if cancelled
@@ -195,8 +190,8 @@ func (s *System) fetchDir(path string) Response {
 	return Response{Op: FetchDir, Path: path, Entries: result}
 }
 
-func (s *System) searchDir(ctx context.Context, basePath, queryStr string, gen int64, engine search.SearchEngine, engineCmd string, defaultDepth int) Response {
-	log.Printf("[FS_SEARCH] searchDir called: basePath=%q queryStr=%q engine=%d cmd=%q defaultDepth=%d", basePath, queryStr, engine, engineCmd, defaultDepth)
+func (s *System) searchDir(ctx context.Context, basePath, queryStr string, gen int64, engine search.SearchEngine, engineCmd string) Response {
+	log.Printf("[FS_SEARCH] searchDir called: basePath=%q queryStr=%q engine=%d cmd=%q", basePath, queryStr, engine, engineCmd)
 	query := search.Parse(queryStr)
 	if query.IsEmpty() {
 		log.Printf("[FS_SEARCH] Query is empty, falling back to fetchDir")
@@ -212,9 +207,9 @@ func (s *System) searchDir(ctx context.Context, basePath, queryStr string, gen i
 	// Use recursive: directive to enable deeper search
 	maxDepth := 1
 	if query.HasRecursive() {
-		maxDepth = query.GetRecursiveDepth(defaultDepth)
+		maxDepth = query.GetRecursiveDepth()
 		if maxDepth <= 0 {
-			maxDepth = defaultDepth // Fallback to configured default
+			maxDepth = 10 // Default recursive depth
 		}
 	}
 	

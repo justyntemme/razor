@@ -145,17 +145,20 @@ func searchWithRipgrep(ctx context.Context, cmd, pattern, basePath string, maxDe
 		"--max-filesize", "10M", // Skip files larger than 10MB
 	}
 
-	// ripgrep depth semantics:
-	// --max-depth 1 = search only in the specified directory (no subdirs)
-	// --max-depth 2 = specified dir + 1 level of subdirs
-	// Our maxDepth=1 means current dir only, which maps to rg --max-depth 1
+	// ripgrep is recursive by default
+	// --max-depth 0 = current directory only (no subdirs)
+	// --max-depth 1 = current dir + one level of subdirs
+	// Our maxDepth=1 means current dir only, so we need to subtract 1
 	if maxDepth > 0 {
-		args = append(args, "--max-depth", itoa(maxDepth))
+		rgDepth := maxDepth - 1
+		if rgDepth < 0 {
+			rgDepth = 0
+		}
+		args = append(args, "--max-depth", itoa(rgDepth))
 	}
 
 	args = append(args, "--", pattern, basePath)
 
-	log.Printf("[RIPGREP] Running: %s %v", cmd, args)
 	return runSearchCommand(ctx, cmd, args, progressFn)
 }
 
@@ -164,20 +167,25 @@ func searchWithUgrep(ctx context.Context, cmd, pattern, basePath string, maxDept
 		"-l",              // Only output file names
 		"-i",              // Ignore case
 		"--ignore-binary", // Skip binary files
-		"-r",              // Recursive (required for directory searching)
 	}
 
-	// ugrep depth semantics:
-	// --max-depth=1 = search only in the specified directory (no subdirs)
-	// --max-depth=2 = specified dir + 1 level of subdirs
-	// Our maxDepth=1 means current dir only, which maps to ug --max-depth=1
-	if maxDepth > 0 {
-		args = append(args, "--max-depth="+itoa(maxDepth))
+	// ugrep needs -r for recursion
+	// --max-depth=0 = current directory only
+	// --max-depth=1 = one level of subdirs
+	// Our maxDepth=1 means current dir only
+	if maxDepth <= 1 {
+		// Current directory only - no recursion needed, use -. to not recurse
+		// Actually, without -r, ugrep only searches specified files
+		// We need to search files in the directory
+		args = append(args, "-r", "--max-depth=0")
+	} else {
+		// Recursive search with depth limit
+		ugDepth := maxDepth - 1
+		args = append(args, "-r", "--max-depth="+itoa(ugDepth))
 	}
 
 	args = append(args, "--", pattern, basePath)
 
-	log.Printf("[UGREP] Running: %s %v", cmd, args)
 	return runSearchCommand(ctx, cmd, args, progressFn)
 }
 

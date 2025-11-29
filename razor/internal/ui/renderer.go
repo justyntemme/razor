@@ -55,7 +55,6 @@ const (
 	ActionConflictStop
 	// Settings actions
 	ActionChangeSearchEngine
-	ActionChangeDefaultDepth
 )
 
 type ClipOp int
@@ -122,7 +121,6 @@ type UIEvent struct {
 	FileName      string
 	AppPath       string
 	SearchEngine  string // Selected search engine ID
-	DefaultDepth  int    // Default recursive search depth
 }
 
 type UIEntry struct {
@@ -284,11 +282,6 @@ type Renderer struct {
 	SearchEngines     []SearchEngineInfo // Available engines (detected on startup)
 	SelectedEngine    string             // Currently selected engine name
 	
-	// Default recursive depth setting
-	DefaultDepth      int               // Current default depth value
-	depthDecBtn       widget.Clickable  // Decrease depth button
-	depthIncBtn       widget.Clickable  // Increase depth button
-	
 	// Animation state for indeterminate progress
 	progressAnimStart time.Time
 }
@@ -313,7 +306,7 @@ var (
 )
 
 func NewRenderer() *Renderer {
-	r := &Renderer{Theme: material.NewTheme(), SortAscending: true, DefaultDepth: 2}
+	r := &Renderer{Theme: material.NewTheme(), SortAscending: true}
 	r.listState.Axis = layout.Vertical
 	r.favState.Axis = layout.Vertical
 	r.driveState.Axis = layout.Vertical
@@ -326,15 +319,6 @@ func NewRenderer() *Renderer {
 }
 
 func (r *Renderer) SetShowDotfilesCheck(v bool) { r.showDotfilesCheck.Value = v }
-
-func (r *Renderer) SetSearchEngine(engineID string) {
-	r.SelectedEngine = engineID
-	r.searchEngine.Value = engineID
-}
-
-func (r *Renderer) SetDefaultDepth(depth int) {
-	r.DefaultDepth = depth
-}
 
 func (r *Renderer) ShowCreateDialog(isDir bool) {
 	r.createDialogOpen = true
@@ -349,8 +333,6 @@ func (r *Renderer) detectRightClick(gtx layout.Context, tag event.Tag) bool {
 			break
 		}
 		if e, ok := ev.(pointer.Event); ok && e.Kind == pointer.Press && e.Buttons.Contain(pointer.ButtonSecondary) {
-			// Don't override mousePos here - use the global position tracked in processGlobalInput
-			// The position from this event is relative to the local clip area, not window coordinates
 			return true
 		}
 	}
@@ -358,14 +340,9 @@ func (r *Renderer) detectRightClick(gtx layout.Context, tag event.Tag) bool {
 }
 
 func (r *Renderer) processGlobalInput(gtx layout.Context, state *State) UIEvent {
-	// Track mouse position globally with a full-window clip area
-	// This captures the position on both move and press events
-	area := clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops)
 	event.Op(gtx.Ops, &r.mouseTag)
-	area.Pop()
-	
 	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: &r.mouseTag, Kinds: pointer.Move | pointer.Press})
+		ev, ok := gtx.Event(pointer.Filter{Target: &r.mouseTag, Kinds: pointer.Move})
 		if !ok {
 			break
 		}
@@ -501,35 +478,32 @@ func (r *Renderer) renderColumns(gtx layout.Context) (layout.Dimensions, UIEvent
 	return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween}.Layout(gtx, children...), evt
 }
 
-// renderRow renders a file/folder row. Returns dimensions and whether left/right click occurred.
-func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, selected bool) (layout.Dimensions, bool, bool) {
-	// Check for left-click BEFORE layout (Gio pattern)
-	leftClicked := item.Clickable.Clicked(gtx)
-	
-	// Check for right-click
-	rightClicked := false
-	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: &item.RightClickTag, Kinds: pointer.Press})
-		if !ok {
-			break
-		}
-		if e, ok := ev.(pointer.Event); ok && e.Buttons.Contain(pointer.ButtonSecondary) {
-			rightClicked = true
-		}
-	}
-	
-	// Layout the clickable row
-	dims := material.Clickable(gtx, &item.Clickable, func(gtx layout.Context) layout.Dimensions {
-		// Register right-click handler on this row's area
-		defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
-		event.Op(gtx.Ops, &item.RightClickTag)
-		
-		// Draw selection background
-		if selected {
-			paint.FillShape(gtx.Ops, colSelected, clip.Rect{Max: gtx.Constraints.Max}.Op())
-		}
+func (r *Renderer) clickableRow(gtx layout.Context, clk *widget.Clickable, rightTag *int, selected bool, content layout.Widget) layout.Dimensions {
+	return layout.Stack{}.Layout(gtx,
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return material.Clickable(gtx, clk, func(gtx layout.Context) layout.Dimensions {
+				return layout.Stack{}.Layout(gtx,
+					layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+						if selected {
+							paint.FillShape(gtx.Ops, colSelected, clip.Rect{Max: gtx.Constraints.Min}.Op())
+						}
+						return layout.Dimensions{}
+					}),
+					layout.Stacked(content),
+				)
+			})
+		}),
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			defer clip.Rect{Max: gtx.Constraints.Min}.Push(gtx.Ops).Pop()
+			event.Op(gtx.Ops, rightTag)
+			defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+			return layout.Dimensions{Size: gtx.Constraints.Min}
+		}),
+	)
+}
 
-		// Row content
+func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, selected bool) layout.Dimensions {
+	return r.clickableRow(gtx, &item.Clickable, &item.RightClickTag, selected, func(gtx layout.Context) layout.Dimensions {
 		name, typeStr, sizeStr := item.Name, "File", formatSize(item.Size)
 		dateStr := item.ModTime.Format("01/02/06 03:04 PM")
 		textColor, weight := colBlack, font.Normal
@@ -567,32 +541,10 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, selected bool) (
 				)
 			})
 	})
-	
-	return dims, leftClicked, rightClicked
 }
 
-// renderFavoriteRow renders a favorite item. Returns dimensions and whether left/right click occurred.
-func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem) (layout.Dimensions, bool, bool) {
-	// Check for left-click BEFORE layout
-	leftClicked := fav.Clickable.Clicked(gtx)
-	
-	// Check for right-click
-	rightClicked := false
-	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: &fav.RightClickTag, Kinds: pointer.Press})
-		if !ok {
-			break
-		}
-		if e, ok := ev.(pointer.Event); ok && e.Buttons.Contain(pointer.ButtonSecondary) {
-			rightClicked = true
-		}
-	}
-	
-	dims := material.Clickable(gtx, &fav.Clickable, func(gtx layout.Context) layout.Dimensions {
-		// Register right-click handler
-		defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
-		event.Op(gtx.Ops, &fav.RightClickTag)
-		
+func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem) layout.Dimensions {
+	return r.clickableRow(gtx, &fav.Clickable, &fav.RightClickTag, false, func(gtx layout.Context) layout.Dimensions {
 		return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
 			func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
@@ -604,15 +556,10 @@ func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem) (lay
 				)
 			})
 	})
-	
-	return dims, leftClicked, rightClicked
 }
 
-func (r *Renderer) renderDriveRow(gtx layout.Context, drive *DriveItem) (layout.Dimensions, bool) {
-	// Check for click BEFORE layout
-	clicked := drive.Clickable.Clicked(gtx)
-	
-	dims := material.Clickable(gtx, &drive.Clickable, func(gtx layout.Context) layout.Dimensions {
+func (r *Renderer) renderDriveRow(gtx layout.Context, drive *DriveItem) layout.Dimensions {
+	return material.Clickable(gtx, &drive.Clickable, func(gtx layout.Context) layout.Dimensions {
 		return layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(6), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
 			func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
@@ -629,8 +576,6 @@ func (r *Renderer) renderDriveRow(gtx layout.Context, drive *DriveItem) (layout.
 				)
 			})
 	})
-	
-	return dims, clicked
 }
 
 func formatSize(bytes int64) string {
