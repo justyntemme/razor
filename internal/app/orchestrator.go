@@ -4,6 +4,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -30,9 +31,11 @@ type Orchestrator struct {
 	showDotfiles bool
 	rawEntries   []ui.UIEntry
 	progressMu   sync.Mutex
+	homePath     string
 }
 
 func NewOrchestrator() *Orchestrator {
+	home, _ := os.UserHomeDir()
 	return &Orchestrator{
 		window:       new(app.Window),
 		fs:           fs.NewSystem(),
@@ -41,6 +44,7 @@ func NewOrchestrator() *Orchestrator {
 		state:        ui.State{SelectedIndex: -1, Favorites: make(map[string]bool)},
 		historyIndex: -1,
 		sortAsc:      true,
+		homePath:     home,
 	}
 }
 
@@ -62,10 +66,12 @@ func (o *Orchestrator) Run(startPath string) error {
 	o.store.RequestChan <- store.Request{Op: store.FetchFavorites}
 	o.store.RequestChan <- store.Request{Op: store.FetchSettings}
 
+	// Load drives
+	o.refreshDrives()
+
 	if startPath == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			startPath = home
-		} else {
+		startPath = o.homePath
+		if startPath == "" {
 			startPath, _ = os.Getwd()
 		}
 	}
@@ -90,6 +96,14 @@ func (o *Orchestrator) Run(startPath string) error {
 	}
 }
 
+func (o *Orchestrator) refreshDrives() {
+	drives := fs.ListDrives()
+	o.state.Drives = make([]ui.DriveItem, len(drives))
+	for i, d := range drives {
+		o.state.Drives[i] = ui.DriveItem{Name: d.Name, Path: d.Path}
+	}
+}
+
 func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 	switch evt.Action {
 	case ui.ActionNavigate:
@@ -98,6 +112,10 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		o.goBack()
 	case ui.ActionForward:
 		o.goForward()
+	case ui.ActionHome:
+		o.navigate(o.homePath)
+	case ui.ActionNewWindow:
+		o.openNewWindow()
 	case ui.ActionSelect:
 		o.state.SelectedIndex = evt.NewIndex
 		o.window.Invalidate()
@@ -137,6 +155,16 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 	case ui.ActionConfirmDelete:
 		go o.doDelete(evt.Path)
 	}
+}
+
+func (o *Orchestrator) openNewWindow() {
+	exe, err := os.Executable()
+	if err != nil {
+		log.Printf("Error getting executable path: %v", err)
+		return
+	}
+	cmd := exec.Command(exe, "-path", o.state.CurrentPath)
+	cmd.Start()
 }
 
 func (o *Orchestrator) navigate(path string) {

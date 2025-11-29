@@ -28,6 +28,8 @@ const (
 	ActionNavigate
 	ActionBack
 	ActionForward
+	ActionHome
+	ActionNewWindow
 	ActionSelect
 	ActionSearch
 	ActionOpen
@@ -91,10 +93,15 @@ type FavoriteItem struct {
 }
 
 type ProgressState struct {
-	Active   bool
-	Label    string
-	Current  int64
-	Total    int64
+	Active  bool
+	Label   string
+	Current int64
+	Total   int64
+}
+
+type DriveItem struct {
+	Name, Path string
+	Clickable  widget.Clickable
 }
 
 type State struct {
@@ -108,12 +115,15 @@ type State struct {
 	Clipboard     *Clipboard
 	Progress      ProgressState
 	DeleteTarget  string // Path pending deletion confirmation
+	Drives        []DriveItem
 }
 
 type Renderer struct {
 	Theme                *material.Theme
 	listState, favState  layout.List
+	driveState           layout.List
 	backBtn, fwdBtn      widget.Clickable
+	homeBtn              widget.Clickable
 	bgClick              widget.Clickable
 	focused              bool
 	pathEditor           widget.Editor
@@ -130,6 +140,7 @@ type Renderer struct {
 	favBtn               widget.Clickable
 	fileMenuBtn          widget.Clickable
 	fileMenuOpen         bool
+	newWindowBtn         widget.Clickable
 	settingsBtn          widget.Clickable
 	settingsOpen         bool
 	settingsCloseBtn     widget.Clickable
@@ -163,12 +174,15 @@ var (
 	colDisabled  = color.NRGBA{R: 150, G: 150, B: 150, A: 255}
 	colProgress  = color.NRGBA{R: 66, G: 133, B: 244, A: 255}
 	colDanger    = color.NRGBA{R: 220, G: 53, B: 69, A: 255}
+	colHomeBtnBg = color.NRGBA{R: 76, G: 175, B: 80, A: 255}  // Green
+	colDriveIcon = color.NRGBA{R: 96, G: 125, B: 139, A: 255} // Blue-gray
 )
 
 func NewRenderer() *Renderer {
 	r := &Renderer{Theme: material.NewTheme(), SortAscending: true}
 	r.listState.Axis = layout.Vertical
 	r.favState.Axis = layout.Vertical
+	r.driveState.Axis = layout.Vertical
 	r.pathEditor.SingleLine, r.pathEditor.Submit = true, true
 	r.searchEditor.SingleLine, r.searchEditor.Submit = true, true
 	r.searchEngine.Value = "default"
@@ -394,6 +408,26 @@ func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem) layo
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Body1(r.Theme, fav.Name)
 						lbl.Color, lbl.MaxLines = colDirBlue, 1
+						return lbl.Layout(gtx)
+					}),
+				)
+			})
+	})
+}
+
+func (r *Renderer) renderDriveRow(gtx layout.Context, drive *DriveItem) layout.Dimensions {
+	return material.Clickable(gtx, &drive.Clickable, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(6), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
+			func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body1(r.Theme, "💾")
+						return lbl.Layout(gtx)
+					}),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(r.Theme, drive.Name)
+						lbl.Color, lbl.MaxLines = colDriveIcon, 1
 						return lbl.Layout(gtx)
 					}),
 				)

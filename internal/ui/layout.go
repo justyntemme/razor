@@ -91,7 +91,7 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 			)
 		}),
 
-		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutFileMenu(gtx) }),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutFileMenu(gtx, &eventOut) }),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutContextMenu(gtx, state, &eventOut) }),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutSettingsModal(gtx, &eventOut) }),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutDeleteConfirm(gtx, state, &eventOut) }),
@@ -103,11 +103,23 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout.List, eventOut *UIEvent) layout.Dimensions {
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return r.navButton(gtx, &r.backBtn, "<", state.CanBack, func() { *eventOut = UIEvent{Action: ActionBack} }, keyTag)
+			return r.navButton(gtx, &r.backBtn, "◀", state.CanBack, func() { *eventOut = UIEvent{Action: ActionBack} }, keyTag)
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return r.navButton(gtx, &r.fwdBtn, ">", state.CanForward, func() { *eventOut = UIEvent{Action: ActionForward} }, keyTag)
+			return r.navButton(gtx, &r.fwdBtn, "▶", state.CanForward, func() { *eventOut = UIEvent{Action: ActionForward} }, keyTag)
+		}),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if r.homeBtn.Clicked(gtx) {
+				*eventOut = UIEvent{Action: ActionHome}
+				gtx.Execute(key.FocusCmd{Tag: keyTag})
+			}
+			btn := material.Button(r.Theme, &r.homeBtn, "⌂")
+			btn.Background = colHomeBtnBg
+			btn.Color = colWhite
+			btn.Inset = layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(6), Left: unit.Dp(10), Right: unit.Dp(10)}
+			return btn.Layout(gtx)
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
 
@@ -173,13 +185,17 @@ func (r *Renderer) navButton(gtx layout.Context, btn *widget.Clickable, label st
 
 func (r *Renderer) layoutSidebar(gtx layout.Context, state *State, eventOut *UIEvent) layout.Dimensions {
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		// Favorites section
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(8)}.Layout(gtx,
+			return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(4), Left: unit.Dp(8)}.Layout(gtx,
 				func(gtx layout.Context) layout.Dimensions {
-					return material.Body2(r.Theme, "FAVORITES").Layout(gtx)
+					lbl := material.Body2(r.Theme, "FAVORITES")
+					lbl.Color = colGray
+					return lbl.Layout(gtx)
 				})
 		}),
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Max.Y = gtx.Dp(150) // Limit favorites height
 			defer pointer.PassOp{}.Push(gtx.Ops).Pop()
 			return r.favState.Layout(gtx, len(state.FavList), func(gtx layout.Context, i int) layout.Dimensions {
 				fav := &state.FavList[i]
@@ -191,6 +207,35 @@ func (r *Renderer) layoutSidebar(gtx layout.Context, state *State, eventOut *UIE
 					r.menuIsDir, r.menuIsFav = true, true
 				}
 				return r.renderFavoriteRow(gtx, fav)
+			})
+		}),
+
+		// Separator
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				height := gtx.Dp(unit.Dp(1))
+				paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, height)}.Op())
+				return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, height)}
+			})
+		}),
+
+		// Drives section
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: unit.Dp(4), Left: unit.Dp(8)}.Layout(gtx,
+				func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(r.Theme, "DRIVES")
+					lbl.Color = colGray
+					return lbl.Layout(gtx)
+				})
+		}),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+			return r.driveState.Layout(gtx, len(state.Drives), func(gtx layout.Context, i int) layout.Dimensions {
+				drive := &state.Drives[i]
+				if drive.Clickable.Clicked(gtx) {
+					*eventOut = UIEvent{Action: ActionNavigate, Path: drive.Path}
+				}
+				return r.renderDriveRow(gtx, drive)
 			})
 		}),
 	)
@@ -325,16 +370,35 @@ func (r *Renderer) menuItemDanger(gtx layout.Context, btn *widget.Clickable, lab
 	})
 }
 
-func (r *Renderer) layoutFileMenu(gtx layout.Context) layout.Dimensions {
+func (r *Renderer) layoutFileMenu(gtx layout.Context, eventOut *UIEvent) layout.Dimensions {
 	if !r.fileMenuOpen {
 		return layout.Dimensions{}
 	}
 	defer op.Offset(image.Pt(8, 30)).Push(gtx.Ops).Pop()
-	return r.menuShell(gtx, 120, func(gtx layout.Context) layout.Dimensions {
-		if r.settingsBtn.Clicked(gtx) {
-			r.fileMenuOpen, r.settingsOpen = false, true
-		}
-		return r.menuItem(gtx, &r.settingsBtn, "Settings")
+	return r.menuShell(gtx, 140, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				if r.newWindowBtn.Clicked(gtx) {
+					r.fileMenuOpen = false
+					*eventOut = UIEvent{Action: ActionNewWindow}
+				}
+				return r.menuItem(gtx, &r.newWindowBtn, "New Window")
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				// Separator
+				return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					height := gtx.Dp(unit.Dp(1))
+					paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Min.X, height)}.Op())
+					return layout.Dimensions{Size: image.Pt(gtx.Constraints.Min.X, height)}
+				})
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				if r.settingsBtn.Clicked(gtx) {
+					r.fileMenuOpen, r.settingsOpen = false, true
+				}
+				return r.menuItem(gtx, &r.settingsBtn, "Settings")
+			}),
+		)
 	})
 }
 
