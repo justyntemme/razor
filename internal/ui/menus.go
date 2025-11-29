@@ -63,6 +63,10 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context) (layout.Dimensions, UIE
 		gtx.Constraints.Min.X = gtx.Dp(180)
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				// Only show "Open" for files, not directories
+				if r.menuIsDir {
+					return layout.Dimensions{}
+				}
 				return r.renderMenuItem(gtx, &r.openBtn, "Open")
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
