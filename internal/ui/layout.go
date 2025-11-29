@@ -502,15 +502,21 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 				})
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			// Register background right-click handler (covers entire area)
+			// Register background right-click handler FIRST, covering entire area
+			// Use PassOp so events pass through to list items on top
 			bgArea := clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops)
+			passOp := pointer.PassOp{}.Push(gtx.Ops)
 			event.Op(gtx.Ops, &r.bgRightClickTag)
+			passOp.Pop()
 			bgArea.Pop()
 			
 			// Track if any file row was right-clicked
 			fileRightClicked := false
 			
-			// Layout file list
+			// Use PassOp on the list so events pass through to background handler
+			defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+			
+			// Layout file list (row handlers register on top of background)
 			dims := r.listState.Layout(gtx, len(state.Entries), func(gtx layout.Context, i int) layout.Dimensions {
 				item := &state.Entries[i]
 				
@@ -536,7 +542,6 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 				if rightClicked {
 					fileRightClicked = true
 					// Convert local position to window coordinates
-					// clickPos is relative to the row, add offsets for: file list area + list area header
 					windowPos := image.Pt(
 						r.fileListOffset.X + clickPos.X,
 						r.fileListOffset.Y + listAreaOffset + clickPos.Y,
@@ -551,7 +556,8 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 				return rowDims
 			})
 			
-			// Check for background right-click
+			// Check for background right-click AFTER processing file rows
+			// Only show background menu if no file was right-clicked
 			if !fileRightClicked {
 				for {
 					ev, ok := gtx.Event(pointer.Filter{Target: &r.bgRightClickTag, Kinds: pointer.Press})
