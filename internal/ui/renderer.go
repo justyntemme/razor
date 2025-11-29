@@ -307,18 +307,25 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 				gtx.Constraints.Min.X = gtx.Dp(unit.Dp(200))
 				gtx.Constraints.Max.X = gtx.Dp(unit.Dp(200))
 				
-				// Handle Search Submit
+				// Handle Search Events
 				for {
 					evt, ok := r.searchEditor.Update(gtx)
 					if !ok {
 						break
 					}
-					if s, ok := evt.(widget.SubmitEvent); ok {
+					switch e := evt.(type) {
+					case widget.SubmitEvent:
 						if r.Debug {
-							log.Printf("[DEBUG] Search Submitted: %s", s.Text)
+							log.Printf("[DEBUG] Search Submitted: %s", e.Text)
 						}
-						eventOut = UIEvent{Action: ActionSearch, Path: s.Text}
-						gtx.Execute(key.FocusCmd{Tag: keyTag}) // Return focus to list
+						eventOut = UIEvent{Action: ActionSearch, Path: e.Text}
+						gtx.Execute(key.FocusCmd{Tag: keyTag}) // Return focus to list on Enter
+					case widget.ChangeEvent:
+						// Live Search: Trigger search on every keystroke
+						if r.Debug {
+							log.Printf("[DEBUG] Search Changed: %s", r.searchEditor.Text())
+						}
+						eventOut = UIEvent{Action: ActionSearch, Path: r.searchEditor.Text()}
 					}
 				}
 

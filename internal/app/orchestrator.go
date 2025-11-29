@@ -123,6 +123,16 @@ func (o *Orchestrator) requestDir(path string) {
 }
 
 func (o *Orchestrator) search(query string) {
+	// Live Search Logic: 
+	// If the user clears the search box, revert to the standard directory listing (FetchDir).
+	if query == "" {
+		if o.debug {
+			log.Printf("[DEBUG] Search cleared, reverting to standard view.")
+		}
+		o.requestDir(o.state.CurrentPath)
+		return
+	}
+
 	if o.debug {
 		log.Printf("[DEBUG] Searching for: %s in %s", query, o.state.CurrentPath)
 	}
@@ -156,13 +166,6 @@ func (o *Orchestrator) processFSEvents() {
 			}
 		}
 
-		// Don't change CurrentPath if it's a search result? 
-		// Actually, we probably should keep the current path displayed in the bar
-		// but show search results.
-		// For now, we update CurrentPath normally, which might look weird if we 
-		// don't have a distinct "Search Results" path concept.
-		// But since the FS returns the path we requested, it's fine.
-		
 		o.state.CurrentPath = resp.Path
 		o.state.Entries = uiEntries
 		
