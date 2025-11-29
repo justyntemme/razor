@@ -1,10 +1,8 @@
 package ui
 
 import (
-	"fmt"
 	"image"
 	"image/color"
-	"log"
 	"path/filepath"
 	"strings"
 	"time"
@@ -14,7 +12,6 @@ import (
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
-	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/text"
@@ -50,7 +47,7 @@ type UIEntry struct {
 	Size          int64
 	ModTime       time.Time
 	Clickable     widget.Clickable
-	RightClickTag int // Changed to int to ensure unique address
+	RightClickTag int
 	LastClick     time.Time
 }
 
@@ -58,7 +55,7 @@ type FavoriteItem struct {
 	Name          string
 	Path          string
 	Clickable     widget.Clickable
-	RightClickTag int // Changed to int
+	RightClickTag int
 }
 
 type State struct {
@@ -77,10 +74,10 @@ type Renderer struct {
 	favState  layout.List
 	backBtn   widget.Clickable
 	fwdBtn    widget.Clickable
-	
-	bgClick   widget.Clickable
-	focused   bool
-	Debug     bool
+
+	bgClick widget.Clickable
+	focused bool
+	Debug   bool
 
 	pathEditor widget.Editor
 	pathClick  widget.Clickable
@@ -93,11 +90,11 @@ type Renderer struct {
 	menuPath    string
 	menuIsDir   bool
 	menuIsFav   bool
-	
-	openBtn     widget.Clickable
-	copyBtn     widget.Clickable
-	favBtn      widget.Clickable
-	
+
+	openBtn widget.Clickable
+	copyBtn widget.Clickable
+	favBtn  widget.Clickable
+
 	fileMenuBtn  widget.Clickable
 	fileMenuOpen bool
 	settingsBtn  widget.Clickable
@@ -105,8 +102,8 @@ type Renderer struct {
 	settingsOpen     bool
 	settingsCloseBtn widget.Clickable
 	searchEngine     widget.Enum
-	
-	mousePos image.Point 
+
+	mousePos image.Point
 	mouseTag struct{}
 }
 
@@ -118,18 +115,107 @@ func NewRenderer() *Renderer {
 	r.favState.Axis = layout.Vertical
 	r.pathEditor.SingleLine = true
 	r.pathEditor.Submit = true
-	
+
 	r.searchEditor.SingleLine = true
 	r.searchEditor.Submit = true
-	
-	r.searchEngine.Value = "default" 
-	
+
+	r.searchEngine.Value = "default"
+
 	return r
 }
 
-func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
+// detectRightClick checks for secondary button presses on a specific tag
+func (r *Renderer) detectRightClick(gtx layout.Context, tag event.Tag) bool {
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: tag, Kinds: pointer.Press | pointer.Release})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(pointer.Event); ok {
+			if e.Kind == pointer.Press && e.Buttons.Contain(pointer.ButtonSecondary) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// processGlobalInput handles keyboard shortcuts and global mouse tracking
+func (r *Renderer) processGlobalInput(gtx layout.Context, state *State) UIEvent {
 	var eventOut UIEvent
 
+	// Mouse Tracking
+	mouseTag := &r.mouseTag
+	event.Op(gtx.Ops, mouseTag)
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: mouseTag, Kinds: pointer.Move})
+		if !ok {
+			break
+		}
+		if x, ok := ev.(pointer.Event); ok {
+			r.mousePos = image.Point{X: int(x.Position.X), Y: int(x.Position.Y)}
+		}
+	}
+
+	// Keyboard Shortcuts
+	for {
+		e, ok := gtx.Event(key.Filter{Focus: true, Name: ""})
+		if !ok {
+			break
+		}
+		if r.isEditing || r.settingsOpen {
+			continue
+		}
+		if k, ok := e.(key.Event); ok && k.State == key.Press {
+			switch k.Name {
+			case "Up":
+				newIndex := -1
+				if state.SelectedIndex > 0 {
+					newIndex = state.SelectedIndex - 1
+				} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
+					newIndex = len(state.Entries) - 1
+				}
+				if newIndex != -1 {
+					eventOut = UIEvent{Action: ActionSelect, NewIndex: newIndex}
+					r.listState.ScrollTo(newIndex)
+				}
+			case "Down":
+				newIndex := -1
+				if state.SelectedIndex < len(state.Entries)-1 {
+					newIndex = state.SelectedIndex + 1
+				} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
+					newIndex = 0
+				}
+				if newIndex != -1 {
+					eventOut = UIEvent{Action: ActionSelect, NewIndex: newIndex}
+					r.listState.ScrollTo(newIndex)
+				}
+			case "Left":
+				if k.Modifiers.Contain(key.ModAlt) && state.CanBack {
+					eventOut = UIEvent{Action: ActionBack}
+				}
+			case "Right":
+				if k.Modifiers.Contain(key.ModAlt) && state.CanForward {
+					eventOut = UIEvent{Action: ActionForward}
+				}
+			case "Return", "Enter":
+				if state.SelectedIndex >= 0 && state.SelectedIndex < len(state.Entries) {
+					item := state.Entries[state.SelectedIndex]
+					if item.IsDir {
+						eventOut = UIEvent{Action: ActionNavigate, Path: item.Path}
+					} else {
+						eventOut = UIEvent{Action: ActionOpen, Path: item.Path}
+					}
+				}
+			}
+		}
+	}
+	return eventOut
+}
+
+// --- MAIN LAYOUT ---
+
+func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 	area := clip.Rect{Max: gtx.Constraints.Max}
 	defer area.Push(gtx.Ops).Pop()
 
@@ -141,72 +227,17 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 		r.focused = true
 	}
 
-	mouseTag := &r.mouseTag
-	event.Op(gtx.Ops, mouseTag)
-	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: mouseTag, Kinds: pointer.Move})
-		if !ok { break }
-		if x, ok := ev.(pointer.Event); ok {
-			r.mousePos = image.Point{X: int(x.Position.X), Y: int(x.Position.Y)}
-		}
-	}
+	// 1. Process Input
+	eventOut := r.processGlobalInput(gtx, state)
 
-	for {
-		e, ok := gtx.Event(key.Filter{Focus: true, Name: ""})
-		if !ok { break }
-		switch e := e.(type) {
-		case key.Event:
-			if r.isEditing || r.settingsOpen { continue }
-			if e.State == key.Press {
-				switch e.Name {
-				case "Up":
-					newIndex := -1
-					if state.SelectedIndex > 0 {
-						newIndex = state.SelectedIndex - 1
-					} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
-						newIndex = len(state.Entries) - 1
-					}
-					if newIndex != -1 {
-						eventOut = UIEvent{Action: ActionSelect, NewIndex: newIndex}
-						r.listState.ScrollTo(newIndex)
-					}
-				case "Down":
-					newIndex := -1
-					if state.SelectedIndex < len(state.Entries)-1 {
-						newIndex = state.SelectedIndex + 1
-					} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
-						newIndex = 0
-					}
-					if newIndex != -1 {
-						eventOut = UIEvent{Action: ActionSelect, NewIndex: newIndex}
-						r.listState.ScrollTo(newIndex)
-					}
-				case "Left":
-					if e.Modifiers.Contain(key.ModAlt) && state.CanBack {
-						eventOut = UIEvent{Action: ActionBack}
-					}
-				case "Right":
-					if e.Modifiers.Contain(key.ModAlt) && state.CanForward {
-						eventOut = UIEvent{Action: ActionForward}
-					}
-				case "Return", "Enter":
-					if state.SelectedIndex >= 0 && state.SelectedIndex < len(state.Entries) {
-						item := state.Entries[state.SelectedIndex]
-						if item.IsDir {
-							eventOut = UIEvent{Action: ActionNavigate, Path: item.Path}
-						} else {
-							eventOut = UIEvent{Action: ActionOpen, Path: item.Path}
-						}
-					}
-				}
-			}
-		}
-	}
+	// --- VIEW DEFINITIONS ---
 
 	appBar := func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				if r.fileMenuBtn.Clicked(gtx) { r.fileMenuOpen = !r.fileMenuOpen }
+				if r.fileMenuBtn.Clicked(gtx) {
+					r.fileMenuOpen = !r.fileMenuOpen
+				}
 				btn := material.Button(r.Theme, &r.fileMenuBtn, "File")
 				btn.Inset = layout.UniformInset(unit.Dp(6))
 				btn.Background = color.NRGBA{}
@@ -219,21 +250,28 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 	navBar := func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				if r.backBtn.Clicked(gtx) { eventOut = UIEvent{Action: ActionBack}; gtx.Execute(key.FocusCmd{Tag: keyTag}) }
+				if r.backBtn.Clicked(gtx) {
+					eventOut = UIEvent{Action: ActionBack}
+					gtx.Execute(key.FocusCmd{Tag: keyTag})
+				}
 				return material.Button(r.Theme, &r.backBtn, "<").Layout(gtx)
 			}),
 			layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				if r.fwdBtn.Clicked(gtx) { eventOut = UIEvent{Action: ActionForward}; gtx.Execute(key.FocusCmd{Tag: keyTag}) }
+				if r.fwdBtn.Clicked(gtx) {
+					eventOut = UIEvent{Action: ActionForward}
+					gtx.Execute(key.FocusCmd{Tag: keyTag})
+				}
 				return material.Button(r.Theme, &r.fwdBtn, ">").Layout(gtx)
 			}),
 			layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
-			
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 				if r.isEditing {
 					for {
 						evt, ok := r.pathEditor.Update(gtx)
-						if !ok { break }
+						if !ok {
+							break
+						}
 						if s, ok := evt.(widget.SubmitEvent); ok {
 							r.isEditing = false
 							eventOut = UIEvent{Action: ActionNavigate, Path: strings.TrimSpace(s.Text)}
@@ -242,24 +280,25 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 					}
 					return material.Editor(r.Theme, &r.pathEditor, "Path").Layout(gtx)
 				}
-				if r.pathClick.Clicked(gtx) { r.isEditing = true; r.pathEditor.SetText(state.CurrentPath); gtx.Execute(key.FocusCmd{Tag: &r.pathEditor}) }
+				if r.pathClick.Clicked(gtx) {
+					r.isEditing = true
+					r.pathEditor.SetText(state.CurrentPath)
+					gtx.Execute(key.FocusCmd{Tag: &r.pathEditor})
+				}
 				return material.Clickable(gtx, &r.pathClick, func(gtx layout.Context) layout.Dimensions {
 					return material.H6(r.Theme, state.CurrentPath).Layout(gtx)
 				})
 			}),
-			
 			layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
-
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints.Min.X = gtx.Dp(unit.Dp(200))
 				gtx.Constraints.Max.X = gtx.Dp(unit.Dp(200))
 				for {
 					evt, ok := r.searchEditor.Update(gtx)
-					if !ok { break }
+					if !ok {
+						break
+					}
 					if s, ok := evt.(widget.SubmitEvent); ok {
-						if r.Debug {
-							log.Printf("[DEBUG] Search Submitted: %s", s.Text)
-						}
 						eventOut = UIEvent{Action: ActionSearch, Path: s.Text}
 						gtx.Execute(key.FocusCmd{Tag: keyTag})
 					}
@@ -284,32 +323,18 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 				return r.favState.Layout(gtx, len(state.FavList), func(gtx layout.Context, index int) layout.Dimensions {
 					fav := &state.FavList[index]
-					
 					if fav.Clickable.Clicked(gtx) {
 						eventOut = UIEvent{Action: ActionNavigate, Path: fav.Path}
 					}
-
-					rightClickTag := &fav.RightClickTag
-					for {
-						ev, ok := gtx.Event(pointer.Filter{Target: rightClickTag, Kinds: pointer.Press | pointer.Release})
-						if !ok { break }
-						if e, ok := ev.(pointer.Event); ok {
-							if e.Kind == pointer.Press && e.Buttons.Contain(pointer.ButtonSecondary) {
-								r.menuVisible = true
-								r.menuPos = r.mousePos
-								r.menuPath = fav.Path
-								r.menuIsFav = true
-							}
-						}
+					// Use shared Right Click helper
+					if r.detectRightClick(gtx, &fav.RightClickTag) {
+						r.menuVisible = true
+						r.menuPos = r.mousePos
+						r.menuPath = fav.Path
+						r.menuIsFav = true
 					}
-
-					return material.Clickable(gtx, &fav.Clickable, func(gtx layout.Context) layout.Dimensions {
-						return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							txt := material.Body1(r.Theme, fav.Name)
-							txt.MaxLines = 1
-							return txt.Layout(gtx)
-						})
-					})
+					// Use shared Menu Item helper
+					return r.renderMenuItem(gtx, &fav.Clickable, fav.Name)
 				})
 			}),
 		)
@@ -325,54 +350,58 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 			isSelected := index == state.SelectedIndex
 
 			if item.Clickable.Clicked(gtx) {
-				if r.isEditing { r.isEditing = false }
-				if r.fileMenuOpen { r.fileMenuOpen = false }
-				
+				if r.isEditing {
+					r.isEditing = false
+				}
+				if r.fileMenuOpen {
+					r.fileMenuOpen = false
+				}
 				eventOut = UIEvent{Action: ActionSelect, NewIndex: index}
 				gtx.Execute(key.FocusCmd{Tag: keyTag})
 				now := time.Now()
 				if !item.LastClick.IsZero() && now.Sub(item.LastClick) < 500*time.Millisecond {
-					if item.IsDir { eventOut = UIEvent{Action: ActionNavigate, Path: item.Path} } else { eventOut = UIEvent{Action: ActionOpen, Path: item.Path} }
+					if item.IsDir {
+						eventOut = UIEvent{Action: ActionNavigate, Path: item.Path}
+					} else {
+						eventOut = UIEvent{Action: ActionOpen, Path: item.Path}
+					}
 				}
 				item.LastClick = now
 			}
 
-			// Right-Click Listener (Logic only)
-			rightClickTag := &item.RightClickTag
-			for {
-				ev, ok := gtx.Event(pointer.Filter{Target: rightClickTag, Kinds: pointer.Press | pointer.Release})
-				if !ok { break }
-				if e, ok := ev.(pointer.Event); ok {
-					if e.Kind == pointer.Press && e.Buttons.Contain(pointer.ButtonSecondary) {
-						if r.Debug {
-							log.Printf("[DEBUG] Right Click detected on item %d", index)
-						}
-						r.menuVisible = true
-						r.menuPos = r.mousePos
-						r.menuPath = item.Path
-						r.menuIsDir = item.IsDir
-						_, r.menuIsFav = state.Favorites[item.Path]
-						eventOut = UIEvent{Action: ActionSelect, NewIndex: index}
-					}
-				}
+			// Use shared Right Click helper
+			if r.detectRightClick(gtx, &item.RightClickTag) {
+				r.menuVisible = true
+				r.menuPos = r.mousePos
+				r.menuPath = item.Path
+				r.menuIsDir = item.IsDir
+				_, r.menuIsFav = state.Favorites[item.Path]
+				eventOut = UIEvent{Action: ActionSelect, NewIndex: index}
 			}
+
 			return r.renderRow(gtx, item, isSelected)
 		})
 	}
 
+	// 2. Main Layout Stack
 	layout.Stack{}.Layout(gtx,
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			if r.bgClick.Clicked(gtx) {
-				if r.Debug { log.Println("[DEBUG] Background Clicked") }
-				if r.menuVisible { r.menuVisible = false }
-				if r.fileMenuOpen { r.fileMenuOpen = false }
-				if !r.settingsOpen { eventOut = UIEvent{Action: ActionSelect, NewIndex: -1}; gtx.Execute(key.FocusCmd{Tag: keyTag}) }
+				if r.menuVisible {
+					r.menuVisible = false
+				}
+				if r.fileMenuOpen {
+					r.fileMenuOpen = false
+				}
+				if !r.settingsOpen {
+					eventOut = UIEvent{Action: ActionSelect, NewIndex: -1}
+					gtx.Execute(key.FocusCmd{Tag: keyTag})
+				}
 			}
 			return r.bgClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Dimensions{Size: gtx.Constraints.Max}
 			})
 		}),
-		
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -389,15 +418,10 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 							paint.FillShape(gtx.Ops, color.NRGBA{R: 245, G: 245, B: 245, A: 255}, clip.Rect{Max: gtx.Constraints.Max}.Op())
 							return sidebar(gtx)
 						}),
-						
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							width := gtx.Dp(1)
-							height := gtx.Constraints.Max.Y
-							d := image.Point{X: width, Y: height}
-							paint.FillShape(gtx.Ops, color.NRGBA{A: 50}, clip.Rect{Max: d}.Op())
-							return layout.Dimensions{Size: d}
+							paint.FillShape(gtx.Ops, color.NRGBA{A: 50}, clip.Rect{Max: image.Pt(gtx.Dp(1), gtx.Constraints.Max.Y)}.Op())
+							return layout.Dimensions{Size: image.Pt(gtx.Dp(1), gtx.Constraints.Max.Y)}
 						}),
-
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -416,141 +440,29 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 			)
 		}),
 
-		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-			if !r.fileMenuOpen { return layout.Dimensions{} }
-			offset := op.Offset(image.Point{X: 8, Y: 30}).Push(gtx.Ops)
-			defer offset.Pop()
-			
-			return widget.Border{Color: color.NRGBA{R: 200, G: 200, B: 200, A: 255}, Width: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Stack{}.Layout(gtx,
-					layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-						paint.FillShape(gtx.Ops, color.NRGBA{R: 255, G: 255, B: 255, A: 255}, clip.Rect{Max: image.Pt(120, 40)}.Op())
-						return layout.Dimensions{Size: image.Pt(120, 40)}
-					}),
-					layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-						if r.settingsBtn.Clicked(gtx) { r.fileMenuOpen = false; r.settingsOpen = true }
-						return material.Clickable(gtx, &r.settingsBtn, func(gtx layout.Context) layout.Dimensions {
-							gtx.Constraints.Min.X = gtx.Dp(120)
-							return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								txt := material.Body2(r.Theme, "Settings")
-								txt.Color = color.NRGBA{R: 0, G: 0, B: 0, A: 255}
-								return txt.Layout(gtx)
-							})
-						})
-					}),
-				)
-			})
-		}),
+		// --- POPUPS & MENUS (Moved to menus.go) ---
 
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-			if !r.menuVisible { return layout.Dimensions{} }
-			offset := op.Offset(r.menuPos).Push(gtx.Ops)
-			defer offset.Pop()
-
-			if r.openBtn.Clicked(gtx) { r.menuVisible = false; eventOut = UIEvent{Action: ActionOpen, Path: r.menuPath} }
-			if r.copyBtn.Clicked(gtx) { r.menuVisible = false }
-			if r.favBtn.Clicked(gtx) {
-				r.menuVisible = false
-				if r.menuIsFav { eventOut = UIEvent{Action: ActionRemoveFavorite, Path: r.menuPath} } else { eventOut = UIEvent{Action: ActionAddFavorite, Path: r.menuPath} }
+			// Logic now lives in layoutFileMenu
+			dims, evt := r.layoutFileMenu(gtx)
+			if evt.Action != ActionNone {
+				eventOut = evt
 			}
-
-			return widget.Border{Color: color.NRGBA{R: 200, G: 200, B: 200, A: 255}, Width: unit.Dp(1), CornerRadius: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Stack{}.Layout(gtx,
-					layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-						paint.FillShape(gtx.Ops, color.NRGBA{R: 255, G: 255, B: 255, A: 255}, clip.Rect{Max: gtx.Constraints.Min}.Op())
-						return layout.Dimensions{Size: gtx.Constraints.Min}
-					}),
-					layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-						gtx.Constraints.Min.X = gtx.Dp(180)
-						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return material.Clickable(gtx, &r.openBtn, func(gtx layout.Context) layout.Dimensions {
-									return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-										txt := material.Body2(r.Theme, "Open")
-										txt.Color = color.NRGBA{R: 0, G: 0, B: 0, A: 255}
-										return txt.Layout(gtx)
-									})
-								})
-							}),
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return material.Clickable(gtx, &r.copyBtn, func(gtx layout.Context) layout.Dimensions {
-									return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-										txt := material.Body2(r.Theme, "Copy (noop)")
-										txt.Color = color.NRGBA{R: 0, G: 0, B: 0, A: 255}
-										return txt.Layout(gtx)
-									})
-								})
-							}),
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								if !r.menuIsDir {
-									return layout.Dimensions{}
-								}
-								text := "Add to Favorites"
-								if r.menuIsFav { text = "Remove Favorite" }
-								return material.Clickable(gtx, &r.favBtn, func(gtx layout.Context) layout.Dimensions {
-									return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-										txt := material.Body2(r.Theme, text)
-										txt.Color = color.NRGBA{R: 0, G: 0, B: 0, A: 255}
-										return txt.Layout(gtx)
-									})
-								})
-							}),
-						)
-					}),
-				)
-			})
+			return dims
 		}),
 
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-			if !r.settingsOpen { return layout.Dimensions{} }
-			if r.settingsCloseBtn.Clicked(gtx) { r.settingsOpen = false }
-			
-			layout.Stack{}.Layout(gtx,
-				layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-					paint.FillShape(gtx.Ops, color.NRGBA{A: 150}, clip.Rect{Max: gtx.Constraints.Max}.Op())
-					return material.Clickable(gtx, &r.settingsCloseBtn, func(gtx layout.Context) layout.Dimensions {
-						return layout.Dimensions{Size: gtx.Constraints.Max}
-					})
-				}),
-				layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-					return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						return widget.Border{Color: color.NRGBA{A: 100}, Width: unit.Dp(1), CornerRadius: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							return layout.Stack{}.Layout(gtx,
-								layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-									paint.FillShape(gtx.Ops, color.NRGBA{R: 255, G: 255, B: 255, A: 255}, clip.Rect{Max: gtx.Constraints.Min}.Op())
-									return layout.Dimensions{Size: gtx.Constraints.Min}
-								}),
-								layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-									gtx.Constraints.Min.X = gtx.Dp(300)
-									gtx.Constraints.Min.Y = gtx.Dp(200)
-									return layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-										return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-												h6 := material.H6(r.Theme, "Settings")
-												h6.Color = color.NRGBA{R: 0, G: 0, B: 0, A: 255}
-												return h6.Layout(gtx)
-											}),
-											layout.Rigid(layout.Spacer{Height: unit.Dp(20)}.Layout),
-											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-												lbl := material.Body1(r.Theme, "Search Engine:")
-												lbl.Color = color.NRGBA{R: 0, G: 0, B: 0, A: 255}
-												return lbl.Layout(gtx)
-											}),
-											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-												return material.RadioButton(r.Theme, &r.searchEngine, "default", "Default").Layout(gtx)
-											}),
-											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-												return material.RadioButton(r.Theme, &r.searchEngine, "ripgrep", "ripgrep").Layout(gtx)
-											}),
-										)
-									})
-								}),
-							)
-						})
-					})
-				}),
-			)
-			return layout.Dimensions{Size: gtx.Constraints.Max}
+			// Logic now lives in layoutContextMenu
+			dims, evt := r.layoutContextMenu(gtx)
+			if evt.Action != ActionNone {
+				eventOut = evt
+			}
+			return dims
+		}),
+
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			// Logic now lives in layoutSettingsModal
+			return r.layoutSettingsModal(gtx)
 		}),
 	)
 
@@ -645,31 +557,11 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, selected bool) l
 			})
 		}),
 
-		// CRITICAL FIX: Push Clip Rect BEFORE Registering Event Op
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-			// 1. Establish the Hit Area (Clip) FIRST
 			defer clip.Rect{Max: gtx.Constraints.Min}.Push(gtx.Ops).Pop()
-			
-			// 2. Register the Tag to listen within that Area
 			event.Op(gtx.Ops, &item.RightClickTag)
-			
-			// 3. Allow pass-through for Left Click layer
 			defer pointer.PassOp{}.Push(gtx.Ops).Pop()
-			
 			return layout.Dimensions{Size: gtx.Constraints.Min}
 		}),
 	)
-}
-
-func formatSize(bytes int64) string {
-	const unit = 1024
-	if bytes < unit {
-		return fmt.Sprintf("%d B", bytes)
-	}
-	div, exp := int64(unit), 0
-	for n := bytes / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
