@@ -2,6 +2,6 @@
 
 package main
 
-func manageConsole(debug bool) {
+func manageConsole() {
 	// No-op on non-Windows systems
 }

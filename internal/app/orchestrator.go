@@ -25,7 +25,6 @@ type Orchestrator struct {
 	state        ui.State
 	history      []string
 	historyIndex int
-	debug        bool
 	sortColumn   ui.SortColumn
 	sortAsc      bool
 	showDotfiles bool
@@ -33,23 +32,20 @@ type Orchestrator struct {
 	progressMu   sync.Mutex
 }
 
-func NewOrchestrator(debug bool) *Orchestrator {
-	r := ui.NewRenderer()
-	r.Debug = debug
+func NewOrchestrator() *Orchestrator {
 	return &Orchestrator{
 		window:       new(app.Window),
 		fs:           fs.NewSystem(),
 		store:        store.NewDB(),
-		ui:           r,
+		ui:           ui.NewRenderer(),
 		state:        ui.State{SelectedIndex: -1, Favorites: make(map[string]bool)},
 		historyIndex: -1,
-		debug:        debug,
 		sortAsc:      true,
 	}
 }
 
 func (o *Orchestrator) Run(startPath string) error {
-	if o.debug {
+	if debugEnabled {
 		log.Println("Starting Razor in DEBUG mode")
 	}
 
@@ -84,8 +80,8 @@ func (o *Orchestrator) Run(startPath string) error {
 			gtx := app.NewContext(&ops, e)
 			evt := o.ui.Layout(gtx, &o.state)
 
-			if o.debug && evt.Action != ui.ActionNone {
-				log.Printf("[DEBUG] Action: %d, Path: %s, Index: %d", evt.Action, evt.Path, evt.NewIndex)
+			if evt.Action != ui.ActionNone {
+				debugLog("Action: %d, Path: %s, Index: %d", evt.Action, evt.Path, evt.NewIndex)
 			}
 
 			o.handleUIEvent(evt)
@@ -533,9 +529,9 @@ func itoa(i int) string {
 	return s
 }
 
-func Main(debug bool, startPath string) {
+func Main(startPath string) {
 	go func() {
-		o := NewOrchestrator(debug)
+		o := NewOrchestrator()
 		if err := o.Run(startPath); err != nil {
 			log.Fatal(err)
 		}

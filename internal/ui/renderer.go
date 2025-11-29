@@ -115,7 +115,7 @@ type Renderer struct {
 	listState, favState  layout.List
 	backBtn, fwdBtn      widget.Clickable
 	bgClick              widget.Clickable
-	focused, Debug       bool
+	focused              bool
 	pathEditor           widget.Editor
 	pathClick            widget.Clickable
 	isEditing            bool

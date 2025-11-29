@@ -6,13 +6,11 @@ import (
 )
 
 func main() {
-	debug := flag.Bool("debug", false, "Enable verbose debug logging")
 	startPath := flag.String("path", "", "Initial directory path (defaults to user home)")
 	flag.Parse()
 
-	// Handle OS-specific console visibility
-	manageConsole(*debug)
+	// Handle OS-specific console visibility based on build tags
+	manageConsole()
 
-	// Pass flags to the application core
-	app.Main(*debug, *startPath)
+	app.Main(*startPath)
 }
