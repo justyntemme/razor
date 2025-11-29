@@ -35,6 +35,19 @@ const (
 	ActionRemoveFavorite
 	ActionSort
 	ActionToggleDotfiles
+	ActionCopy
+	ActionCut
+	ActionPaste
+	ActionDelete
+	ActionConfirmDelete
+	ActionCancelDelete
+)
+
+type ClipOp int
+
+const (
+	ClipCopy ClipOp = iota
+	ClipCut
 )
 
 type SortColumn int
@@ -46,6 +59,11 @@ const (
 	SortBySize
 )
 
+type Clipboard struct {
+	Path string
+	Op   ClipOp
+}
+
 type UIEvent struct {
 	Action        UIAction
 	Path          string
@@ -53,6 +71,7 @@ type UIEvent struct {
 	SortColumn    SortColumn
 	SortAscending bool
 	ShowDotfiles  bool
+	ClipOp        ClipOp
 }
 
 type UIEntry struct {
@@ -71,6 +90,13 @@ type FavoriteItem struct {
 	RightClickTag int
 }
 
+type ProgressState struct {
+	Active   bool
+	Label    string
+	Current  int64
+	Total    int64
+}
+
 type State struct {
 	CurrentPath   string
 	Entries       []UIEntry
@@ -79,6 +105,9 @@ type State struct {
 	CanForward    bool
 	Favorites     map[string]bool
 	FavList       []FavoriteItem
+	Clipboard     *Clipboard
+	Progress      ProgressState
+	DeleteTarget  string // Path pending deletion confirmation
 }
 
 type Renderer struct {
@@ -96,6 +125,8 @@ type Renderer struct {
 	menuPath             string
 	menuIsDir, menuIsFav bool
 	openBtn, copyBtn     widget.Clickable
+	cutBtn, pasteBtn     widget.Clickable
+	deleteBtn            widget.Clickable
 	favBtn               widget.Clickable
 	fileMenuBtn          widget.Clickable
 	fileMenuOpen         bool
@@ -106,7 +137,12 @@ type Renderer struct {
 	mousePos             image.Point
 	mouseTag             struct{}
 
-	// Column sorting - use array for cleaner iteration
+	// Delete confirmation
+	deleteConfirmOpen    bool
+	deleteConfirmYes     widget.Clickable
+	deleteConfirmNo      widget.Clickable
+
+	// Column sorting
 	headerBtns    [4]widget.Clickable
 	SortColumn    SortColumn
 	SortAscending bool
@@ -117,14 +153,16 @@ type Renderer struct {
 }
 
 var (
-	colWhite    = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
-	colBlack    = color.NRGBA{R: 0, G: 0, B: 0, A: 255}
-	colGray     = color.NRGBA{R: 100, G: 100, B: 100, A: 255}
+	colWhite     = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+	colBlack     = color.NRGBA{R: 0, G: 0, B: 0, A: 255}
+	colGray      = color.NRGBA{R: 100, G: 100, B: 100, A: 255}
 	colLightGray = color.NRGBA{R: 200, G: 200, B: 200, A: 255}
-	colDirBlue  = color.NRGBA{R: 0, G: 0, B: 128, A: 255}
-	colSelected = color.NRGBA{R: 200, G: 220, B: 255, A: 255}
-	colSidebar  = color.NRGBA{R: 245, G: 245, B: 245, A: 255}
-	colDisabled = color.NRGBA{R: 150, G: 150, B: 150, A: 255}
+	colDirBlue   = color.NRGBA{R: 0, G: 0, B: 128, A: 255}
+	colSelected  = color.NRGBA{R: 200, G: 220, B: 255, A: 255}
+	colSidebar   = color.NRGBA{R: 245, G: 245, B: 245, A: 255}
+	colDisabled  = color.NRGBA{R: 150, G: 150, B: 150, A: 255}
+	colProgress  = color.NRGBA{R: 66, G: 133, B: 244, A: 255}
+	colDanger    = color.NRGBA{R: 220, G: 53, B: 69, A: 255}
 )
 
 func NewRenderer() *Renderer {
@@ -153,7 +191,6 @@ func (r *Renderer) detectRightClick(gtx layout.Context, tag event.Tag) bool {
 }
 
 func (r *Renderer) processGlobalInput(gtx layout.Context, state *State) UIEvent {
-	// Mouse tracking
 	event.Op(gtx.Ops, &r.mouseTag)
 	for {
 		ev, ok := gtx.Event(pointer.Filter{Target: &r.mouseTag, Kinds: pointer.Move})
@@ -165,13 +202,12 @@ func (r *Renderer) processGlobalInput(gtx layout.Context, state *State) UIEvent 
 		}
 	}
 
-	// Keyboard
 	for {
 		e, ok := gtx.Event(key.Filter{Focus: true, Name: ""})
 		if !ok {
 			break
 		}
-		if r.isEditing || r.settingsOpen {
+		if r.isEditing || r.settingsOpen || r.deleteConfirmOpen {
 			continue
 		}
 		k, ok := e.(key.Event)
@@ -211,12 +247,28 @@ func (r *Renderer) processGlobalInput(gtx layout.Context, state *State) UIEvent 
 				}
 				return UIEvent{Action: ActionOpen, Path: item.Path}
 			}
+		case "C":
+			if k.Modifiers.Contain(key.ModCtrl) && state.SelectedIndex >= 0 {
+				return UIEvent{Action: ActionCopy, Path: state.Entries[state.SelectedIndex].Path}
+			}
+		case "X":
+			if k.Modifiers.Contain(key.ModCtrl) && state.SelectedIndex >= 0 {
+				return UIEvent{Action: ActionCut, Path: state.Entries[state.SelectedIndex].Path}
+			}
+		case "V":
+			if k.Modifiers.Contain(key.ModCtrl) && state.Clipboard != nil {
+				return UIEvent{Action: ActionPaste}
+			}
+		case "⌫", "⌦", "Delete":
+			if state.SelectedIndex >= 0 {
+				r.deleteConfirmOpen = true
+				state.DeleteTarget = state.Entries[state.SelectedIndex].Path
+			}
 		}
 	}
 	return UIEvent{}
 }
 
-// renderColumns handles all 4 column headers with a table-driven approach
 func (r *Renderer) renderColumns(gtx layout.Context) (layout.Dimensions, UIEvent) {
 	type colDef struct {
 		label string
@@ -235,7 +287,7 @@ func (r *Renderer) renderColumns(gtx layout.Context) (layout.Dimensions, UIEvent
 	children := make([]layout.FlexChild, len(cols))
 
 	for i, c := range cols {
-		i, c := i, c // capture
+		i, c := i, c
 		if r.headerBtns[i].Clicked(gtx) {
 			if r.SortColumn == c.col {
 				r.SortAscending = !r.SortAscending
@@ -269,7 +321,6 @@ func (r *Renderer) renderColumns(gtx layout.Context) (layout.Dimensions, UIEvent
 	return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween}.Layout(gtx, children...), evt
 }
 
-// clickableRow creates a row with left-click and right-click support - shared by both file list and favorites
 func (r *Renderer) clickableRow(gtx layout.Context, clk *widget.Clickable, rightTag *int, selected bool, content layout.Widget) layout.Dimensions {
 	return layout.Stack{}.Layout(gtx,
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {

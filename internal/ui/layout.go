@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"fmt"
 	"image"
 	"image/color"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -30,13 +32,11 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 
 	eventOut := r.processGlobalInput(gtx, state)
 
-	// Main layout stack
 	layout.Stack{}.Layout(gtx,
-		// Background click handler
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			if r.bgClick.Clicked(gtx) {
 				r.menuVisible, r.fileMenuOpen = false, false
-				if !r.settingsOpen {
+				if !r.settingsOpen && !r.deleteConfirmOpen {
 					eventOut = UIEvent{Action: ActionSelect, NewIndex: -1}
 					gtx.Execute(key.FocusCmd{Tag: keyTag})
 				}
@@ -46,10 +46,8 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 			})
 		}),
 
-		// Main content
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				// App bar
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						if r.fileMenuBtn.Clicked(gtx) {
@@ -62,7 +60,6 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 					})
 				}),
 
-				// Nav bar
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx,
 						func(gtx layout.Context) layout.Dimensions {
@@ -70,33 +67,34 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 						})
 				}),
 
-				// Main area (sidebar + file list)
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-						// Sidebar
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							gtx.Constraints.Min.X, gtx.Constraints.Max.X = gtx.Dp(180), gtx.Dp(180)
 							paint.FillShape(gtx.Ops, colSidebar, clip.Rect{Max: gtx.Constraints.Max}.Op())
 							return r.layoutSidebar(gtx, state, &eventOut)
 						}),
-						// Divider
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							paint.FillShape(gtx.Ops, color.NRGBA{A: 50}, clip.Rect{Max: image.Pt(gtx.Dp(1), gtx.Constraints.Max.Y)}.Op())
 							return layout.Dimensions{Size: image.Pt(gtx.Dp(1), gtx.Constraints.Max.Y)}
 						}),
-						// File list
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 							return r.layoutFileList(gtx, state, keyTag, &eventOut)
 						}),
 					)
 				}),
+
+				// Progress bar at bottom
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return r.layoutProgressBar(gtx, state)
+				}),
 			)
 		}),
 
-		// Popups
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutFileMenu(gtx) }),
-		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutContextMenu(gtx, &eventOut) }),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutContextMenu(gtx, state, &eventOut) }),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutSettingsModal(gtx, &eventOut) }),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutDeleteConfirm(gtx, state, &eventOut) }),
 	)
 
 	return eventOut
@@ -104,7 +102,6 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 
 func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout.List, eventOut *UIEvent) layout.Dimensions {
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-		// Back/Forward buttons - unified helper
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return r.navButton(gtx, &r.backBtn, "<", state.CanBack, func() { *eventOut = UIEvent{Action: ActionBack} }, keyTag)
 		}),
@@ -114,7 +111,6 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
 
-		// Path bar
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			if r.isEditing {
 				for {
@@ -141,7 +137,6 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
 
-		// Search box
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints.Min.X, gtx.Constraints.Max.X = gtx.Dp(200), gtx.Dp(200)
 			for {
@@ -203,7 +198,6 @@ func (r *Renderer) layoutSidebar(gtx layout.Context, state *State, eventOut *UIE
 
 func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layout.List, eventOut *UIEvent) layout.Dimensions {
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		// Column headers
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
 				func(gtx layout.Context) layout.Dimensions {
@@ -214,14 +208,12 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 					return dims
 				})
 		}),
-		// Divider
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return widget.Border{Color: color.NRGBA{A: 50}, Width: unit.Dp(1)}.Layout(gtx,
 				func(gtx layout.Context) layout.Dimensions {
 					return layout.Spacer{Height: unit.Dp(1), Width: unit.Dp(1)}.Layout(gtx)
 				})
 		}),
-		// File list
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			defer pointer.PassOp{}.Push(gtx.Ops).Pop()
 			return r.listState.Layout(gtx, len(state.Entries), func(gtx layout.Context, i int) layout.Dimensions {
@@ -249,6 +241,50 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 			})
 		}),
 	)
+}
+
+func (r *Renderer) layoutProgressBar(gtx layout.Context, state *State) layout.Dimensions {
+	if !state.Progress.Active {
+		return layout.Dimensions{}
+	}
+
+	return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx,
+		func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					pct := float32(0)
+					if state.Progress.Total > 0 {
+						pct = float32(state.Progress.Current) / float32(state.Progress.Total)
+					}
+					label := fmt.Sprintf("%s - %s / %s (%.0f%%)",
+						state.Progress.Label,
+						formatSize(state.Progress.Current),
+						formatSize(state.Progress.Total),
+						pct*100)
+					lbl := material.Body2(r.Theme, label)
+					lbl.Color = colGray
+					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					// Progress bar background
+					height := gtx.Dp(unit.Dp(8))
+					width := gtx.Constraints.Max.X
+
+					// Background
+					paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(width, height)}.Op())
+
+					// Fill
+					if state.Progress.Total > 0 {
+						pct := float32(state.Progress.Current) / float32(state.Progress.Total)
+						fillWidth := int(float32(width) * pct)
+						paint.FillShape(gtx.Ops, colProgress, clip.Rect{Max: image.Pt(fillWidth, height)}.Op())
+					}
+
+					return layout.Dimensions{Size: image.Pt(width, height)}
+				}),
+			)
+		})
 }
 
 // --- MENUS ---
@@ -279,6 +315,16 @@ func (r *Renderer) menuItem(gtx layout.Context, btn *widget.Clickable, label str
 	})
 }
 
+func (r *Renderer) menuItemDanger(gtx layout.Context, btn *widget.Clickable, label string) layout.Dimensions {
+	return material.Clickable(gtx, btn, func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(r.Theme, label)
+			lbl.Color = colDanger
+			return lbl.Layout(gtx)
+		})
+	})
+}
+
 func (r *Renderer) layoutFileMenu(gtx layout.Context) layout.Dimensions {
 	if !r.fileMenuOpen {
 		return layout.Dimensions{}
@@ -292,7 +338,7 @@ func (r *Renderer) layoutFileMenu(gtx layout.Context) layout.Dimensions {
 	})
 }
 
-func (r *Renderer) layoutContextMenu(gtx layout.Context, eventOut *UIEvent) layout.Dimensions {
+func (r *Renderer) layoutContextMenu(gtx layout.Context, state *State, eventOut *UIEvent) layout.Dimensions {
 	if !r.menuVisible {
 		return layout.Dimensions{}
 	}
@@ -304,6 +350,20 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, eventOut *UIEvent) layo
 	}
 	if r.copyBtn.Clicked(gtx) {
 		r.menuVisible = false
+		*eventOut = UIEvent{Action: ActionCopy, Path: r.menuPath}
+	}
+	if r.cutBtn.Clicked(gtx) {
+		r.menuVisible = false
+		*eventOut = UIEvent{Action: ActionCut, Path: r.menuPath}
+	}
+	if r.pasteBtn.Clicked(gtx) {
+		r.menuVisible = false
+		*eventOut = UIEvent{Action: ActionPaste}
+	}
+	if r.deleteBtn.Clicked(gtx) {
+		r.menuVisible = false
+		r.deleteConfirmOpen = true
+		state.DeleteTarget = r.menuPath
 	}
 	if r.favBtn.Clicked(gtx) {
 		r.menuVisible = false
@@ -323,7 +383,24 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, eventOut *UIEvent) layo
 				return r.menuItem(gtx, &r.openBtn, "Open")
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return r.menuItem(gtx, &r.copyBtn, "Copy (noop)")
+				return r.menuItem(gtx, &r.copyBtn, "Copy")
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return r.menuItem(gtx, &r.cutBtn, "Cut")
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				if state.Clipboard == nil {
+					return layout.Dimensions{}
+				}
+				return r.menuItem(gtx, &r.pasteBtn, "Paste")
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				// Separator
+				return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					height := gtx.Dp(unit.Dp(1))
+					paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Min.X, height)}.Op())
+					return layout.Dimensions{Size: image.Pt(gtx.Constraints.Min.X, height)}
+				})
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				if !r.menuIsDir {
@@ -335,8 +412,79 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, eventOut *UIEvent) layo
 				}
 				return r.menuItem(gtx, &r.favBtn, label)
 			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return r.menuItemDanger(gtx, &r.deleteBtn, "Delete")
+			}),
 		)
 	})
+}
+
+func (r *Renderer) layoutDeleteConfirm(gtx layout.Context, state *State, eventOut *UIEvent) layout.Dimensions {
+	if !r.deleteConfirmOpen {
+		return layout.Dimensions{}
+	}
+
+	if r.deleteConfirmYes.Clicked(gtx) {
+		r.deleteConfirmOpen = false
+		*eventOut = UIEvent{Action: ActionConfirmDelete, Path: state.DeleteTarget}
+		state.DeleteTarget = ""
+	}
+	if r.deleteConfirmNo.Clicked(gtx) {
+		r.deleteConfirmOpen = false
+		state.DeleteTarget = ""
+	}
+
+	return layout.Stack{}.Layout(gtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			paint.FillShape(gtx.Ops, color.NRGBA{A: 150}, clip.Rect{Max: gtx.Constraints.Max}.Op())
+			return layout.Dimensions{Size: gtx.Constraints.Max}
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return r.menuShell(gtx, 350, func(gtx layout.Context) layout.Dimensions {
+					return layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								h6 := material.H6(r.Theme, "Confirm Delete")
+								h6.Color = colDanger
+								return h6.Layout(gtx)
+							}),
+							layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								name := filepath.Base(state.DeleteTarget)
+								lbl := material.Body1(r.Theme, fmt.Sprintf("Are you sure you want to delete \"%s\"?", name))
+								lbl.Color = colBlack
+								return lbl.Layout(gtx)
+							}),
+							layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								lbl := material.Body2(r.Theme, "This action cannot be undone.")
+								lbl.Color = colGray
+								return lbl.Layout(gtx)
+							}),
+							layout.Rigid(layout.Spacer{Height: unit.Dp(20)}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceStart}.Layout(gtx,
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										btn := material.Button(r.Theme, &r.deleteConfirmNo, "Cancel")
+										btn.Background = colLightGray
+										btn.Color = colBlack
+										return btn.Layout(gtx)
+									}),
+									layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										btn := material.Button(r.Theme, &r.deleteConfirmYes, "Delete")
+										btn.Background = colDanger
+										return btn.Layout(gtx)
+									}),
+								)
+							}),
+						)
+					})
+				})
+			})
+		}),
+	)
 }
 
 func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) layout.Dimensions {

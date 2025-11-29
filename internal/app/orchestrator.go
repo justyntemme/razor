@@ -1,11 +1,13 @@
 package app
 
 import (
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"gioui.org/app"
 	"gioui.org/op"
@@ -28,6 +30,7 @@ type Orchestrator struct {
 	sortAsc      bool
 	showDotfiles bool
 	rawEntries   []ui.UIEntry
+	progressMu   sync.Mutex
 }
 
 func NewOrchestrator(debug bool) *Orchestrator {
@@ -50,23 +53,19 @@ func (o *Orchestrator) Run(startPath string) error {
 		log.Println("Starting Razor in DEBUG mode")
 	}
 
-	// Init DB
 	configDir, _ := os.UserConfigDir()
 	if err := o.store.Open(filepath.Join(configDir, "razor", "razor.db")); err != nil {
 		log.Printf("Failed to open DB: %v", err)
 	}
 	defer o.store.Close()
 
-	// Start workers
 	go o.fs.Start()
 	go o.store.Start()
 	go o.processEvents()
 
-	// Initial fetch
 	o.store.RequestChan <- store.Request{Op: store.FetchFavorites}
 	o.store.RequestChan <- store.Request{Op: store.FetchSettings}
 
-	// Initial path
 	if startPath == "" {
 		if home, err := os.UserHomeDir(); err == nil {
 			startPath = home
@@ -76,7 +75,6 @@ func (o *Orchestrator) Run(startPath string) error {
 	}
 	o.navigate(startPath)
 
-	// Event loop
 	var ops op.Ops
 	for {
 		switch e := o.window.Event().(type) {
@@ -130,6 +128,18 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		o.store.RequestChan <- store.Request{Op: store.SaveSetting, Key: "show_dotfiles", Value: val}
 		o.applyFilterAndSort()
 		o.window.Invalidate()
+	case ui.ActionCopy:
+		o.state.Clipboard = &ui.Clipboard{Path: evt.Path, Op: ui.ClipCopy}
+		o.window.Invalidate()
+	case ui.ActionCut:
+		o.state.Clipboard = &ui.Clipboard{Path: evt.Path, Op: ui.ClipCut}
+		o.window.Invalidate()
+	case ui.ActionPaste:
+		if o.state.Clipboard != nil {
+			go o.doPaste()
+		}
+	case ui.ActionConfirmDelete:
+		go o.doDelete(evt.Path)
 	}
 }
 
@@ -241,7 +251,6 @@ func (o *Orchestrator) handleStoreResponse(resp store.Response) {
 }
 
 func (o *Orchestrator) applyFilterAndSort() {
-	// Filter
 	var entries []ui.UIEntry
 	for _, e := range o.rawEntries {
 		if !o.showDotfiles && strings.HasPrefix(e.Name, ".") {
@@ -250,10 +259,8 @@ func (o *Orchestrator) applyFilterAndSort() {
 		entries = append(entries, e)
 	}
 
-	// Sort with comparison function
 	cmp := o.getComparator()
 	sort.SliceStable(entries, func(i, j int) bool {
-		// Directories first
 		if entries[i].IsDir != entries[j].IsDir {
 			return entries[i].IsDir
 		}
@@ -286,9 +293,244 @@ func (o *Orchestrator) getComparator() func(a, b ui.UIEntry) bool {
 			}
 			return a.Size < b.Size
 		}
-	default: // SortByName
+	default:
 		return func(a, b ui.UIEntry) bool { return strings.ToLower(a.Name) < strings.ToLower(b.Name) }
 	}
+}
+
+// --- File Operations ---
+
+func (o *Orchestrator) setProgress(active bool, label string, current, total int64) {
+	o.progressMu.Lock()
+	o.state.Progress = ui.ProgressState{Active: active, Label: label, Current: current, Total: total}
+	o.progressMu.Unlock()
+	o.window.Invalidate()
+}
+
+func (o *Orchestrator) doPaste() {
+	clip := o.state.Clipboard
+	if clip == nil {
+		return
+	}
+
+	src := clip.Path
+	dstDir := o.state.CurrentPath
+	dstName := filepath.Base(src)
+	dst := filepath.Join(dstDir, dstName)
+
+	// Avoid overwriting - append suffix if exists
+	if _, err := os.Stat(dst); err == nil {
+		ext := filepath.Ext(dstName)
+		base := strings.TrimSuffix(dstName, ext)
+		for i := 1; ; i++ {
+			dst = filepath.Join(dstDir, base+"_copy"+itoa(i)+ext)
+			if _, err := os.Stat(dst); os.IsNotExist(err) {
+				break
+			}
+		}
+	}
+
+	info, err := os.Stat(src)
+	if err != nil {
+		log.Printf("Paste error: %v", err)
+		return
+	}
+
+	label := "Copying"
+	if clip.Op == ui.ClipCut {
+		label = "Moving"
+	}
+
+	if info.IsDir() {
+		o.setProgress(true, label+" folder...", 0, 0)
+		err = o.copyDir(src, dst, clip.Op == ui.ClipCut)
+	} else {
+		o.setProgress(true, label+" "+filepath.Base(src), 0, info.Size())
+		err = o.copyFile(src, dst, clip.Op == ui.ClipCut)
+	}
+
+	o.setProgress(false, "", 0, 0)
+
+	if err != nil {
+		log.Printf("Paste error: %v", err)
+	} else if clip.Op == ui.ClipCut {
+		o.state.Clipboard = nil
+	}
+
+	o.requestDir(o.state.CurrentPath)
+}
+
+func (o *Orchestrator) copyFile(src, dst string, move bool) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	info, err := srcFile.Stat()
+	if err != nil {
+		return err
+	}
+
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	// Progress-tracking writer
+	pw := &progressWriter{
+		w: dstFile,
+		onWrite: func(n int64) {
+			o.progressMu.Lock()
+			o.state.Progress.Current += n
+			o.progressMu.Unlock()
+			o.window.Invalidate()
+		},
+	}
+
+	if _, err := io.Copy(pw, srcFile); err != nil {
+		return err
+	}
+
+	if err := os.Chmod(dst, info.Mode()); err != nil {
+		return err
+	}
+
+	if move {
+		return os.Remove(src)
+	}
+	return nil
+}
+
+func (o *Orchestrator) copyDir(src, dst string, move bool) error {
+	// Calculate total size first
+	var totalSize int64
+	filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() {
+			totalSize += info.Size()
+		}
+		return nil
+	})
+
+	o.progressMu.Lock()
+	o.state.Progress.Total = totalSize
+	o.state.Progress.Current = 0
+	o.progressMu.Unlock()
+
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return err
+	}
+
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+
+		if entry.IsDir() {
+			if err := o.copyDir(srcPath, dstPath, false); err != nil {
+				return err
+			}
+		} else {
+			if err := o.copyFileWithProgress(srcPath, dstPath); err != nil {
+				return err
+			}
+		}
+	}
+
+	if move {
+		return os.RemoveAll(src)
+	}
+	return nil
+}
+
+func (o *Orchestrator) copyFileWithProgress(src, dst string) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	info, err := srcFile.Stat()
+	if err != nil {
+		return err
+	}
+
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	pw := &progressWriter{
+		w: dstFile,
+		onWrite: func(n int64) {
+			o.progressMu.Lock()
+			o.state.Progress.Current += n
+			o.progressMu.Unlock()
+			o.window.Invalidate()
+		},
+	}
+
+	if _, err := io.Copy(pw, srcFile); err != nil {
+		return err
+	}
+
+	return os.Chmod(dst, info.Mode())
+}
+
+func (o *Orchestrator) doDelete(path string) {
+	info, err := os.Stat(path)
+	if err != nil {
+		log.Printf("Delete error: %v", err)
+		return
+	}
+
+	o.setProgress(true, "Deleting "+filepath.Base(path), 0, 0)
+
+	if info.IsDir() {
+		err = os.RemoveAll(path)
+	} else {
+		err = os.Remove(path)
+	}
+
+	o.setProgress(false, "", 0, 0)
+
+	if err != nil {
+		log.Printf("Delete error: %v", err)
+	}
+
+	o.requestDir(o.state.CurrentPath)
+}
+
+// progressWriter wraps an io.Writer and calls onWrite after each write
+type progressWriter struct {
+	w       io.Writer
+	onWrite func(int64)
+}
+
+func (pw *progressWriter) Write(p []byte) (int, error) {
+	n, err := pw.w.Write(p)
+	if n > 0 && pw.onWrite != nil {
+		pw.onWrite(int64(n))
+	}
+	return n, err
+}
+
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	s := ""
+	for i > 0 {
+		s = string(rune('0'+i%10)) + s
+		i /= 10
+	}
+	return s
 }
 
 func Main(debug bool, startPath string) {
