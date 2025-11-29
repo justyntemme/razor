@@ -15,16 +15,21 @@ const (
 	FetchFavorites EventType = iota
 	AddFavorite
 	RemoveFavorite
+	FetchSettings
+	SaveSetting
 )
 
 type Request struct {
-	Op   EventType
-	Path string
+	Op    EventType
+	Path  string
+	Key   string
+	Value string
 }
 
 type Response struct {
 	Op        EventType
-	Favorites []string // List of paths
+	Favorites []string          // List of paths
+	Settings  map[string]string // Key-value settings
 	Err       error
 }
 
@@ -64,7 +69,7 @@ func (d *DB) Open(dbPath string) error {
 		return err
 	}
 
-	// Schema
+	// Schema - Favorites table
 	query := `
 	CREATE TABLE IF NOT EXISTS favorites (
 		path TEXT PRIMARY KEY,
@@ -72,6 +77,17 @@ func (d *DB) Open(dbPath string) error {
 	);
 	`
 	if _, err := db.Exec(query); err != nil {
+		return err
+	}
+
+	// Schema - Settings table
+	settingsQuery := `
+	CREATE TABLE IF NOT EXISTS settings (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL
+	);
+	`
+	if _, err := db.Exec(settingsQuery); err != nil {
 		return err
 	}
 
@@ -88,6 +104,10 @@ func (d *DB) Start() {
 			d.handleAdd(req.Path)
 		case RemoveFavorite:
 			d.handleRemove(req.Path)
+		case FetchSettings:
+			d.handleFetchSettings()
+		case SaveSetting:
+			d.handleSaveSetting(req.Key, req.Value)
 		}
 	}
 }
@@ -127,6 +147,35 @@ func (d *DB) handleRemove(path string) {
 		log.Printf("Store Error: %v", err)
 	}
 	d.handleFetch()
+}
+
+func (d *DB) handleFetchSettings() {
+	rows, err := d.conn.Query("SELECT key, value FROM settings")
+	if err != nil {
+		d.ResponseChan <- Response{Op: FetchSettings, Err: err}
+		return
+	}
+	defer rows.Close()
+
+	settings := make(map[string]string)
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err == nil {
+			settings[key] = value
+		}
+	}
+
+	d.ResponseChan <- Response{Op: FetchSettings, Settings: settings}
+}
+
+func (d *DB) handleSaveSetting(key, value string) {
+	// Use INSERT OR REPLACE to upsert the setting
+	_, err := d.conn.Exec("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", key, value)
+	if err != nil {
+		log.Printf("Store Error saving setting: %v", err)
+	}
+	// Trigger a fetch to sync settings
+	d.handleFetchSettings()
 }
 
 func (d *DB) Close() {

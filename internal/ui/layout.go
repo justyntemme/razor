@@ -288,7 +288,11 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			// Logic now lives in layoutSettingsModal
-			return r.layoutSettingsModal(gtx)
+			dims, evt := r.layoutSettingsModal(gtx)
+			if evt.Action != ActionNone {
+				eventOut = evt
+			}
+			return dims
 		}),
 	)
 

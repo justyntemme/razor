@@ -89,15 +89,24 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context) (layout.Dimensions, UIE
 }
 
 // layoutSettingsModal renders the centered settings dialog
-func (r *Renderer) layoutSettingsModal(gtx layout.Context) layout.Dimensions {
+func (r *Renderer) layoutSettingsModal(gtx layout.Context) (layout.Dimensions, UIEvent) {
 	if !r.settingsOpen {
-		return layout.Dimensions{}
+		return layout.Dimensions{}, UIEvent{}
 	}
+
+	var eventOut UIEvent
+
 	if r.settingsCloseBtn.Clicked(gtx) {
 		r.settingsOpen = false
 	}
 
-	return layout.Stack{}.Layout(gtx,
+	// Check if dotfiles toggle changed
+	if r.showDotfilesCheck.Update(gtx) {
+		r.ShowDotfiles = r.showDotfilesCheck.Value
+		eventOut = UIEvent{Action: ActionToggleDotfiles, ShowDotfiles: r.ShowDotfiles}
+	}
+
+	dims := layout.Stack{}.Layout(gtx,
 		// Semi-transparent backdrop
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 			paint.FillShape(gtx.Ops, color.NRGBA{A: 150}, clip.Rect{Max: gtx.Constraints.Max}.Op())
@@ -110,13 +119,23 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context) layout.Dimensions {
 			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return r.renderMenuShell(gtx, func(gtx layout.Context) layout.Dimensions {
 					gtx.Constraints.Min.X = gtx.Dp(300)
-					gtx.Constraints.Min.Y = gtx.Dp(200)
+					gtx.Constraints.Min.Y = gtx.Dp(250)
 					return layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								h6 := material.H6(r.Theme, "Settings")
 								h6.Color = color.NRGBA{R: 0, G: 0, B: 0, A: 255}
 								return h6.Layout(gtx)
+							}),
+							layout.Rigid(layout.Spacer{Height: unit.Dp(20)}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										cb := material.CheckBox(r.Theme, &r.showDotfilesCheck, "Show dotfiles")
+										cb.Color = color.NRGBA{R: 0, G: 0, B: 0, A: 255}
+										return cb.Layout(gtx)
+									}),
+								)
 							}),
 							layout.Rigid(layout.Spacer{Height: unit.Dp(20)}.Layout),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -136,4 +155,6 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context) layout.Dimensions {
 			})
 		}),
 	)
+
+	return dims, eventOut
 }

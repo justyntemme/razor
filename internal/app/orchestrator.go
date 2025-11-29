@@ -29,6 +29,12 @@ type Orchestrator struct {
 	// Sort settings (persisted across navigation)
 	sortColumn    ui.SortColumn
 	sortAscending bool
+
+	// Display settings
+	showDotfiles bool
+
+	// Raw entries before filtering (to reapply filter when setting changes)
+	rawEntries []ui.UIEntry
 }
 
 func NewOrchestrator(debug bool) *Orchestrator {
@@ -46,6 +52,7 @@ func NewOrchestrator(debug bool) *Orchestrator {
 		debug:         debug,
 		sortColumn:    ui.SortByName,
 		sortAscending: true,
+		showDotfiles:  false,
 	}
 }
 
@@ -72,6 +79,7 @@ func (o *Orchestrator) Run(startPath string) error {
 
 	// 4. Initial Data Fetch
 	o.store.RequestChan <- store.Request{Op: store.FetchFavorites}
+	o.store.RequestChan <- store.Request{Op: store.FetchSettings}
 
 	// 5. Initial Navigation
 	initialPath := startPath
@@ -120,7 +128,18 @@ func (o *Orchestrator) Run(startPath string) error {
 			case ui.ActionSort:
 				o.sortColumn = evt.SortColumn
 				o.sortAscending = evt.SortAscending
-				o.sortEntries()
+				o.applyFilterAndSort()
+				o.window.Invalidate()
+			case ui.ActionToggleDotfiles:
+				o.showDotfiles = evt.ShowDotfiles
+				// Persist the setting
+				value := "false"
+				if o.showDotfiles {
+					value = "true"
+				}
+				o.store.RequestChan <- store.Request{Op: store.SaveSetting, Key: "show_dotfiles", Value: value}
+				// Reapply filter with new setting
+				o.applyFilterAndSort()
 				o.window.Invalidate()
 			}
 
@@ -233,16 +252,16 @@ func (o *Orchestrator) handleFSResponse(resp fs.Response) {
 	}
 
 	o.state.CurrentPath = resp.Path
-	o.state.Entries = uiEntries
+	o.rawEntries = uiEntries
 
-	// Apply current sort settings to new entries
-	o.sortEntries()
+	// Apply filtering and sorting
+	o.applyFilterAndSort()
 
 	parent := filepath.Dir(resp.Path)
 	o.state.CanBack = parent != resp.Path
 	o.state.CanForward = o.historyIndex < len(o.history)-1
 
-	if o.state.SelectedIndex >= len(uiEntries) {
+	if o.state.SelectedIndex >= len(o.state.Entries) {
 		o.state.SelectedIndex = -1
 	}
 
@@ -255,7 +274,8 @@ func (o *Orchestrator) handleStoreResponse(resp store.Response) {
 		return
 	}
 
-	if resp.Op == store.FetchFavorites {
+	switch resp.Op {
+	case store.FetchFavorites:
 		favMap := make(map[string]bool)
 		favList := make([]ui.FavoriteItem, len(resp.Favorites))
 
@@ -270,7 +290,34 @@ func (o *Orchestrator) handleStoreResponse(resp store.Response) {
 		o.state.Favorites = favMap
 		o.state.FavList = favList
 		o.window.Invalidate()
+
+	case store.FetchSettings:
+		if val, ok := resp.Settings["show_dotfiles"]; ok {
+			o.showDotfiles = val == "true"
+			o.ui.ShowDotfiles = o.showDotfiles
+			o.ui.SetShowDotfilesCheck(o.showDotfiles)
+			// Reapply filter if we have entries
+			if len(o.rawEntries) > 0 {
+				o.applyFilterAndSort()
+			}
+		}
+		o.window.Invalidate()
 	}
+}
+
+// applyFilterAndSort filters dotfiles and sorts entries
+func (o *Orchestrator) applyFilterAndSort() {
+	// Filter dotfiles if setting is disabled
+	var filtered []ui.UIEntry
+	for _, entry := range o.rawEntries {
+		if !o.showDotfiles && strings.HasPrefix(entry.Name, ".") {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+
+	o.state.Entries = filtered
+	o.sortEntries()
 }
 
 // sortEntries sorts the current entries based on sortColumn and sortAscending

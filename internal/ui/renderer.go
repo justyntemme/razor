@@ -33,6 +33,7 @@ const (
 	ActionAddFavorite
 	ActionRemoveFavorite
 	ActionSort
+	ActionToggleDotfiles
 )
 
 type SortColumn int
@@ -50,6 +51,7 @@ type UIEvent struct {
 	NewIndex      int
 	SortColumn    SortColumn
 	SortAscending bool
+	ShowDotfiles  bool
 }
 
 type UIEntry struct {
@@ -125,6 +127,10 @@ type Renderer struct {
 	sizeHeaderBtn widget.Clickable
 	SortColumn    SortColumn
 	SortAscending bool
+
+	// Settings
+	ShowDotfiles      bool
+	showDotfilesCheck widget.Bool
 }
 
 func NewRenderer() *Renderer {
@@ -146,6 +152,11 @@ func NewRenderer() *Renderer {
 	r.SortAscending = true
 
 	return r
+}
+
+// SetShowDotfilesCheck sets the checkbox state from external code (e.g., when loading settings)
+func (r *Renderer) SetShowDotfilesCheck(value bool) {
+	r.showDotfilesCheck.Value = value
 }
 
 // detectRightClick checks for secondary button presses on a specific tag
