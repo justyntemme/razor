@@ -45,6 +45,7 @@
      - [X] Global Click Deselect.
      - [ ] BUG: Up/Down arrow key navigation is inconsistent on some platforms.
      - [ ] BUG: Fix Keyboard navigation for hotkeys
+   - [ ] fix query unit tests
    - [ ] Efficient Icon Rendering.
 
 ** Phase 4: Advanced Features
