@@ -18,9 +18,10 @@
    - [X] History Stack (Back/Forward functionality).
    - [ ] Implement `Breadcrumbs` widget (Interactive path segments).
    - [X] *Editable Address Bar*: Click path label to type directory (Enter to navigate).
-   - [ ] *OS Handling*: 
-     - [ ] Windows Drive enumeration (C:\, D:\).
-     - [ ] Unix/Linux Root (/).
+   - [X] *File Open*: Double-click files to open in system default app.
+   - [X] *OS Handling*: 
+     - [X] Windows Drive enumeration (C:\, D:\).
+     - [X] Unix/Linux Root (/).
 
 ** Phase 3: High-Performance UI Rendering
    - [X] Implement Virtualization (`layout.List`).
@@ -35,9 +36,17 @@
    - [ ] Efficient Icon Rendering.
 
 ** Phase 4: Advanced Features
-   - [ ] *Search*: 
-     - Multi-threaded recursive search using `fastwalk`.
-     - Utilize https://github.com/raiyanyahya/fast-text-search for searching for files in searchbar.
+   - [X] *Search*: 
+     - [X] Multi-threaded recursive search using `fastwalk`.
+     - [X] Utilize fast-text-search for content searching.
+     - [X] Live "Search as you type".
+   - [ ] *Advanced Search Querying*:
+     - [ ] Change default behavior to search Filenames first.
+     - [ ] Implement directives (e.g., `contents:string`, `filename:string`).
+     - [ ] Explore Directory Tree indexing for faster structure traversals.
+   - [ ] *Persistence & Favorites*:
+     - [ ] Explore SQLite as an option for storing Favorites/Bookmarks.
+     - [ ] Implement Favorites Bar in UI.
    - [ ] *Async Metadata*: 
      - Calculate directory sizes on a background thread.
    - [ ] *Preview Pane*: 
@@ -46,6 +55,6 @@
 ** Phase 5: Optimization & Hardening
    - [ ] *Profiling*: Use `pprof`.
    - [ ] *Debug Mode*: Implement --debug flag and verbose logging.
-   - [ ] *Build Optimization*: Convert --debug to preprocessor directive (build tags) to strip debug symbols/logic from release builds.
+   - [ ] *Build Optimization*: Convert --debug to preprocessor directive (build tags).
    - [ ] *Context Cancellation*.
    - [ ] *Cross-Platform Checks*.
