@@ -1,6 +1,7 @@
 * Razor File Explorer Implementation Strategy
 ** BUGS
    - fix cwd text box parsing to just go to whatever is typed in, not relative
+   - how does it define dotfiles, because some files are being classified dotfiles that are not dotfiles
 ** Quick Features
    remove debug if statements by using compiler directives to only build with the print statment if its a debug build
 
