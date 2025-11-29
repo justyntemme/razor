@@ -54,7 +54,7 @@
      - Calculate directory sizes on a background thread.
    - [ ] *Preview Pane*: 
      - Light-weight text/image preview.
-  - Drag and drop files
+   - Drag and drop files
 
 ** Phase 5: Optimization & Hardening
    - [ ] *Profiling*: Use `pprof`.
