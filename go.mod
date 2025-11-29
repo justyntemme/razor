@@ -5,6 +5,7 @@ go 1.25.4
 require (
 	gioui.org v0.9.0
 	github.com/charlievieth/fastwalk v1.0.14
+	github.com/justyntemme/fast-text-search v0.0.1
 )
 
 require (

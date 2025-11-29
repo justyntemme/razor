@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/charlievieth/fastwalk"
+	"github.com/justyntemme/fast-text-search/fts"
 )
 
 type EventType int
@@ -18,8 +19,9 @@ const (
 )
 
 type Request struct {
-	Op   EventType
-	Path string
+	Op    EventType
+	Path  string
+	Query string // Search term
 }
 
 type Entry struct {
@@ -27,7 +29,7 @@ type Entry struct {
 	Path    string
 	IsDir   bool
 	Size    int64
-	ModTime time.Time // Captured for UI columns
+	ModTime time.Time
 }
 
 type Response struct {
@@ -55,7 +57,7 @@ func (s *System) Start() {
 		case FetchDir:
 			s.handleFetchDir(req)
 		case SearchDir:
-			// Placeholder
+			s.handleSearchDir(req)
 		}
 	}
 }
@@ -125,6 +127,44 @@ func (s *System) handleFetchDir(req Request) {
 	s.ResponseChan <- Response{
 		Op:      req.Op,
 		Path:    absPath,
+		Entries: entries,
+	}
+}
+
+func (s *System) handleSearchDir(req Request) {
+	absPath, err := filepath.Abs(req.Path)
+	if err != nil {
+		s.ResponseChan <- Response{Op: req.Op, Err: err}
+		return
+	}
+
+	// fast-text-search usage
+	// FTS(searchString, directory, ignoreExt, ignoreFolders, fileName, extType)
+	// We pass empty slices for ignores to search everything.
+	results := fts.FTS(req.Query, absPath, []string{}, []string{}, "", "")
+
+	entries := make([]Entry, 0, len(results))
+
+	for _, res := range results {
+		// res is the path string itself
+		info, err := os.Stat(res)
+		if err != nil {
+			continue 
+		}
+
+		entries = append(entries, Entry{
+			Name:    info.Name(),
+			Path:    res,
+			IsDir:   info.IsDir(),
+			Size:    info.Size(),
+			ModTime: info.ModTime(),
+		})
+	}
+
+	// Send back results
+	s.ResponseChan <- Response{
+		Op:      req.Op,
+		Path:    req.Path, // Keep context of where we searched
 		Entries: entries,
 	}
 }

@@ -73,6 +73,8 @@ func (o *Orchestrator) Run() error {
 			case ui.ActionSelect:
 				o.state.SelectedIndex = evt.NewIndex
 				o.window.Invalidate()
+			case ui.ActionSearch:
+				o.search(evt.Path)
 			}
 
 			e.Frame(gtx.Ops)
@@ -120,6 +122,18 @@ func (o *Orchestrator) requestDir(path string) {
 	o.fs.RequestChan <- fs.Request{Op: fs.FetchDir, Path: path}
 }
 
+func (o *Orchestrator) search(query string) {
+	if o.debug {
+		log.Printf("[DEBUG] Searching for: %s in %s", query, o.state.CurrentPath)
+	}
+	o.state.SelectedIndex = -1
+	o.fs.RequestChan <- fs.Request{
+		Op:    fs.SearchDir,
+		Path:  o.state.CurrentPath,
+		Query: query,
+	}
+}
+
 func (o *Orchestrator) processFSEvents() {
 	for resp := range o.fs.ResponseChan {
 		if resp.Err != nil {
@@ -133,16 +147,22 @@ func (o *Orchestrator) processFSEvents() {
 
 		uiEntries := make([]ui.UIEntry, len(resp.Entries))
 		for i, e := range resp.Entries {
-			// Map FS fields to UI fields
 			uiEntries[i] = ui.UIEntry{
 				Name:    e.Name,
 				Path:    e.Path,
 				IsDir:   e.IsDir,
-				Size:    e.Size,    // Mapped
-				ModTime: e.ModTime, // Mapped
+				Size:    e.Size,
+				ModTime: e.ModTime,
 			}
 		}
 
+		// Don't change CurrentPath if it's a search result? 
+		// Actually, we probably should keep the current path displayed in the bar
+		// but show search results.
+		// For now, we update CurrentPath normally, which might look weird if we 
+		// don't have a distinct "Search Results" path concept.
+		// But since the FS returns the path we requested, it's fine.
+		
 		o.state.CurrentPath = resp.Path
 		o.state.Entries = uiEntries
 		
