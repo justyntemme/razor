@@ -52,19 +52,29 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 	navBar := func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				if r.backBtn.Clicked(gtx) {
+				if state.CanBack && r.backBtn.Clicked(gtx) {
 					eventOut = UIEvent{Action: ActionBack}
 					gtx.Execute(key.FocusCmd{Tag: keyTag})
 				}
-				return material.Button(r.Theme, &r.backBtn, "<").Layout(gtx)
+				btn := material.Button(r.Theme, &r.backBtn, "<")
+				if !state.CanBack {
+					btn.Background = color.NRGBA{R: 200, G: 200, B: 200, A: 255}
+					btn.Color = color.NRGBA{R: 150, G: 150, B: 150, A: 255}
+				}
+				return btn.Layout(gtx)
 			}),
 			layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				if r.fwdBtn.Clicked(gtx) {
+				if state.CanForward && r.fwdBtn.Clicked(gtx) {
 					eventOut = UIEvent{Action: ActionForward}
 					gtx.Execute(key.FocusCmd{Tag: keyTag})
 				}
-				return material.Button(r.Theme, &r.fwdBtn, ">").Layout(gtx)
+				btn := material.Button(r.Theme, &r.fwdBtn, ">")
+				if !state.CanForward {
+					btn.Background = color.NRGBA{R: 200, G: 200, B: 200, A: 255}
+					btn.Color = color.NRGBA{R: 150, G: 150, B: 150, A: 255}
+				}
+				return btn.Layout(gtx)
 			}),
 			layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
