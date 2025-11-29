@@ -31,7 +31,8 @@ const (
 	ActionBack
 	ActionForward
 	ActionSelect
-	ActionSearch // Added
+	ActionSearch
+	ActionOpen
 )
 
 type UIEvent struct {
@@ -47,7 +48,7 @@ type UIEntry struct {
 	Size          int64
 	ModTime       time.Time
 	Clickable     widget.Clickable
-	RightClickTag struct{}
+	RightClickTag struct{} // Unique tag for context menu
 	LastClick     time.Time
 }
 
@@ -82,6 +83,7 @@ type Renderer struct {
 	menuPos     image.Point
 	menuIndex   int
 	copyBtn     widget.Clickable
+	openBtn     widget.Clickable // Added: Open button
 	
 	// Top File Menu
 	fileMenuBtn  widget.Clickable
@@ -109,7 +111,7 @@ func NewRenderer() *Renderer {
 	r.searchEditor.SingleLine = true
 	r.searchEditor.Submit = true
 	
-	r.searchEngine.Value = "default" 
+	r.searchEngine.Value = "default" // Default value
 	
 	return r
 }
@@ -197,6 +199,8 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 						item := state.Entries[state.SelectedIndex]
 						if item.IsDir {
 							eventOut = UIEvent{Action: ActionNavigate, Path: item.Path}
+						} else {
+							eventOut = UIEvent{Action: ActionOpen, Path: item.Path}
 						}
 					}
 				}
@@ -214,7 +218,7 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 				}
 				btn := material.Button(r.Theme, &r.fileMenuBtn, "File")
 				btn.Inset = layout.UniformInset(unit.Dp(6))
-				btn.Background = color.NRGBA{} 
+				btn.Background = color.NRGBA{} // Transparent
 				btn.Color = color.NRGBA{R: 0, G: 0, B: 0, A: 255}
 				return btn.Layout(gtx)
 			}),
@@ -257,6 +261,7 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 			}),
 			layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
 
+			// Path (Flexed 1)
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 				if r.isEditing {
 					for {
@@ -307,7 +312,6 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 				gtx.Constraints.Min.X = gtx.Dp(unit.Dp(200))
 				gtx.Constraints.Max.X = gtx.Dp(unit.Dp(200))
 				
-				// Handle Search Events
 				for {
 					evt, ok := r.searchEditor.Update(gtx)
 					if !ok {
@@ -319,9 +323,8 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 							log.Printf("[DEBUG] Search Submitted: %s", e.Text)
 						}
 						eventOut = UIEvent{Action: ActionSearch, Path: e.Text}
-						gtx.Execute(key.FocusCmd{Tag: keyTag}) // Return focus to list on Enter
+						gtx.Execute(key.FocusCmd{Tag: keyTag}) 
 					case widget.ChangeEvent:
-						// Live Search: Trigger search on every keystroke
 						if r.Debug {
 							log.Printf("[DEBUG] Search Changed: %s", r.searchEditor.Text())
 						}
@@ -379,11 +382,14 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 				if !item.LastClick.IsZero() && now.Sub(item.LastClick) < 500*time.Millisecond {
 					if item.IsDir {
 						eventOut = UIEvent{Action: ActionNavigate, Path: item.Path}
+					} else {
+						eventOut = UIEvent{Action: ActionOpen, Path: item.Path}
 					}
 				}
 				item.LastClick = now
 			}
 
+			// Right Click
 			rightClickTag := &item.RightClickTag
 			event.Op(gtx.Ops, rightClickTag) 
 			for {
@@ -404,6 +410,7 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 
 	// --- ROOT STACK ---
 	layout.Stack{}.Layout(gtx,
+		// 1. Background Listener
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			if r.bgClick.Clicked(gtx) {
 				if r.Debug { log.Println("[DEBUG] Background Clicked") }
@@ -421,6 +428,7 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 			})
 		}),
 		
+		// 2. Main Layout
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -441,7 +449,7 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 			)
 		}),
 
-		// File Menu Overlay
+		// 3. File Menu Overlay
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			if !r.fileMenuOpen {
 				return layout.Dimensions{}
@@ -474,42 +482,65 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 			})
 		}),
 
-		// Context Menu Overlay
+		// 4. Context Menu Overlay
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-			if !r.menuVisible {
+			if !r.menuVisible || r.menuIndex >= len(state.Entries) {
+				r.menuVisible = false
 				return layout.Dimensions{}
 			}
 			
 			offset := op.Offset(r.menuPos).Push(gtx.Ops)
 			defer offset.Pop()
 
+			// Handle Button Clicks
+			if r.openBtn.Clicked(gtx) {
+				r.menuVisible = false
+				eventOut = UIEvent{Action: ActionOpen, Path: state.Entries[r.menuIndex].Path}
+			}
 			if r.copyBtn.Clicked(gtx) {
+				if r.Debug { log.Println("[DEBUG] Copy Action Triggered") }
 				r.menuVisible = false
 			}
 
-			menuSize := image.Pt(150, 40)
 			return widget.Border{Color: color.NRGBA{R: 200, G: 200, B: 200, A: 255}, Width: unit.Dp(1), CornerRadius: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Stack{}.Layout(gtx,
+					// Expanded Background (White)
 					layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-						paint.FillShape(gtx.Ops, color.NRGBA{R: 255, G: 255, B: 255, A: 255}, clip.Rect{Max: menuSize}.Op())
+						paint.FillShape(gtx.Ops, color.NRGBA{R: 255, G: 255, B: 255, A: 255}, clip.Rect{Max: gtx.Constraints.Min}.Op())
 						return layout.Dimensions{Size: gtx.Constraints.Min}
 					}),
+					// Stacked Content (Vertical Flex)
 					layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-						return material.Clickable(gtx, &r.copyBtn, func(gtx layout.Context) layout.Dimensions {
-							gtx.Constraints.Min = menuSize
-							gtx.Constraints.Max = menuSize
-							return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								txt := material.Body2(r.Theme, "Copy (noop)")
-								txt.Color = color.NRGBA{R: 0, G: 0, B: 0, A: 255}
-								return txt.Layout(gtx)
-							})
-						})
+						// Ensure minimum width for the menu
+						gtx.Constraints.Min.X = gtx.Dp(150)
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+							// Open Button
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return material.Clickable(gtx, &r.openBtn, func(gtx layout.Context) layout.Dimensions {
+									return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+										txt := material.Body2(r.Theme, "Open")
+										txt.Color = color.NRGBA{R: 0, G: 0, B: 0, A: 255}
+										return txt.Layout(gtx)
+									})
+								})
+							}),
+							// Copy Button
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return material.Clickable(gtx, &r.copyBtn, func(gtx layout.Context) layout.Dimensions {
+									return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+										txt := material.Body2(r.Theme, "Copy (noop)")
+										txt.Color = color.NRGBA{R: 0, G: 0, B: 0, A: 255}
+										return txt.Layout(gtx)
+									})
+								})
+							}),
+						)
 					}),
 				)
 			})
 		}),
 
-		// Settings Modal Overlay
+		// 5. Settings Modal Overlay
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			if !r.settingsOpen {
 				return layout.Dimensions{}

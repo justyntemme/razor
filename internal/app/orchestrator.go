@@ -3,7 +3,9 @@ package app
 import (
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 
 	"gioui.org/app"
 	"gioui.org/op"
@@ -38,7 +40,7 @@ func NewOrchestrator(debug bool) *Orchestrator {
 	}
 }
 
-func (o *Orchestrator) Run() error {
+func (o *Orchestrator) Run(startPath string) error {
 	if o.debug {
 		log.Println("Starting Razor in DEBUG mode")
 	}
@@ -46,8 +48,19 @@ func (o *Orchestrator) Run() error {
 	go o.fs.Start()
 	go o.processFSEvents()
 
-	cwd, _ := os.Getwd()
-	o.navigate(cwd)
+	// Determine Initial Path
+	// Priority: 1. --path flag, 2. User Home Dir, 3. Current Working Dir
+	initialPath := startPath
+	if initialPath == "" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			initialPath = home
+		} else {
+			initialPath, _ = os.Getwd()
+		}
+	}
+
+	o.navigate(initialPath)
 
 	var ops op.Ops
 	for {
@@ -75,6 +88,8 @@ func (o *Orchestrator) Run() error {
 				o.window.Invalidate()
 			case ui.ActionSearch:
 				o.search(evt.Path)
+			case ui.ActionOpen:
+				o.openFile(evt.Path)
 			}
 
 			e.Frame(gtx.Ops)
@@ -123,8 +138,6 @@ func (o *Orchestrator) requestDir(path string) {
 }
 
 func (o *Orchestrator) search(query string) {
-	// Live Search Logic: 
-	// If the user clears the search box, revert to the standard directory listing (FetchDir).
 	if query == "" {
 		if o.debug {
 			log.Printf("[DEBUG] Search cleared, reverting to standard view.")
@@ -141,6 +154,31 @@ func (o *Orchestrator) search(query string) {
 		Op:    fs.SearchDir,
 		Path:  o.state.CurrentPath,
 		Query: query,
+	}
+}
+
+func (o *Orchestrator) openFile(path string) {
+	var cmd *exec.Cmd
+	
+    if o.debug {
+        log.Printf("[DEBUG] Opening file: %s", path)
+    }
+
+	switch runtime.GOOS {
+	case "windows":
+		// Windows 'start' requires a title (empty string here) before the path
+		cmd = exec.Command("cmd", "/c", "start", "", path)
+	case "darwin":
+		cmd = exec.Command("open", path)
+	case "linux":
+		cmd = exec.Command("xdg-open", path)
+	default:
+        log.Printf("Unsupported OS for opening files: %s", runtime.GOOS)
+		return
+	}
+
+	if err := cmd.Start(); err != nil {
+		log.Printf("Error opening file: %v", err)
 	}
 }
 
@@ -181,10 +219,11 @@ func (o *Orchestrator) processFSEvents() {
 	}
 }
 
-func Main(debug bool) {
+// Main now accepts debug and startPath parameters
+func Main(debug bool, startPath string) {
 	go func() {
 		orchestrator := NewOrchestrator(debug)
-		if err := orchestrator.Run(); err != nil {
+		if err := orchestrator.Run(startPath); err != nil {
 			log.Fatal(err)
 		}
 		os.Exit(0)
