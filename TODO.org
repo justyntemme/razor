@@ -1,14 +1,6 @@
-* HOTFIX PRIORITY 1
-** Refactoring
-   due to the amount of code coming out of these files, llm's are having a 
-   harder time processing them without forgetting implementation directives
-   and regressing on functionality. We should immedietly refactor and look
-   to build out individual .go files for sidebar, menubar, and other UI elements. 
-   this should reduce issues with context. however we must be sure to wawtch
-   for re-implementations of the same code across the same modules across files
-   as llm's will not search everything and rebuild things it hasn't seen.
 * Razor File Explorer Implementation Strategy
-
+** BUGS
+   - fix cwd text box parsing to just go to whatever is typed in, not relative
 ** Core Architecture & Philosophy
    - [X] *Event Driven Architecture*
    - [X] *Performance First*
