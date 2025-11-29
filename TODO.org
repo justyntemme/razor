@@ -1,6 +1,9 @@
 * Razor File Explorer Implementation Strategy
 ** BUGS
    - fix cwd text box parsing to just go to whatever is typed in, not relative
+** Quick Features
+   remove debug if statements by using compiler directives to only build with the print statment if its a debug build
+
 ** Core Architecture & Philosophy
    - [X] *Event Driven Architecture*
    - [X] *Performance First*
