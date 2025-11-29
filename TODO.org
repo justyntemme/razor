@@ -8,6 +8,7 @@
    - fix cwd text box parsing to just go to whatever is typed in, not relative
    - how does it define dotfiles, because some files are being classified dotfiles that are not dotfiles
 ** Features
+   - add open with drop down in right click menu, ensure support for all platforms
    - fix search box to use directives like file:
  - home icon that goes to the home directory after the back button
 ** Core Architecture & Philosophy
