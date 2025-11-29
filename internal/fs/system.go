@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -138,28 +139,86 @@ func (s *System) handleSearchDir(req Request) {
 		return
 	}
 
-	// fast-text-search usage
+	// Use a map to track unique entries by path (prevents duplicates)
+	uniqueEntries := make(map[string]Entry)
+	var mu sync.Mutex
+
+	// 1. Content Search (fast-text-search)
 	// FTS(searchString, directory, ignoreExt, ignoreFolders, fileName, extType)
 	// We pass empty slices for ignores to search everything.
-	results := fts.FTS(req.Query, absPath, []string{}, []string{}, "", "")
+	contentResults := fts.FTS(req.Query, absPath, []string{}, []string{}, "", "")
 
-	entries := make([]Entry, 0, len(results))
-
-	for _, res := range results {
+	for _, res := range contentResults {
 		// res is the path string itself
 		info, err := os.Stat(res)
 		if err != nil {
-			continue 
+			continue
 		}
 
-		entries = append(entries, Entry{
+		uniqueEntries[res] = Entry{
 			Name:    info.Name(),
 			Path:    res,
 			IsDir:   info.IsDir(),
 			Size:    info.Size(),
 			ModTime: info.ModTime(),
-		})
+		}
 	}
+
+	// 2. Filename Search (fastwalk)
+	config := fastwalk.Config{
+		Follow: false,
+	}
+
+	queryLower := strings.ToLower(req.Query)
+
+	_ = fastwalk.Walk(&config, absPath, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if path == absPath {
+			return nil
+		}
+
+		// Check if filename matches query (case-insensitive substring)
+		if strings.Contains(strings.ToLower(d.Name()), queryLower) {
+			mu.Lock()
+			defer mu.Unlock()
+
+			// Only add if not already found by content search
+			if _, exists := uniqueEntries[path]; !exists {
+				info, _ := d.Info()
+				size := int64(0)
+				var modTime time.Time
+				if info != nil {
+					size = info.Size()
+					modTime = info.ModTime()
+				}
+
+				uniqueEntries[path] = Entry{
+					Name:    d.Name(),
+					Path:    path,
+					IsDir:   d.IsDir(),
+					Size:    size,
+					ModTime: modTime,
+				}
+			}
+		}
+		return nil
+	})
+
+	// Convert map back to slice
+	entries := make([]Entry, 0, len(uniqueEntries))
+	for _, entry := range uniqueEntries {
+		entries = append(entries, entry)
+	}
+
+	// Sort results
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].IsDir != entries[j].IsDir {
+			return entries[i].IsDir
+		}
+		return entries[i].Name < entries[j].Name
+	})
 
 	// Send back results
 	s.ResponseChan <- Response{
