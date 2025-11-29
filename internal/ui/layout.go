@@ -40,6 +40,7 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			if r.bgClick.Clicked(gtx) {
 				r.menuVisible, r.fileMenuOpen = false, false
+				r.CancelRename() // Cancel any active rename
 				if !r.settingsOpen && !r.deleteConfirmOpen && !r.createDialogOpen && !state.Conflict.Active {
 					eventOut = UIEvent{Action: ActionSelect, NewIndex: -1}
 					gtx.Execute(key.FocusCmd{Tag: keyTag})
@@ -519,12 +520,20 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 			// Layout file list (row handlers register on top of background)
 			dims := r.listState.Layout(gtx, len(state.Entries), func(gtx layout.Context, i int) layout.Dimensions {
 				item := &state.Entries[i]
+				isRenaming := r.renameIndex == i
 				
-				// Render row and get click states + position
-				rowDims, leftClicked, rightClicked, clickPos := r.renderRow(gtx, item, i == state.SelectedIndex)
+				// Render row and get click states + position + rename event
+				rowDims, leftClicked, rightClicked, clickPos, renameEvt := r.renderRow(gtx, item, i, i == state.SelectedIndex, isRenaming)
 				
-				// Handle left-click
-				if leftClicked {
+				// Handle rename event
+				if renameEvt != nil {
+					*eventOut = *renameEvt
+				}
+				
+				// Handle left-click (but not if renaming)
+				if leftClicked && !isRenaming {
+					// Cancel any active rename
+					r.CancelRename()
 					r.isEditing, r.fileMenuOpen = false, false
 					*eventOut = UIEvent{Action: ActionSelect, NewIndex: i}
 					gtx.Execute(key.FocusCmd{Tag: keyTag})
@@ -539,7 +548,9 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 				}
 				
 				// Handle right-click on file - compute window coordinates
-				if rightClicked {
+				if rightClicked && !isRenaming {
+					// Cancel any active rename
+					r.CancelRename()
 					fileRightClicked = true
 					// Convert local position to window coordinates
 					windowPos := image.Pt(
@@ -769,6 +780,14 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, state *State, eventOut 
 		r.deleteConfirmOpen = true
 		state.DeleteTarget = r.menuPath
 	}
+	if r.renameBtn.Clicked(gtx) {
+		r.menuVisible = false
+		// Start rename for the selected item
+		if state.SelectedIndex >= 0 && state.SelectedIndex < len(state.Entries) {
+			item := &state.Entries[state.SelectedIndex]
+			r.StartRename(state.SelectedIndex, item.Path, item.Name)
+		}
+	}
 	if r.favBtn.Clicked(gtx) {
 		r.menuVisible = false
 		action := ActionAddFavorite
@@ -835,6 +854,9 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, state *State, eventOut 
 					return layout.Dimensions{}
 				}
 				return r.menuItem(gtx, &r.pasteBtn, "Paste")
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return r.menuItem(gtx, &r.renameBtn, "Rename")
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {

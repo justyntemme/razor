@@ -13,6 +13,7 @@ import (
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/text"
@@ -48,6 +49,7 @@ const (
 	ActionCreateFile
 	ActionCreateFolder
 	ActionClearSearch
+	ActionRename
 	// Conflict resolution actions
 	ActionConflictReplace
 	ActionConflictKeepBoth
@@ -114,6 +116,7 @@ type Clipboard struct {
 type UIEvent struct {
 	Action        UIAction
 	Path          string
+	OldPath       string // Original path for rename operations
 	NewIndex      int
 	SortColumn    SortColumn
 	SortAscending bool
@@ -237,6 +240,7 @@ type Renderer struct {
 	openBtn, copyBtn    widget.Clickable
 	cutBtn, pasteBtn    widget.Clickable
 	deleteBtn           widget.Clickable
+	renameBtn           widget.Clickable
 	favBtn              widget.Clickable
 	openWithBtn         widget.Clickable
 	fileMenuBtn         widget.Clickable
@@ -257,6 +261,11 @@ type Renderer struct {
 	deleteConfirmOpen bool
 	deleteConfirmYes  widget.Clickable
 	deleteConfirmNo   widget.Clickable
+
+	// Inline rename
+	renameIndex    int           // Index of item being renamed (-1 if none)
+	renameEditor   widget.Editor // Editor for inline rename
+	renamePath     string        // Path of item being renamed
 
 	// Create file/folder dialog
 	createDialogOpen   bool
@@ -314,13 +323,14 @@ var (
 )
 
 func NewRenderer() *Renderer {
-	r := &Renderer{Theme: material.NewTheme(), SortAscending: true, DefaultDepth: 2}
+	r := &Renderer{Theme: material.NewTheme(), SortAscending: true, DefaultDepth: 2, renameIndex: -1}
 	r.listState.Axis = layout.Vertical
 	r.favState.Axis = layout.Vertical
 	r.driveState.Axis = layout.Vertical
 	r.pathEditor.SingleLine, r.pathEditor.Submit = true, true
 	r.searchEditor.SingleLine, r.searchEditor.Submit = true, true
 	r.createDialogEditor.SingleLine, r.createDialogEditor.Submit = true, true
+	r.renameEditor.SingleLine, r.renameEditor.Submit = true, true
 	r.searchEngine.Value = "builtin"
 	r.SelectedEngine = "builtin"
 	return r
@@ -341,6 +351,19 @@ func (r *Renderer) ShowCreateDialog(isDir bool) {
 	r.createDialogOpen = true
 	r.createDialogIsDir = isDir
 	r.createDialogEditor.SetText("")
+}
+
+func (r *Renderer) StartRename(index int, path, name string) {
+	r.renameIndex = index
+	r.renamePath = path
+	r.renameEditor.SetText(name)
+	// Select all text for easy replacement
+	r.renameEditor.SetCaret(0, len(name))
+}
+
+func (r *Renderer) CancelRename() {
+	r.renameIndex = -1
+	r.renamePath = ""
 }
 
 func (r *Renderer) detectRightClick(gtx layout.Context, tag event.Tag) bool {
@@ -488,8 +511,8 @@ func (r *Renderer) renderColumns(gtx layout.Context) (layout.Dimensions, UIEvent
 	return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween}.Layout(gtx, children...), evt
 }
 
-// renderRow renders a file/folder row. Returns dimensions, left-clicked, right-clicked, and click position.
-func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, selected bool) (layout.Dimensions, bool, bool, image.Point) {
+// renderRow renders a file/folder row. Returns dimensions, left-clicked, right-clicked, click position, and rename event.
+func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selected bool, isRenaming bool) (layout.Dimensions, bool, bool, image.Point, *UIEvent) {
 	// Check for left-click BEFORE layout (Gio pattern)
 	leftClicked := item.Clickable.Clicked(gtx)
 	
@@ -507,57 +530,126 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, selected bool) (
 		}
 	}
 	
-	// Layout the clickable row
-	dims := material.Clickable(gtx, &item.Clickable, func(gtx layout.Context) layout.Dimensions {
-		// Register right-click handler on this row's area
-		defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
-		event.Op(gtx.Ops, &item.RightClickTag)
+	// Check for rename submission or cancellation
+	var renameEvent *UIEvent
+	if isRenaming {
+		// Handle Enter to submit
+		for {
+			ev, ok := r.renameEditor.Update(gtx)
+			if !ok {
+				break
+			}
+			if _, ok := ev.(widget.SubmitEvent); ok {
+				newName := r.renameEditor.Text()
+				if newName != "" && newName != item.Name {
+					renameEvent = &UIEvent{
+						Action:  ActionRename,
+						Path:    filepath.Join(filepath.Dir(r.renamePath), newName),
+						OldPath: r.renamePath,
+					}
+				}
+				r.CancelRename()
+			}
+		}
 		
-		// Draw selection background
-		if selected {
-			paint.FillShape(gtx.Ops, colSelected, clip.Rect{Max: gtx.Constraints.Max}.Op())
+		// Handle Escape to cancel - check focused key events
+		for {
+			ev, ok := gtx.Event(key.Filter{Focus: true, Name: key.NameEscape})
+			if !ok {
+				break
+			}
+			if e, ok := ev.(key.Event); ok && e.State == key.Press {
+				r.CancelRename()
+			}
 		}
-
-		// Row content
-		name, typeStr, sizeStr := item.Name, "File", formatSize(item.Size)
-		dateStr := item.ModTime.Format("01/02/06 03:04 PM")
-		textColor, weight := colBlack, font.Normal
-
-		if item.IsDir {
-			name, typeStr, sizeStr = item.Name+"/", "File Folder", ""
-			textColor, weight = colDirBlue, font.Bold
-		} else if ext := filepath.Ext(item.Name); len(ext) > 1 {
-			typeStr = strings.ToUpper(ext[1:]) + " File"
-		}
-
-		return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
-			func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween, Alignment: layout.Middle}.Layout(gtx,
-					layout.Flexed(0.5, func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body1(r.Theme, name)
-						lbl.Color, lbl.Font.Weight, lbl.MaxLines = textColor, weight, 1
-						return lbl.Layout(gtx)
-					}),
-					layout.Flexed(0.25, func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body2(r.Theme, dateStr)
-						lbl.Color, lbl.MaxLines = colGray, 1
-						return lbl.Layout(gtx)
-					}),
-					layout.Flexed(0.15, func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body2(r.Theme, typeStr)
-						lbl.Color, lbl.MaxLines = colGray, 1
-						return lbl.Layout(gtx)
-					}),
-					layout.Flexed(0.10, func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body2(r.Theme, sizeStr)
-						lbl.Color, lbl.Alignment, lbl.MaxLines = colGray, text.End, 1
-						return lbl.Layout(gtx)
-					}),
-				)
-			})
-	})
+	}
 	
-	return dims, leftClicked, rightClicked, clickPos
+	// Layout the clickable row (but not if renaming - we handle clicks differently)
+	var dims layout.Dimensions
+	if isRenaming {
+		// For renaming, render content first to get proper size, then draw background
+		// Use a macro to record the content, measure it, then draw background + content
+		macro := op.Record(gtx.Ops)
+		contentDims := r.renderRowContent(gtx, item, true)
+		call := macro.Stop()
+		
+		// Draw selection background sized to content
+		paint.FillShape(gtx.Ops, colSelected, clip.Rect{Max: contentDims.Size}.Op())
+		// Replay the content on top
+		call.Add(gtx.Ops)
+		
+		dims = contentDims
+	} else {
+		dims = material.Clickable(gtx, &item.Clickable, func(gtx layout.Context) layout.Dimensions {
+			// Register right-click handler on this row's area
+			defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
+			event.Op(gtx.Ops, &item.RightClickTag)
+			
+			// Draw selection background
+			if selected {
+				paint.FillShape(gtx.Ops, colSelected, clip.Rect{Max: gtx.Constraints.Max}.Op())
+			}
+
+			return r.renderRowContent(gtx, item, false)
+		})
+	}
+	
+	return dims, leftClicked, rightClicked, clickPos, renameEvent
+}
+
+// renderRowContent renders the content of a row (shared between normal and rename mode)
+func (r *Renderer) renderRowContent(gtx layout.Context, item *UIEntry, isRenaming bool) layout.Dimensions {
+	name, typeStr, sizeStr := item.Name, "File", formatSize(item.Size)
+	dateStr := item.ModTime.Format("01/02/06 03:04 PM")
+	textColor, weight := colBlack, font.Normal
+
+	if item.IsDir {
+		if !isRenaming {
+			name = item.Name + "/"
+		}
+		typeStr, sizeStr = "File Folder", ""
+		textColor, weight = colDirBlue, font.Bold
+	} else if ext := filepath.Ext(item.Name); len(ext) > 1 {
+		typeStr = strings.ToUpper(ext[1:]) + " File"
+	}
+
+	return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
+		func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween, Alignment: layout.Middle}.Layout(gtx,
+				layout.Flexed(0.5, func(gtx layout.Context) layout.Dimensions {
+					if isRenaming {
+						// Show editor for renaming
+						gtx.Execute(key.FocusCmd{Tag: &r.renameEditor})
+						ed := material.Editor(r.Theme, &r.renameEditor, "")
+						ed.TextSize = unit.Sp(14)
+						ed.Color = textColor
+						ed.Font.Weight = weight
+						return widget.Border{Color: colAccent, Width: unit.Dp(1)}.Layout(gtx,
+							func(gtx layout.Context) layout.Dimensions {
+								return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4)}.Layout(gtx, ed.Layout)
+							})
+					}
+					lbl := material.Body1(r.Theme, name)
+					lbl.Color, lbl.Font.Weight, lbl.MaxLines = textColor, weight, 1
+					return lbl.Layout(gtx)
+				}),
+				layout.Flexed(0.25, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(r.Theme, dateStr)
+					lbl.Color, lbl.MaxLines = colGray, 1
+					return lbl.Layout(gtx)
+				}),
+				layout.Flexed(0.15, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(r.Theme, typeStr)
+					lbl.Color, lbl.MaxLines = colGray, 1
+					return lbl.Layout(gtx)
+				}),
+				layout.Flexed(0.10, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(r.Theme, sizeStr)
+					lbl.Color, lbl.Alignment, lbl.MaxLines = colGray, text.End, 1
+					return lbl.Layout(gtx)
+				}),
+			)
+		})
 }
 
 // renderFavoriteRow renders a favorite item. Returns dimensions, left-clicked, right-clicked, and click position.

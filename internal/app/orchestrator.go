@@ -223,6 +223,8 @@ func (o *Orchestrator) refreshDrives() {
 func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 	switch evt.Action {
 	case ui.ActionNavigate:
+		// Cancel any active rename
+		o.ui.CancelRename()
 		// Expand the path before navigating
 		expandedPath := o.expandPath(evt.Path)
 		// Validate the path exists
@@ -238,10 +240,13 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 			log.Printf("Path does not exist: %s (expanded from: %s)", expandedPath, evt.Path)
 		}
 	case ui.ActionBack:
+		o.ui.CancelRename()
 		o.goBack()
 	case ui.ActionForward:
+		o.ui.CancelRename()
 		o.goForward()
 	case ui.ActionHome:
+		o.ui.CancelRename()
 		o.navigate(o.homePath)
 	case ui.ActionNewWindow:
 		o.openNewWindow()
@@ -297,6 +302,8 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		go o.doCreateFile(evt.FileName)
 	case ui.ActionCreateFolder:
 		go o.doCreateFolder(evt.FileName)
+	case ui.ActionRename:
+		go o.doRename(evt.OldPath, evt.Path)
 	case ui.ActionClearSearch:
 		log.Printf("[CLEAR] ActionClearSearch called")
 		// Send cancel request to stop any ongoing search
@@ -771,6 +778,29 @@ func (o *Orchestrator) doCreateFolder(name string) {
 		log.Printf("Error creating folder: %v", err)
 		return
 	}
+
+	// Refresh the directory
+	o.requestDir(o.state.CurrentPath)
+}
+
+func (o *Orchestrator) doRename(oldPath, newPath string) {
+	if oldPath == "" || newPath == "" || oldPath == newPath {
+		return
+	}
+
+	// Check if new path already exists
+	if _, err := os.Stat(newPath); err == nil {
+		log.Printf("Cannot rename: destination already exists: %s", newPath)
+		return
+	}
+
+	// Perform the rename
+	if err := os.Rename(oldPath, newPath); err != nil {
+		log.Printf("Error renaming %s to %s: %v", oldPath, newPath, err)
+		return
+	}
+
+	log.Printf("Renamed %s to %s", oldPath, newPath)
 
 	// Refresh the directory
 	o.requestDir(o.state.CurrentPath)
