@@ -37,12 +37,13 @@
    - [X] Windows-style Column Layout (Name, Date, Type, Size).
    - [X] Context Menu (Right Click).
    - [X] Favorites Sidebar (SQLite Backend).
-   - [X] Mouse/Keyboard Interaction:
+   - [ ] Mouse/Keyboard Interaction:
      - [X] Single click to select (highlight).
      - [X] Double click to traverse/open.
      - [X] Keyboard navigation (Enter).
      - [X] Global Click Deselect.
      - [ ] BUG: Up/Down arrow key navigation is inconsistent on some platforms.
+     - [ ] BUG: Fix Keyboard navigation for hotkeys
    - [ ] Efficient Icon Rendering.
 
 ** Phase 4: Advanced Features
