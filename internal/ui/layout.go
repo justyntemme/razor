@@ -24,6 +24,7 @@ import (
 func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 	defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
 
+	// ===== KEYBOARD FOCUS =====
 	keyTag := &r.listState
 	event.Op(gtx.Ops, keyTag)
 	if !r.focused {
@@ -33,7 +34,9 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 
 	eventOut := r.processGlobalInput(gtx, state)
 
+	// ===== MAIN LAYOUT =====
 	layout.Stack{}.Layout(gtx,
+		// Background click handler (for dismissing menus)
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			if r.bgClick.Clicked(gtx) {
 				r.menuVisible, r.fileMenuOpen = false, false
@@ -69,6 +72,9 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 				}),
 
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					// Track vertical offset: File button (~32dp) + navbar (~44dp) + insets (~16dp) ≈ 92dp
+					verticalOffset := gtx.Dp(92)
+					
 					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							gtx.Constraints.Min.X, gtx.Constraints.Max.X = gtx.Dp(180), gtx.Dp(180)
@@ -80,6 +86,8 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 							return layout.Dimensions{Size: image.Pt(gtx.Dp(1), gtx.Constraints.Max.Y)}
 						}),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							// Horizontal offset: sidebar (180dp) + divider (1dp) = 181dp
+							r.fileListOffset = image.Pt(gtx.Dp(181), verticalOffset)
 							return r.layoutFileList(gtx, state, keyTag, &eventOut)
 						}),
 					)
@@ -393,6 +401,11 @@ func (r *Renderer) renderDirectivePill(gtx layout.Context, d DetectedDirective) 
 }
 
 func (r *Renderer) layoutSidebar(gtx layout.Context, state *State, eventOut *UIEvent) layout.Dimensions {
+	// Track sidebar vertical offset: file button + navbar + insets ≈ 92dp
+	sidebarYOffset := gtx.Dp(92)
+	// FAVORITES label height ≈ 24dp
+	favLabelHeight := gtx.Dp(24)
+	
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(4), Left: unit.Dp(8)}.Layout(gtx,
@@ -408,17 +421,22 @@ func (r *Renderer) layoutSidebar(gtx layout.Context, state *State, eventOut *UIE
 			return r.favState.Layout(gtx, len(state.FavList), func(gtx layout.Context, i int) layout.Dimensions {
 				fav := &state.FavList[i]
 				
-				// Render and get click states
-				rowDims, leftClicked, rightClicked := r.renderFavoriteRow(gtx, fav)
+				// Render and get click states + position
+				rowDims, leftClicked, rightClicked, clickPos := r.renderFavoriteRow(gtx, fav)
 				
 				// Handle left-click
 				if leftClicked {
 					*eventOut = UIEvent{Action: ActionNavigate, Path: fav.Path}
 				}
 				
-				// Handle right-click
+				// Handle right-click - compute window coordinates
 				if rightClicked {
-					r.menuVisible, r.menuPos, r.menuPath = true, r.mousePos, fav.Path
+					// Sidebar is at X=8 (inset), favorites list is after label
+					windowPos := image.Pt(
+						gtx.Dp(8) + clickPos.X,
+						sidebarYOffset + favLabelHeight + clickPos.Y,
+					)
+					r.menuVisible, r.menuPos, r.menuPath = true, windowPos, fav.Path
 					r.menuIsDir, r.menuIsFav = true, true
 					r.menuIsBackground = false
 				}
@@ -463,6 +481,9 @@ func (r *Renderer) layoutSidebar(gtx layout.Context, state *State, eventOut *UIE
 }
 
 func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layout.List, eventOut *UIEvent) layout.Dimensions {
+	// Track offset within this function for the list area (column headers + border ≈ 36dp)
+	listAreaOffset := gtx.Dp(36)
+	
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
@@ -481,10 +502,10 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 				})
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			// Register background right-click handler for the whole area FIRST
-			area := clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops)
+			// Register background right-click handler (covers entire area)
+			bgArea := clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops)
 			event.Op(gtx.Ops, &r.bgRightClickTag)
-			area.Pop()
+			bgArea.Pop()
 			
 			// Track if any file row was right-clicked
 			fileRightClicked := false
@@ -493,8 +514,8 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 			dims := r.listState.Layout(gtx, len(state.Entries), func(gtx layout.Context, i int) layout.Dimensions {
 				item := &state.Entries[i]
 				
-				// Render row and get click states
-				rowDims, leftClicked, rightClicked := r.renderRow(gtx, item, i == state.SelectedIndex)
+				// Render row and get click states + position
+				rowDims, leftClicked, rightClicked, clickPos := r.renderRow(gtx, item, i == state.SelectedIndex)
 				
 				// Handle left-click
 				if leftClicked {
@@ -511,10 +532,16 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 					item.LastClick = time.Now()
 				}
 				
-				// Handle right-click
+				// Handle right-click on file - compute window coordinates
 				if rightClicked {
 					fileRightClicked = true
-					r.menuVisible, r.menuPos, r.menuPath = true, r.mousePos, item.Path
+					// Convert local position to window coordinates
+					// clickPos is relative to the row, add offsets for: file list area + list area header
+					windowPos := image.Pt(
+						r.fileListOffset.X + clickPos.X,
+						r.fileListOffset.Y + listAreaOffset + clickPos.Y,
+					)
+					r.menuVisible, r.menuPos, r.menuPath = true, windowPos, item.Path
 					r.menuIsDir = item.IsDir
 					_, r.menuIsFav = state.Favorites[item.Path]
 					r.menuIsBackground = false
@@ -524,14 +551,28 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 				return rowDims
 			})
 			
-			// Check for background right-click ONLY if no file was right-clicked
-			if !fileRightClicked && r.detectRightClick(gtx, &r.bgRightClickTag) {
-				r.menuVisible = true
-				r.menuPos = r.mousePos
-				r.menuPath = state.CurrentPath
-				r.menuIsDir = true
-				r.menuIsFav = false
-				r.menuIsBackground = true
+			// Check for background right-click
+			if !fileRightClicked {
+				for {
+					ev, ok := gtx.Event(pointer.Filter{Target: &r.bgRightClickTag, Kinds: pointer.Press})
+					if !ok {
+						break
+					}
+					if e, ok := ev.(pointer.Event); ok && e.Buttons.Contain(pointer.ButtonSecondary) {
+						// Convert local position to window coordinates
+						clickPos := image.Pt(int(e.Position.X), int(e.Position.Y))
+						windowPos := image.Pt(
+							r.fileListOffset.X + clickPos.X,
+							r.fileListOffset.Y + listAreaOffset + clickPos.Y,
+						)
+						r.menuVisible = true
+						r.menuPos = windowPos
+						r.menuPath = state.CurrentPath
+						r.menuIsDir = true
+						r.menuIsFav = false
+						r.menuIsBackground = true
+					}
+				}
 			}
 			
 			return dims

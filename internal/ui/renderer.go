@@ -251,6 +251,7 @@ type Renderer struct {
 	mousePos            image.Point
 	mouseTag            struct{}
 	bgRightClickTag     struct{} // Tag for detecting right-clicks on empty space
+	fileListOffset      image.Point // Offset of file list area from window origin
 
 	// Delete confirmation
 	deleteConfirmOpen bool
@@ -358,21 +359,7 @@ func (r *Renderer) detectRightClick(gtx layout.Context, tag event.Tag) bool {
 }
 
 func (r *Renderer) processGlobalInput(gtx layout.Context, state *State) UIEvent {
-	// Track mouse position globally with a full-window clip area
-	// This captures the position on both move and press events
-	area := clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops)
-	event.Op(gtx.Ops, &r.mouseTag)
-	area.Pop()
-	
-	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: &r.mouseTag, Kinds: pointer.Move | pointer.Press})
-		if !ok {
-			break
-		}
-		if e, ok := ev.(pointer.Event); ok {
-			r.mousePos = image.Pt(int(e.Position.X), int(e.Position.Y))
-		}
-	}
+	// Keyboard input handling
 
 	for {
 		e, ok := gtx.Event(key.Filter{Focus: true, Name: ""})
@@ -501,13 +488,14 @@ func (r *Renderer) renderColumns(gtx layout.Context) (layout.Dimensions, UIEvent
 	return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween}.Layout(gtx, children...), evt
 }
 
-// renderRow renders a file/folder row. Returns dimensions and whether left/right click occurred.
-func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, selected bool) (layout.Dimensions, bool, bool) {
+// renderRow renders a file/folder row. Returns dimensions, left-clicked, right-clicked, and click position.
+func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, selected bool) (layout.Dimensions, bool, bool, image.Point) {
 	// Check for left-click BEFORE layout (Gio pattern)
 	leftClicked := item.Clickable.Clicked(gtx)
 	
-	// Check for right-click
+	// Check for right-click and capture position
 	rightClicked := false
+	var clickPos image.Point
 	for {
 		ev, ok := gtx.Event(pointer.Filter{Target: &item.RightClickTag, Kinds: pointer.Press})
 		if !ok {
@@ -515,6 +503,7 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, selected bool) (
 		}
 		if e, ok := ev.(pointer.Event); ok && e.Buttons.Contain(pointer.ButtonSecondary) {
 			rightClicked = true
+			clickPos = image.Pt(int(e.Position.X), int(e.Position.Y))
 		}
 	}
 	
@@ -568,16 +557,17 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, selected bool) (
 			})
 	})
 	
-	return dims, leftClicked, rightClicked
+	return dims, leftClicked, rightClicked, clickPos
 }
 
-// renderFavoriteRow renders a favorite item. Returns dimensions and whether left/right click occurred.
-func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem) (layout.Dimensions, bool, bool) {
+// renderFavoriteRow renders a favorite item. Returns dimensions, left-clicked, right-clicked, and click position.
+func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem) (layout.Dimensions, bool, bool, image.Point) {
 	// Check for left-click BEFORE layout
 	leftClicked := fav.Clickable.Clicked(gtx)
 	
-	// Check for right-click
+	// Check for right-click and capture position
 	rightClicked := false
+	var clickPos image.Point
 	for {
 		ev, ok := gtx.Event(pointer.Filter{Target: &fav.RightClickTag, Kinds: pointer.Press})
 		if !ok {
@@ -585,6 +575,7 @@ func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem) (lay
 		}
 		if e, ok := ev.(pointer.Event); ok && e.Buttons.Contain(pointer.ButtonSecondary) {
 			rightClicked = true
+			clickPos = image.Pt(int(e.Position.X), int(e.Position.Y))
 		}
 	}
 	
@@ -605,7 +596,7 @@ func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem) (lay
 			})
 	})
 	
-	return dims, leftClicked, rightClicked
+	return dims, leftClicked, rightClicked, clickPos
 }
 
 func (r *Renderer) renderDriveRow(gtx layout.Context, drive *DriveItem) (layout.Dimensions, bool) {
