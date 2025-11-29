@@ -1,77 +1,141 @@
-* Razor File Explorer Implementation Strategy
+#+TITLE: Razor File Manager - Project Status
+#+AUTHOR: justyntemme
+#+DATE: 2024
 
-* Next in line
-  - [ ] Live "Search as you type".
-- [ ] Implement directives (e.g., `contents:string`, `filename:string`).
+* Completed Features
+** DONE Path Navigation Bug Fix
+   CLOSED: [2024-11-29]
+   - [X] Handle ~ for home directory
+   - [X] Handle ~/path tilde expansion
+   - [X] Handle absolute Unix paths (/usr/bin)
+   - [X] Handle relative paths (../, ./)
+   - [X] Handle Windows drive letters (C:\, D:\)
+   - [X] Handle UNC paths (\\server\share)
+   - [X] Validate paths before navigation
 
-** BUGS
-   - fix cwd text box parsing to just go to whatever is typed in, not relative
-   - how does it define dotfiles, because some files are being classified dotfiles that are not dotfiles
-** Features
-   - add open with drop down in right click menu, ensure support for all platforms
-   - fix search box to use directives like file:
- - home icon that goes to the home directory after the back button
-** Core Architecture & Philosophy
-   - [X] *Event Driven Architecture*
-   - [X] *Performance First*
-   - [X] *Project Structure*
+** DONE Create New File/Folder Dialog
+   CLOSED: [2024-11-29]
+   - [X] Add "New File" to right-click context menu
+   - [X] Add "New Folder" to right-click context menu
+   - [X] Keyboard shortcuts (Ctrl+N file, Ctrl+Shift+N folder)
+   - [X] Modal dialog with text input
+   - [X] Validation (prevent duplicates)
+   - [X] Refresh directory after creation
 
-** Phase 1: Core Skeleton & Event Loop
-   - [X] Initialize Go Workspace and Modules.
-   - [X] Setup `internal/ui` package.
-   - [X] Setup `internal/fs` package.
-   - [X] Implement main Event Loop.
+** DONE Open With Support
+   CLOSED: [2024-11-29]
+   - [X] Linux: xdg-open, kde-open5, gio support
+   - [X] macOS: open command, Finder reveal
+   - [X] Windows: ShellExecuteW, rundll32 OpenAs_RunDLL
+   - [X] Add "Open With..." to context menu (files only)
 
-** Phase 2: Navigation & State Management
-   - [X] Create `AppState`.
-   - [X] Basic Directory Navigation.
-   - [X] Menu Bar with Path Label.
-   - [X] History Stack (Back/Forward functionality).
-   - [ ] Implement `Breadcrumbs` widget (Interactive path segments).
-   - [X] *Editable Address Bar*: Click path label to type directory (Enter to navigate).
-   - [X] *File Open*: Double-click files to open in system default app.
-   - [X] *OS Handling*: 
-     - [X] Windows Drive enumeration (C:\, D:\).
-     - [X] Unix/Linux Root (/).
+** DONE Search Improvements
+   CLOSED: [2024-11-29]
+   - [X] Search-as-you-type for simple filename searches
+   - [X] Directives (contents:, ext:, size:, modified:, filename:) require Enter
+   - [X] Clear button (X) appears when search active or showing results
+   - [X] Clicking X clears search and restores directory
+   - [X] "Search Results" badge shows when viewing search results
+   - [X] Progress indicator for directive searches (not just contents:)
+   - [X] Proper state tracking (IsSearchResult, SearchQuery in State)
+   - [X] Fix bug where empty search didn't restore contents
+   - [X] Fix race condition: generation counter prevents stale results
+   - [X] Stale search results no longer overwrite directory after clear
+   - [X] Visual directive pills: recognized directives shown as colored tags
+   - [X] Color-coded pills: contents=orange, ext=green, size=blue, modified=pink
+   - [X] Placeholder changes to "press Enter to search" when directives detected
+   - [X] Fix: typing directive prefix (e.g., "contents:") no longer triggers search
+   - [X] Fix: incomplete directives (no value after colon) are rejected
+   - [X] Added hasCompleteDirective() and isIncompleteDirective() validation
+   - [X] ARCHITECTURE FIX: Separate dirEntries (canonical) from rawEntries (display)
+   - [X] Search results only overwrite rawEntries, never dirEntries
+   - [X] Directive detection restores directory from cache immediately
+   - [X] directiveRestored flag prevents redundant restore calls
+   - [X] Gen counter incremented on restore to invalidate pending results
 
-** Phase 3: High-Performance UI Rendering
-   - [X] Implement Virtualization (`layout.List`).
-   - [X] Windows-style Column Layout (Name, Date, Type, Size).
-   - [X] Context Menu (Right Click).
-   - [X] Favorites Sidebar (SQLite Backend).
-   - [ ] Mouse/Keyboard Interaction:
-     - [X] Single click to select (highlight).
-     - [X] Double click to traverse/open.
-     - [X] Keyboard navigation (Enter).
-     - [X] Global Click Deselect.
-     - [ ] BUG: Up/Down arrow key navigation is inconsistent on some platforms.
-     - [ ] BUG: Fix Keyboard navigation for hotkeys
-   - [ ] fix query unit tests
-   - [ ] Efficient Icon Rendering.
+* In Progress
+** TODO Rename File/Folder
+   - [ ] Add "Rename" to context menu
+   - [ ] Inline editing in file list
+   - [ ] Keyboard shortcut (F2)
+   - [ ] Validation (prevent duplicates, invalid chars)
 
-** Phase 4: Advanced Features
-   - [X] *Search*: 
-     - [X] Multi-threaded recursive search using `fastwalk`.
-     - [X] Utilize fast-text-search for content searching.
-     - [ ] Live "Search as you type".
-     - [ ] Implement directives (e.g., `contents:string`, `filename:string`).
-   - [ ] *Advanced Search Querying*:
-     - [ ] Change default behavior to search Filenames first.
-     - [ ] Implement regex directives 
-     - [ ] Explore Directory Tree indexing for faster structure traversals.
-   - [X] *Persistence & Favorites*:
-     - [X] Explore SQLite as an option for storing Favorites/Bookmarks.
-     - [X] Implement Favorites Bar in UI.
-   - [ ] *Async Metadata*: 
-     - Calculate directory sizes on a background thread.
-   - [ ] *Preview Pane*: 
-     - Light-weight text/image preview.
-   - Drag and drop files
+** TODO Drag and Drop
+   - [ ] Drag files to move
+   - [ ] Drag to folders to move into
+   - [ ] Ctrl+drag to copy
+   - [ ] Visual feedback during drag
 
-** Phase 5: Optimization & Hardening
-   - [ ] *Profiling*: Use `pprof`.
-   - [ ] *Debug Mode*: Implement --debug flag and verbose logging.
-   - [ ] *Build Optimization*: Convert --debug to preprocessor directive (build tags).
-   - [ ] *Refactoring*: Add a colors package for RGB definitions to centralize theming.
-   - [ ] *Context Cancellation*.
-   - [ ] *Cross-Platform Checks*.
+* Planned Features
+** TODO File Preview Panel
+   - [ ] Image thumbnails
+   - [ ] Text file preview
+   - [ ] File metadata display
+   - [ ] Toggle preview panel
+
+** TODO Tabs/Multi-window
+   - [ ] Tab bar for multiple directories
+   - [ ] Ctrl+T new tab
+   - [ ] Ctrl+W close tab
+   - [ ] Drag tabs to reorder
+
+** TODO Bookmarks Enhancement
+   - [ ] Bookmark folders (not just favorites)
+   - [ ] Bookmark groups/categories
+   - [ ] Quick access sidebar customization
+
+** TODO File Operations
+   - [ ] Undo/Redo for file operations
+   - [ ] Batch rename
+   - [ ] File compression (zip/tar)
+   - [ ] File extraction
+
+** TODO View Modes
+   - [ ] Grid/icon view
+   - [ ] List view (current)
+   - [ ] Column view (macOS style)
+   - [ ] Thumbnail size options
+
+** TODO Advanced Search
+   - [ ] Save search queries
+   - [ ] Search history
+   - [ ] Regex support
+   - [ ] Search in file contents (already partial)
+
+** TODO Keyboard Navigation
+   - [ ] Type-to-select (type filename to jump)
+   - [ ] Vim-style navigation option
+   - [ ] Customizable shortcuts
+
+** TODO Settings/Preferences
+   - [ ] Theme selection (light/dark)
+   - [ ] Font size options
+   - [ ] Default view mode
+   - [ ] Startup directory
+   - [ ] Confirm before delete toggle
+
+* Known Bugs
+** TODO Context menu positioning
+   - Menu can appear off-screen near edges
+
+** TODO Large directory performance
+   - Directories with 10k+ files can be slow
+   - Consider virtualized list
+
+* Technical Debt
+** TODO Code Organization
+   - [ ] Split large files into smaller modules
+   - [ ] Add comprehensive tests
+   - [ ] Document public APIs
+
+** TODO Error Handling
+   - [ ] User-friendly error messages
+   - [ ] Error notification system
+   - [ ] Logging improvements
+
+* Notes
+- Using Gio UI framework (gioui.org)
+- SQLite for favorites/settings persistence
+- Cross-platform: Linux, macOS, Windows
+- Build with: go build ./cmd/razor
+- Debug build: go build -tags debug ./cmd/razor

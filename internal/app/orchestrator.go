@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -19,19 +20,22 @@ import (
 )
 
 type Orchestrator struct {
-	window       *app.Window
-	fs           *fs.System
-	store        *store.DB
-	ui           *ui.Renderer
-	state        ui.State
-	history      []string
-	historyIndex int
-	sortColumn   ui.SortColumn
-	sortAsc      bool
-	showDotfiles bool
-	rawEntries   []ui.UIEntry
-	progressMu   sync.Mutex
-	homePath     string
+	window         *app.Window
+	fs             *fs.System
+	store          *store.DB
+	ui             *ui.Renderer
+	state          ui.State
+	history        []string
+	historyIndex   int
+	sortColumn     ui.SortColumn
+	sortAsc        bool
+	showDotfiles   bool
+	rawEntries     []ui.UIEntry // Current display entries (filtered/sorted)
+	dirEntries     []ui.UIEntry // Original directory entries (never overwritten by search)
+	progressMu     sync.Mutex
+	homePath       string
+	searchGen      int64 // Tracks search generation to ignore stale results
+	searchGenMu    sync.Mutex
 }
 
 func NewOrchestrator() *Orchestrator {
@@ -46,6 +50,78 @@ func NewOrchestrator() *Orchestrator {
 		sortAsc:      true,
 		homePath:     home,
 	}
+}
+
+// expandPath expands and normalizes a path string, handling:
+// - ~ for home directory
+// - Relative paths (../, ./)
+// - Absolute paths
+// - Windows drive letters (C:, D:, etc.)
+// - Root path (/)
+func (o *Orchestrator) expandPath(input string) string {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return o.state.CurrentPath
+	}
+
+	// Handle home directory expansion
+	if strings.HasPrefix(input, "~") {
+		if input == "~" {
+			return o.homePath
+		}
+		if strings.HasPrefix(input, "~/") || strings.HasPrefix(input, "~\\") {
+			input = filepath.Join(o.homePath, input[2:])
+			return filepath.Clean(input)
+		}
+	}
+
+	// Check if it's an absolute path
+	if o.isAbsolutePath(input) {
+		return filepath.Clean(input)
+	}
+
+	// Handle relative paths - join with current directory
+	return filepath.Clean(filepath.Join(o.state.CurrentPath, input))
+}
+
+// isAbsolutePath checks if a path is absolute, handling both Unix and Windows paths
+func (o *Orchestrator) isAbsolutePath(path string) bool {
+	if len(path) == 0 {
+		return false
+	}
+
+	// Unix absolute path
+	if path[0] == '/' {
+		return true
+	}
+
+	// Windows absolute path checks
+	if runtime.GOOS == "windows" {
+		// Drive letter paths: C:\, D:\, C:/, etc.
+		if len(path) >= 2 && isLetter(path[0]) && path[1] == ':' {
+			return true
+		}
+		// UNC paths: \\server\share
+		if len(path) >= 2 && path[0] == '\\' && path[1] == '\\' {
+			return true
+		}
+	}
+
+	return false
+}
+
+// isLetter checks if a byte is an ASCII letter
+func isLetter(c byte) bool {
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+}
+
+// validatePath checks if a path exists and returns info about it
+func (o *Orchestrator) validatePath(path string) (exists bool, isDir bool) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false, false
+	}
+	return true, info.IsDir()
 }
 
 func (o *Orchestrator) Run(startPath string) error {
@@ -107,7 +183,20 @@ func (o *Orchestrator) refreshDrives() {
 func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 	switch evt.Action {
 	case ui.ActionNavigate:
-		o.navigate(evt.Path)
+		// Expand the path before navigating
+		expandedPath := o.expandPath(evt.Path)
+		// Validate the path exists
+		if exists, isDir := o.validatePath(expandedPath); exists && isDir {
+			o.navigate(expandedPath)
+		} else if exists && !isDir {
+			// It's a file, open it instead
+			if err := platformOpen(expandedPath); err != nil {
+				log.Printf("Error opening file: %v", err)
+			}
+		} else {
+			// Path doesn't exist - log error
+			log.Printf("Path does not exist: %s (expanded from: %s)", expandedPath, evt.Path)
+		}
 	case ui.ActionBack:
 		o.goBack()
 	case ui.ActionForward:
@@ -120,10 +209,20 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		o.state.SelectedIndex = evt.NewIndex
 		o.window.Invalidate()
 	case ui.ActionSearch:
-		o.search(evt.Path)
+		o.doSearch(evt.Path)
 	case ui.ActionOpen:
 		if err := platformOpen(evt.Path); err != nil {
 			log.Printf("Error opening file: %v", err)
+		}
+	case ui.ActionOpenWith:
+		// Show the system "Open With" dialog
+		if err := platformOpenWith(evt.Path, ""); err != nil {
+			log.Printf("Error showing Open With dialog: %v", err)
+		}
+	case ui.ActionOpenWithApp:
+		// Open with a specific application
+		if err := platformOpenWith(evt.Path, evt.AppPath); err != nil {
+			log.Printf("Error opening with app: %v", err)
 		}
 	case ui.ActionAddFavorite:
 		o.store.RequestChan <- store.Request{Op: store.AddFavorite, Path: evt.Path}
@@ -154,6 +253,27 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		}
 	case ui.ActionConfirmDelete:
 		go o.doDelete(evt.Path)
+	case ui.ActionCreateFile:
+		go o.doCreateFile(evt.FileName)
+	case ui.ActionCreateFolder:
+		go o.doCreateFolder(evt.FileName)
+	case ui.ActionClearSearch:
+		// Clear all search state and restore original directory contents
+		o.state.IsSearchResult = false
+		o.state.SearchQuery = ""
+		// Increment generation to invalidate any pending search results
+		o.searchGenMu.Lock()
+		o.searchGen++
+		o.searchGenMu.Unlock()
+		// Restore from cached directory entries (no disk access needed)
+		if len(o.dirEntries) > 0 {
+			o.rawEntries = o.dirEntries
+			o.applyFilterAndSort()
+			o.window.Invalidate()
+		} else {
+			// Fallback: re-fetch if dirEntries is empty
+			o.requestDir(o.state.CurrentPath)
+		}
 	}
 }
 
@@ -198,16 +318,111 @@ func (o *Orchestrator) goForward() {
 
 func (o *Orchestrator) requestDir(path string) {
 	o.state.SelectedIndex = -1
-	o.fs.RequestChan <- fs.Request{Op: fs.FetchDir, Path: path}
+	// Increment generation to invalidate any pending search results
+	o.searchGenMu.Lock()
+	o.searchGen++
+	gen := o.searchGen
+	o.searchGenMu.Unlock()
+	o.fs.RequestChan <- fs.Request{Op: fs.FetchDir, Path: path, Gen: gen}
 }
 
-func (o *Orchestrator) search(query string) {
+func (o *Orchestrator) doSearch(query string) {
 	o.state.SelectedIndex = -1
+	
+	// Empty query clears the search and restores directory
 	if query == "" {
-		o.requestDir(o.state.CurrentPath)
+		o.state.IsSearchResult = false
+		o.state.SearchQuery = ""
+		// Increment generation to invalidate any pending search results
+		o.searchGenMu.Lock()
+		o.searchGen++
+		o.searchGenMu.Unlock()
+		// Restore from cached directory entries
+		if len(o.dirEntries) > 0 {
+			o.rawEntries = o.dirEntries
+			o.applyFilterAndSort()
+			o.window.Invalidate()
+		} else {
+			o.requestDir(o.state.CurrentPath)
+		}
 		return
 	}
-	o.fs.RequestChan <- fs.Request{Op: fs.SearchDir, Path: o.state.CurrentPath, Query: query}
+	
+	// Check if query contains directive prefix but no value (e.g., "contents:" alone)
+	// These are incomplete and should not trigger a search
+	if isIncompleteDirective(query) {
+		// Don't search, just wait for user to complete the directive
+		// But also don't clear the current results
+		return
+	}
+	
+	// Track search state
+	o.state.SearchQuery = query
+	o.state.IsSearchResult = true
+	
+	// Check if this is a directive search (slow operation)
+	isDirectiveSearch := hasCompleteDirective(query, "contents:") ||
+		hasCompleteDirective(query, "ext:") ||
+		hasCompleteDirective(query, "size:") ||
+		hasCompleteDirective(query, "modified:") ||
+		hasCompleteDirective(query, "filename:")
+	
+	if isDirectiveSearch {
+		// Show progress for directive searches
+		label := "Searching..."
+		if hasCompleteDirective(query, "contents:") {
+			label = "Searching file contents..."
+		}
+		o.setProgress(true, label, 0, 0)
+	}
+	
+	// Increment generation for this search
+	o.searchGenMu.Lock()
+	o.searchGen++
+	gen := o.searchGen
+	o.searchGenMu.Unlock()
+	
+	o.fs.RequestChan <- fs.Request{Op: fs.SearchDir, Path: o.state.CurrentPath, Query: query, Gen: gen}
+}
+
+// hasCompleteDirective checks if query has a directive with an actual value
+func hasCompleteDirective(query, prefix string) bool {
+	lowerQuery := strings.ToLower(query)
+	idx := strings.Index(lowerQuery, prefix)
+	if idx < 0 {
+		return false
+	}
+	// Check there's something after the prefix
+	afterPrefix := query[idx+len(prefix):]
+	// Get the value (up to next space or end)
+	parts := strings.Fields(afterPrefix)
+	if len(parts) == 0 {
+		return false
+	}
+	return len(parts[0]) > 0
+}
+
+// isIncompleteDirective checks if query ends with a directive prefix but no value
+func isIncompleteDirective(query string) bool {
+	lowerQuery := strings.ToLower(strings.TrimSpace(query))
+	prefixes := []string{"contents:", "ext:", "size:", "modified:", "filename:"}
+	
+	for _, prefix := range prefixes {
+		// Check if query ends with just the prefix (no value)
+		if strings.HasSuffix(lowerQuery, prefix) {
+			return true
+		}
+		// Check if query contains prefix with no value (prefix at end of a word boundary)
+		if strings.Contains(lowerQuery, prefix) {
+			idx := strings.Index(lowerQuery, prefix)
+			afterPrefix := strings.TrimSpace(lowerQuery[idx+len(prefix):])
+			// If nothing after the prefix, or next char is another directive prefix, incomplete
+			if afterPrefix == "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (o *Orchestrator) processEvents() {
@@ -222,23 +437,51 @@ func (o *Orchestrator) processEvents() {
 }
 
 func (o *Orchestrator) handleFSResponse(resp fs.Response) {
+	// Clear any progress indicator
+	o.setProgress(false, "", 0, 0)
+	
+	// Check if this is a stale response (a newer request has been made)
+	o.searchGenMu.Lock()
+	currentGen := o.searchGen
+	o.searchGenMu.Unlock()
+	
+	if resp.Gen < currentGen {
+		// Stale response, ignore it
+		debugLog("Ignoring stale FS response (gen %d < current %d)", resp.Gen, currentGen)
+		return
+	}
+	
 	if resp.Err != nil {
 		log.Printf("FS Error: %v", resp.Err)
 		return
 	}
 
-	o.rawEntries = make([]ui.UIEntry, len(resp.Entries))
+	// Convert response entries to UI entries
+	entries := make([]ui.UIEntry, len(resp.Entries))
 	for i, e := range resp.Entries {
-		o.rawEntries[i] = ui.UIEntry{
+		entries[i] = ui.UIEntry{
 			Name: e.Name, Path: e.Path, IsDir: e.IsDir, Size: e.Size, ModTime: e.ModTime,
 		}
 	}
 
-	o.state.CurrentPath = resp.Path
+	// Track whether this is a search result or regular directory fetch
+	if resp.Op == fs.FetchDir {
+		// Directory fetch: store as the canonical directory listing
+		o.dirEntries = entries
+		o.rawEntries = entries
+		o.state.IsSearchResult = false
+		o.state.SearchQuery = ""
+		o.state.CurrentPath = resp.Path
+	} else {
+		// Search result: only update rawEntries, keep dirEntries intact
+		o.rawEntries = entries
+		// IsSearchResult and SearchQuery were already set in doSearch
+	}
+
 	o.applyFilterAndSort()
 
-	parent := filepath.Dir(resp.Path)
-	o.state.CanBack = parent != resp.Path
+	parent := filepath.Dir(o.state.CurrentPath)
+	o.state.CanBack = parent != o.state.CurrentPath
 	o.state.CanForward = o.historyIndex < len(o.history)-1
 
 	if o.state.SelectedIndex >= len(o.state.Entries) {
@@ -329,6 +572,54 @@ func (o *Orchestrator) setProgress(active bool, label string, current, total int
 	o.state.Progress = ui.ProgressState{Active: active, Label: label, Current: current, Total: total}
 	o.progressMu.Unlock()
 	o.window.Invalidate()
+}
+
+func (o *Orchestrator) doCreateFile(name string) {
+	if name == "" {
+		return
+	}
+
+	path := filepath.Join(o.state.CurrentPath, name)
+
+	// Check if file already exists
+	if _, err := os.Stat(path); err == nil {
+		log.Printf("File already exists: %s", path)
+		return
+	}
+
+	// Create the file
+	file, err := os.Create(path)
+	if err != nil {
+		log.Printf("Error creating file: %v", err)
+		return
+	}
+	file.Close()
+
+	// Refresh the directory
+	o.requestDir(o.state.CurrentPath)
+}
+
+func (o *Orchestrator) doCreateFolder(name string) {
+	if name == "" {
+		return
+	}
+
+	path := filepath.Join(o.state.CurrentPath, name)
+
+	// Check if folder already exists
+	if _, err := os.Stat(path); err == nil {
+		log.Printf("Folder already exists: %s", path)
+		return
+	}
+
+	// Create the folder
+	if err := os.Mkdir(path, 0755); err != nil {
+		log.Printf("Error creating folder: %v", err)
+		return
+	}
+
+	// Refresh the directory
+	o.requestDir(o.state.CurrentPath)
 }
 
 func (o *Orchestrator) doPaste() {

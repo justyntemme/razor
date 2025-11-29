@@ -33,6 +33,8 @@ const (
 	ActionSelect
 	ActionSearch
 	ActionOpen
+	ActionOpenWith
+	ActionOpenWithApp
 	ActionAddFavorite
 	ActionRemoveFavorite
 	ActionSort
@@ -43,6 +45,9 @@ const (
 	ActionDelete
 	ActionConfirmDelete
 	ActionCancelDelete
+	ActionCreateFile
+	ActionCreateFolder
+	ActionClearSearch
 )
 
 type ClipOp int
@@ -74,6 +79,8 @@ type UIEvent struct {
 	SortAscending bool
 	ShowDotfiles  bool
 	ClipOp        ClipOp
+	FileName      string
+	AppPath       string
 }
 
 type UIEntry struct {
@@ -104,54 +111,112 @@ type DriveItem struct {
 	Clickable  widget.Clickable
 }
 
+// DetectedDirective represents a parsed search directive for visual display
+type DetectedDirective struct {
+	Type  string // "contents", "ext", "size", "modified", "filename"
+	Value string // The value after the colon
+	Full  string // Full directive string e.g. "contents:foo"
+}
+
+// parseDirectivesForDisplay extracts directives from search text for visual feedback
+func parseDirectivesForDisplay(text string) ([]DetectedDirective, string) {
+	var directives []DetectedDirective
+	var remaining []string
+	
+	// Known directive prefixes
+	knownDirectives := []string{"contents:", "ext:", "size:", "modified:", "filename:"}
+	
+	parts := strings.Fields(text)
+	for _, part := range parts {
+		found := false
+		for _, prefix := range knownDirectives {
+			if strings.HasPrefix(strings.ToLower(part), prefix) {
+				dirType := strings.TrimSuffix(prefix, ":")
+				value := part[len(prefix):]
+				if value != "" {
+					directives = append(directives, DetectedDirective{
+						Type:  dirType,
+						Value: value,
+						Full:  part,
+					})
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			remaining = append(remaining, part)
+		}
+	}
+	
+	return directives, strings.Join(remaining, " ")
+}
+
 type State struct {
-	CurrentPath   string
-	Entries       []UIEntry
-	SelectedIndex int
-	CanBack       bool
-	CanForward    bool
-	Favorites     map[string]bool
-	FavList       []FavoriteItem
-	Clipboard     *Clipboard
-	Progress      ProgressState
-	DeleteTarget  string // Path pending deletion confirmation
-	Drives        []DriveItem
+	CurrentPath    string
+	Entries        []UIEntry
+	SelectedIndex  int
+	CanBack        bool
+	CanForward     bool
+	Favorites      map[string]bool
+	FavList        []FavoriteItem
+	Clipboard      *Clipboard
+	Progress       ProgressState
+	DeleteTarget   string
+	Drives         []DriveItem
+	IsSearchResult bool
+	SearchQuery    string
 }
 
 type Renderer struct {
-	Theme                *material.Theme
-	listState, favState  layout.List
-	driveState           layout.List
-	backBtn, fwdBtn      widget.Clickable
-	homeBtn              widget.Clickable
-	bgClick              widget.Clickable
-	focused              bool
-	pathEditor           widget.Editor
-	pathClick            widget.Clickable
-	isEditing            bool
-	searchEditor         widget.Editor
-	menuVisible          bool
-	menuPos              image.Point
-	menuPath             string
+	Theme               *material.Theme
+	listState, favState layout.List
+	driveState          layout.List
+	backBtn, fwdBtn     widget.Clickable
+	homeBtn             widget.Clickable
+	bgClick             widget.Clickable
+	focused             bool
+	pathEditor          widget.Editor
+	pathClick           widget.Clickable
+	isEditing           bool
+	searchEditor        widget.Editor
+	searchClearBtn      widget.Clickable
+	searchActive        bool
+	lastSearchQuery     string
+	detectedDirectives  []DetectedDirective // Parsed directives for visual display
+	directiveRestored   bool                // Track if we've restored directory after detecting directive
+	menuVisible         bool
+	menuPos             image.Point
+	menuPath            string
 	menuIsDir, menuIsFav bool
-	openBtn, copyBtn     widget.Clickable
-	cutBtn, pasteBtn     widget.Clickable
-	deleteBtn            widget.Clickable
-	favBtn               widget.Clickable
-	fileMenuBtn          widget.Clickable
-	fileMenuOpen         bool
-	newWindowBtn         widget.Clickable
-	settingsBtn          widget.Clickable
-	settingsOpen         bool
-	settingsCloseBtn     widget.Clickable
-	searchEngine         widget.Enum
-	mousePos             image.Point
-	mouseTag             struct{}
+	openBtn, copyBtn    widget.Clickable
+	cutBtn, pasteBtn    widget.Clickable
+	deleteBtn           widget.Clickable
+	favBtn              widget.Clickable
+	openWithBtn         widget.Clickable
+	fileMenuBtn         widget.Clickable
+	fileMenuOpen        bool
+	newWindowBtn        widget.Clickable
+	newFileBtn          widget.Clickable
+	newFolderBtn        widget.Clickable
+	settingsBtn         widget.Clickable
+	settingsOpen        bool
+	settingsCloseBtn    widget.Clickable
+	searchEngine        widget.Enum
+	mousePos            image.Point
+	mouseTag            struct{}
 
 	// Delete confirmation
-	deleteConfirmOpen    bool
-	deleteConfirmYes     widget.Clickable
-	deleteConfirmNo      widget.Clickable
+	deleteConfirmOpen bool
+	deleteConfirmYes  widget.Clickable
+	deleteConfirmNo   widget.Clickable
+
+	// Create file/folder dialog
+	createDialogOpen   bool
+	createDialogIsDir  bool
+	createDialogEditor widget.Editor
+	createDialogOK     widget.Clickable
+	createDialogCancel widget.Clickable
 
 	// Column sorting
 	headerBtns    [4]widget.Clickable
@@ -174,8 +239,12 @@ var (
 	colDisabled  = color.NRGBA{R: 150, G: 150, B: 150, A: 255}
 	colProgress  = color.NRGBA{R: 66, G: 133, B: 244, A: 255}
 	colDanger    = color.NRGBA{R: 220, G: 53, B: 69, A: 255}
-	colHomeBtnBg = color.NRGBA{R: 76, G: 175, B: 80, A: 255}  // Green
-	colDriveIcon = color.NRGBA{R: 96, G: 125, B: 139, A: 255} // Blue-gray
+	colHomeBtnBg = color.NRGBA{R: 76, G: 175, B: 80, A: 255}
+	colDriveIcon = color.NRGBA{R: 96, G: 125, B: 139, A: 255}
+	colSuccess   = color.NRGBA{R: 40, G: 167, B: 69, A: 255}
+	colAccent    = color.NRGBA{R: 66, G: 133, B: 244, A: 255}
+	colDirective = color.NRGBA{R: 103, G: 58, B: 183, A: 255}  // Purple for directives
+	colDirectiveBg = color.NRGBA{R: 237, G: 231, B: 246, A: 255} // Light purple background
 )
 
 func NewRenderer() *Renderer {
@@ -185,11 +254,18 @@ func NewRenderer() *Renderer {
 	r.driveState.Axis = layout.Vertical
 	r.pathEditor.SingleLine, r.pathEditor.Submit = true, true
 	r.searchEditor.SingleLine, r.searchEditor.Submit = true, true
+	r.createDialogEditor.SingleLine, r.createDialogEditor.Submit = true, true
 	r.searchEngine.Value = "default"
 	return r
 }
 
 func (r *Renderer) SetShowDotfilesCheck(v bool) { r.showDotfilesCheck.Value = v }
+
+func (r *Renderer) ShowCreateDialog(isDir bool) {
+	r.createDialogOpen = true
+	r.createDialogIsDir = isDir
+	r.createDialogEditor.SetText("")
+}
 
 func (r *Renderer) detectRightClick(gtx layout.Context, tag event.Tag) bool {
 	for {
@@ -221,7 +297,7 @@ func (r *Renderer) processGlobalInput(gtx layout.Context, state *State) UIEvent 
 		if !ok {
 			break
 		}
-		if r.isEditing || r.settingsOpen || r.deleteConfirmOpen {
+		if r.isEditing || r.settingsOpen || r.deleteConfirmOpen || r.createDialogOpen {
 			continue
 		}
 		k, ok := e.(key.Event)
@@ -272,6 +348,14 @@ func (r *Renderer) processGlobalInput(gtx layout.Context, state *State) UIEvent 
 		case "V":
 			if k.Modifiers.Contain(key.ModCtrl) && state.Clipboard != nil {
 				return UIEvent{Action: ActionPaste}
+			}
+		case "N":
+			if k.Modifiers.Contain(key.ModCtrl) {
+				if k.Modifiers.Contain(key.ModShift) {
+					r.ShowCreateDialog(true)
+				} else {
+					r.ShowCreateDialog(false)
+				}
 			}
 		case "⌫", "⌦", "Delete":
 			if state.SelectedIndex >= 0 {

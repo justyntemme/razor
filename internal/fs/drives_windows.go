@@ -14,10 +14,10 @@ type Drive struct {
 }
 
 var (
-	kernel32           = syscall.NewLazyDLL("kernel32.dll")
-	getLogicalDrives   = kernel32.NewProc("GetLogicalDrives")
-	getDriveTypeW      = kernel32.NewProc("GetDriveTypeW")
-	getVolumeInfoW     = kernel32.NewProc("GetVolumeInformationW")
+	kernel32         = syscall.NewLazyDLL("kernel32.dll")
+	getLogicalDrives = kernel32.NewProc("GetLogicalDrives")
+	getDriveTypeW    = kernel32.NewProc("GetDriveTypeW")
+	getVolumeInfoW   = kernel32.NewProc("GetVolumeInformationW")
 )
 
 const (

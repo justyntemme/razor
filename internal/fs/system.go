@@ -19,6 +19,7 @@ type Request struct {
 	Op    OpType
 	Path  string
 	Query string
+	Gen   int64 // Generation counter to track stale requests
 }
 
 type Entry struct {
@@ -34,6 +35,7 @@ type Response struct {
 	Path    string
 	Entries []Entry
 	Err     error
+	Gen     int64 // Generation counter from request
 }
 
 type System struct {
@@ -57,6 +59,7 @@ func (s *System) Start() {
 		case SearchDir:
 			resp = s.searchDir(req.Path, req.Query)
 		}
+		resp.Gen = req.Gen // Pass through generation counter
 		s.ResponseChan <- resp
 	}
 }
