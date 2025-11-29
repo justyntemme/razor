@@ -43,15 +43,21 @@ func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem, sele
 						}
 						return layout.Dimensions{}
 					}),
-					// Text content
+					// Text content - use Flex with Flexed(1) to fill width (like renderRow does)
 					layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 						return layout.Inset{
 							Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12),
 						}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							txt := material.Body1(r.Theme, fav.Name)
-							txt.Color = color.NRGBA{R: 0, G: 0, B: 128, A: 255}
-							txt.MaxLines = 1
-							return txt.Layout(gtx)
+							// Use Flex to ensure the row fills the full available width
+							// This matches renderRow which uses Flex with Flexed children
+							return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+									txt := material.Body1(r.Theme, fav.Name)
+									txt.Color = color.NRGBA{R: 0, G: 0, B: 128, A: 255}
+									txt.MaxLines = 1
+									return txt.Layout(gtx)
+								}),
+							)
 						})
 					}),
 				)
