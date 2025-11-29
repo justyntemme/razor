@@ -3,20 +3,20 @@ package app
 import (
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 
 	"gioui.org/app"
 	"gioui.org/op"
 
 	"github.com/justyntemme/razor/internal/fs"
+	"github.com/justyntemme/razor/internal/store"
 	"github.com/justyntemme/razor/internal/ui"
 )
 
 type Orchestrator struct {
 	window *app.Window
 	fs     *fs.System
+	store  *store.DB
 	ui     *ui.Renderer
 	state  ui.State
 
@@ -32,24 +32,40 @@ func NewOrchestrator(debug bool) *Orchestrator {
 	return &Orchestrator{
 		window:       new(app.Window),
 		fs:           fs.NewSystem(),
+		store:        store.NewDB(),
 		ui:           renderer,
-		state:        ui.State{CurrentPath: "Initializing...", SelectedIndex: -1},
+		state:        ui.State{CurrentPath: "Initializing...", SelectedIndex: -1, Favorites: make(map[string]bool)},
 		history:      make([]string, 0),
 		historyIndex: -1,
 		debug:        debug,
 	}
 }
 
+// Run now accepts startPath to handle the --path flag or default to Home
 func (o *Orchestrator) Run(startPath string) error {
 	if o.debug {
 		log.Println("Starting Razor in DEBUG mode")
 	}
 
-	go o.fs.Start()
-	go o.processFSEvents()
+	// 1. Initialize DB
+	configDir, _ := os.UserConfigDir()
+	dbPath := filepath.Join(configDir, "razor", "razor.db")
+	if err := o.store.Open(dbPath); err != nil {
+		log.Printf("Failed to open DB: %v", err)
+	}
+	defer o.store.Close()
 
-	// Determine Initial Path
-	// Priority: 1. --path flag, 2. User Home Dir, 3. Current Working Dir
+	// 2. Start Workers
+	go o.fs.Start()
+	go o.store.Start()
+	
+	// 3. Start Event Listener
+	go o.processEvents()
+
+	// 4. Initial Data Fetch
+	o.store.RequestChan <- store.Request{Op: store.FetchFavorites}
+
+	// 5. Initial Navigation
 	initialPath := startPath
 	if initialPath == "" {
 		home, err := os.UserHomeDir()
@@ -59,7 +75,6 @@ func (o *Orchestrator) Run(startPath string) error {
 			initialPath, _ = os.Getwd()
 		}
 	}
-
 	o.navigate(initialPath)
 
 	var ops op.Ops
@@ -90,6 +105,10 @@ func (o *Orchestrator) Run(startPath string) error {
 				o.search(evt.Path)
 			case ui.ActionOpen:
 				o.openFile(evt.Path)
+			case ui.ActionAddFavorite:
+				o.store.RequestChan <- store.Request{Op: store.AddFavorite, Path: evt.Path}
+			case ui.ActionRemoveFavorite:
+				o.store.RequestChan <- store.Request{Op: store.RemoveFavorite, Path: evt.Path}
 			}
 
 			e.Frame(gtx.Ops)
@@ -158,68 +177,87 @@ func (o *Orchestrator) search(query string) {
 }
 
 func (o *Orchestrator) openFile(path string) {
-	var cmd *exec.Cmd
-	
     if o.debug {
-        log.Printf("[DEBUG] Opening file: %s", path)
+        log.Printf("[DEBUG] Opening file via platform handler: %s", path)
     }
 
-	switch runtime.GOOS {
-	case "windows":
-		// Windows 'start' requires a title (empty string here) before the path
-		cmd = exec.Command("cmd", "/c", "start", "", path)
-	case "darwin":
-		cmd = exec.Command("open", path)
-	case "linux":
-		cmd = exec.Command("xdg-open", path)
-	default:
-        log.Printf("Unsupported OS for opening files: %s", runtime.GOOS)
-		return
-	}
-
-	if err := cmd.Start(); err != nil {
+	// Delegate to the OS-specific implementation in platform_*.go
+	if err := platformOpen(path); err != nil {
 		log.Printf("Error opening file: %v", err)
 	}
 }
 
-func (o *Orchestrator) processFSEvents() {
-	for resp := range o.fs.ResponseChan {
-		if resp.Err != nil {
-			log.Printf("FS Error: %v", resp.Err)
-			continue
+func (o *Orchestrator) processEvents() {
+	for {
+		select {
+		case resp := <-o.fs.ResponseChan:
+			o.handleFSResponse(resp)
+		case resp := <-o.store.ResponseChan:
+			o.handleStoreResponse(resp)
 		}
+	}
+}
 
-		if o.debug {
-			log.Printf("[DEBUG] Loaded %d entries for %s", len(resp.Entries), resp.Path)
+func (o *Orchestrator) handleFSResponse(resp fs.Response) {
+	if resp.Err != nil {
+		log.Printf("FS Error: %v", resp.Err)
+		return
+	}
+
+	if o.debug {
+		log.Printf("[DEBUG] Loaded %d entries for %s", len(resp.Entries), resp.Path)
+	}
+
+	uiEntries := make([]ui.UIEntry, len(resp.Entries))
+	for i, e := range resp.Entries {
+		uiEntries[i] = ui.UIEntry{
+			Name:    e.Name,
+			Path:    e.Path,
+			IsDir:   e.IsDir,
+			Size:    e.Size,
+			ModTime: e.ModTime,
 		}
+	}
 
-		uiEntries := make([]ui.UIEntry, len(resp.Entries))
-		for i, e := range resp.Entries {
-			uiEntries[i] = ui.UIEntry{
-				Name:    e.Name,
-				Path:    e.Path,
-				IsDir:   e.IsDir,
-				Size:    e.Size,
-				ModTime: e.ModTime,
+	o.state.CurrentPath = resp.Path
+	o.state.Entries = uiEntries
+	
+	parent := filepath.Dir(resp.Path)
+	o.state.CanBack = parent != resp.Path
+	o.state.CanForward = o.historyIndex < len(o.history)-1
+
+	if o.state.SelectedIndex >= len(uiEntries) {
+		o.state.SelectedIndex = -1
+	}
+
+	o.window.Invalidate()
+}
+
+func (o *Orchestrator) handleStoreResponse(resp store.Response) {
+	if resp.Err != nil {
+		log.Printf("Store Error: %v", resp.Err)
+		return
+	}
+
+	if resp.Op == store.FetchFavorites {
+		favMap := make(map[string]bool)
+		favList := make([]ui.FavoriteItem, len(resp.Favorites))
+		
+		for i, path := range resp.Favorites {
+			favMap[path] = true
+			favList[i] = ui.FavoriteItem{
+				Path: path,
+				Name: filepath.Base(path),
 			}
 		}
-
-		o.state.CurrentPath = resp.Path
-		o.state.Entries = uiEntries
 		
-		parent := filepath.Dir(resp.Path)
-		o.state.CanBack = parent != resp.Path
-		o.state.CanForward = o.historyIndex < len(o.history)-1
-
-		if o.state.SelectedIndex >= len(uiEntries) {
-			o.state.SelectedIndex = -1
-		}
-
+		o.state.Favorites = favMap
+		o.state.FavList = favList
 		o.window.Invalidate()
 	}
 }
 
-// Main now accepts debug and startPath parameters
+// Main now correctly matches the signature expected by cmd/razor
 func Main(debug bool, startPath string) {
 	go func() {
 		orchestrator := NewOrchestrator(debug)

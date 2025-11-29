@@ -27,6 +27,7 @@
    - [X] Implement Virtualization (`layout.List`).
    - [X] Windows-style Column Layout (Name, Date, Type, Size).
    - [X] Context Menu (Right Click).
+   - [X] Favorites Sidebar (SQLite Backend).
    - [X] Mouse/Keyboard Interaction:
      - [X] Single click to select (highlight).
      - [X] Double click to traverse/open.
@@ -44,9 +45,9 @@
      - [ ] Change default behavior to search Filenames first.
      - [ ] Implement directives (e.g., `contents:string`, `filename:string`).
      - [ ] Explore Directory Tree indexing for faster structure traversals.
-   - [ ] *Persistence & Favorites*:
-     - [ ] Explore SQLite as an option for storing Favorites/Bookmarks.
-     - [ ] Implement Favorites Bar in UI.
+   - [X] *Persistence & Favorites*:
+     - [X] Explore SQLite as an option for storing Favorites/Bookmarks.
+     - [X] Implement Favorites Bar in UI.
    - [ ] *Async Metadata*: 
      - Calculate directory sizes on a background thread.
    - [ ] *Preview Pane*: 
@@ -56,5 +57,6 @@
    - [ ] *Profiling*: Use `pprof`.
    - [ ] *Debug Mode*: Implement --debug flag and verbose logging.
    - [ ] *Build Optimization*: Convert --debug to preprocessor directive (build tags).
+   - [ ] *Refactoring*: Add a colors package for RGB definitions to centralize theming.
    - [ ] *Context Cancellation*.
    - [ ] *Cross-Platform Checks*.
