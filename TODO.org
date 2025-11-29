@@ -55,7 +55,7 @@
      - [ ] Implement directives (e.g., `contents:string`, `filename:string`).
    - [ ] *Advanced Search Querying*:
      - [ ] Change default behavior to search Filenames first.
-     - [ ] Implement directives (e.g., `contents:string`, `filename:string`).
+     - [ ] Implement regex directives 
      - [ ] Explore Directory Tree indexing for faster structure traversals.
    - [X] *Persistence & Favorites*:
      - [X] Explore SQLite as an option for storing Favorites/Bookmarks.
