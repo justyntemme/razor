@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"path/filepath"
@@ -55,8 +56,7 @@ type UIEvent struct {
 }
 
 type UIEntry struct {
-	Name          string
-	Path          string
+	Name, Path    string
 	IsDir         bool
 	Size          int64
 	ModTime       time.Time
@@ -66,8 +66,7 @@ type UIEntry struct {
 }
 
 type FavoriteItem struct {
-	Name          string
-	Path          string
+	Name, Path    string
 	Clickable     widget.Clickable
 	RightClickTag int
 }
@@ -83,48 +82,32 @@ type State struct {
 }
 
 type Renderer struct {
-	Theme     *material.Theme
-	listState layout.List
-	favState  layout.List
-	backBtn   widget.Clickable
-	fwdBtn    widget.Clickable
+	Theme                *material.Theme
+	listState, favState  layout.List
+	backBtn, fwdBtn      widget.Clickable
+	bgClick              widget.Clickable
+	focused, Debug       bool
+	pathEditor           widget.Editor
+	pathClick            widget.Clickable
+	isEditing            bool
+	searchEditor         widget.Editor
+	menuVisible          bool
+	menuPos              image.Point
+	menuPath             string
+	menuIsDir, menuIsFav bool
+	openBtn, copyBtn     widget.Clickable
+	favBtn               widget.Clickable
+	fileMenuBtn          widget.Clickable
+	fileMenuOpen         bool
+	settingsBtn          widget.Clickable
+	settingsOpen         bool
+	settingsCloseBtn     widget.Clickable
+	searchEngine         widget.Enum
+	mousePos             image.Point
+	mouseTag             struct{}
 
-	bgClick widget.Clickable
-	focused bool
-	Debug   bool
-
-	pathEditor widget.Editor
-	pathClick  widget.Clickable
-	isEditing  bool
-
-	searchEditor widget.Editor
-
-	menuVisible bool
-	menuPos     image.Point
-	menuPath    string
-	menuIsDir   bool
-	menuIsFav   bool
-
-	openBtn widget.Clickable
-	copyBtn widget.Clickable
-	favBtn  widget.Clickable
-
-	fileMenuBtn  widget.Clickable
-	fileMenuOpen bool
-	settingsBtn  widget.Clickable
-
-	settingsOpen     bool
-	settingsCloseBtn widget.Clickable
-	searchEngine     widget.Enum
-
-	mousePos image.Point
-	mouseTag struct{}
-
-	// Column header sorting
-	nameHeaderBtn widget.Clickable
-	dateHeaderBtn widget.Clickable
-	typeHeaderBtn widget.Clickable
-	sizeHeaderBtn widget.Clickable
+	// Column sorting - use array for cleaner iteration
+	headerBtns    [4]widget.Clickable
 	SortColumn    SortColumn
 	SortAscending bool
 
@@ -133,66 +116,56 @@ type Renderer struct {
 	showDotfilesCheck widget.Bool
 }
 
+var (
+	colWhite    = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+	colBlack    = color.NRGBA{R: 0, G: 0, B: 0, A: 255}
+	colGray     = color.NRGBA{R: 100, G: 100, B: 100, A: 255}
+	colLightGray = color.NRGBA{R: 200, G: 200, B: 200, A: 255}
+	colDirBlue  = color.NRGBA{R: 0, G: 0, B: 128, A: 255}
+	colSelected = color.NRGBA{R: 200, G: 220, B: 255, A: 255}
+	colSidebar  = color.NRGBA{R: 245, G: 245, B: 245, A: 255}
+	colDisabled = color.NRGBA{R: 150, G: 150, B: 150, A: 255}
+)
+
 func NewRenderer() *Renderer {
-	r := &Renderer{
-		Theme: material.NewTheme(),
-	}
+	r := &Renderer{Theme: material.NewTheme(), SortAscending: true}
 	r.listState.Axis = layout.Vertical
 	r.favState.Axis = layout.Vertical
-	r.pathEditor.SingleLine = true
-	r.pathEditor.Submit = true
-
-	r.searchEditor.SingleLine = true
-	r.searchEditor.Submit = true
-
+	r.pathEditor.SingleLine, r.pathEditor.Submit = true, true
+	r.searchEditor.SingleLine, r.searchEditor.Submit = true, true
 	r.searchEngine.Value = "default"
-
-	// Default sort: by name, ascending
-	r.SortColumn = SortByName
-	r.SortAscending = true
-
 	return r
 }
 
-// SetShowDotfilesCheck sets the checkbox state from external code (e.g., when loading settings)
-func (r *Renderer) SetShowDotfilesCheck(value bool) {
-	r.showDotfilesCheck.Value = value
-}
+func (r *Renderer) SetShowDotfilesCheck(v bool) { r.showDotfilesCheck.Value = v }
 
-// detectRightClick checks for secondary button presses on a specific tag
 func (r *Renderer) detectRightClick(gtx layout.Context, tag event.Tag) bool {
 	for {
 		ev, ok := gtx.Event(pointer.Filter{Target: tag, Kinds: pointer.Press | pointer.Release})
 		if !ok {
 			break
 		}
-		if e, ok := ev.(pointer.Event); ok {
-			if e.Kind == pointer.Press && e.Buttons.Contain(pointer.ButtonSecondary) {
-				return true
-			}
+		if e, ok := ev.(pointer.Event); ok && e.Kind == pointer.Press && e.Buttons.Contain(pointer.ButtonSecondary) {
+			return true
 		}
 	}
 	return false
 }
 
-// processGlobalInput handles keyboard shortcuts and global mouse tracking
 func (r *Renderer) processGlobalInput(gtx layout.Context, state *State) UIEvent {
-	var eventOut UIEvent
-
-	// Mouse Tracking
-	mouseTag := &r.mouseTag
-	event.Op(gtx.Ops, mouseTag)
+	// Mouse tracking
+	event.Op(gtx.Ops, &r.mouseTag)
 	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: mouseTag, Kinds: pointer.Move})
+		ev, ok := gtx.Event(pointer.Filter{Target: &r.mouseTag, Kinds: pointer.Move})
 		if !ok {
 			break
 		}
-		if x, ok := ev.(pointer.Event); ok {
-			r.mousePos = image.Point{X: int(x.Position.X), Y: int(x.Position.Y)}
+		if e, ok := ev.(pointer.Event); ok {
+			r.mousePos = image.Pt(int(e.Position.X), int(e.Position.Y))
 		}
 	}
 
-	// Keyboard Shortcuts
+	// Keyboard
 	for {
 		e, ok := gtx.Event(key.Filter{Focus: true, Name: ""})
 		if !ok {
@@ -201,220 +174,191 @@ func (r *Renderer) processGlobalInput(gtx layout.Context, state *State) UIEvent 
 		if r.isEditing || r.settingsOpen {
 			continue
 		}
-		if k, ok := e.(key.Event); ok && k.State == key.Press {
-			switch k.Name {
-			case "Up":
-				newIndex := -1
-				if state.SelectedIndex > 0 {
-					newIndex = state.SelectedIndex - 1
-				} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
-					newIndex = len(state.Entries) - 1
+		k, ok := e.(key.Event)
+		if !ok || k.State != key.Press {
+			continue
+		}
+		switch k.Name {
+		case "Up":
+			if idx := state.SelectedIndex - 1; idx >= 0 {
+				r.listState.ScrollTo(idx)
+				return UIEvent{Action: ActionSelect, NewIndex: idx}
+			} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
+				idx := len(state.Entries) - 1
+				r.listState.ScrollTo(idx)
+				return UIEvent{Action: ActionSelect, NewIndex: idx}
+			}
+		case "Down":
+			if idx := state.SelectedIndex + 1; idx < len(state.Entries) {
+				r.listState.ScrollTo(idx)
+				return UIEvent{Action: ActionSelect, NewIndex: idx}
+			} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
+				return UIEvent{Action: ActionSelect, NewIndex: 0}
+			}
+		case "Left":
+			if k.Modifiers.Contain(key.ModAlt) && state.CanBack {
+				return UIEvent{Action: ActionBack}
+			}
+		case "Right":
+			if k.Modifiers.Contain(key.ModAlt) && state.CanForward {
+				return UIEvent{Action: ActionForward}
+			}
+		case "Return", "Enter":
+			if idx := state.SelectedIndex; idx >= 0 && idx < len(state.Entries) {
+				item := state.Entries[idx]
+				if item.IsDir {
+					return UIEvent{Action: ActionNavigate, Path: item.Path}
 				}
-				if newIndex != -1 {
-					eventOut = UIEvent{Action: ActionSelect, NewIndex: newIndex}
-					r.listState.ScrollTo(newIndex)
-				}
-			case "Down":
-				newIndex := -1
-				if state.SelectedIndex < len(state.Entries)-1 {
-					newIndex = state.SelectedIndex + 1
-				} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
-					newIndex = 0
-				}
-				if newIndex != -1 {
-					eventOut = UIEvent{Action: ActionSelect, NewIndex: newIndex}
-					r.listState.ScrollTo(newIndex)
-				}
-			case "Left":
-				if k.Modifiers.Contain(key.ModAlt) && state.CanBack {
-					eventOut = UIEvent{Action: ActionBack}
-				}
-			case "Right":
-				if k.Modifiers.Contain(key.ModAlt) && state.CanForward {
-					eventOut = UIEvent{Action: ActionForward}
-				}
-			case "Return", "Enter":
-				if state.SelectedIndex >= 0 && state.SelectedIndex < len(state.Entries) {
-					item := state.Entries[state.SelectedIndex]
-					if item.IsDir {
-						eventOut = UIEvent{Action: ActionNavigate, Path: item.Path}
-					} else {
-						eventOut = UIEvent{Action: ActionOpen, Path: item.Path}
-					}
-				}
+				return UIEvent{Action: ActionOpen, Path: item.Path}
 			}
 		}
 	}
-	return eventOut
+	return UIEvent{}
 }
 
-// getSortIndicator returns the appropriate arrow indicator for a column header
-func (r *Renderer) getSortIndicator(column SortColumn) string {
-	if r.SortColumn != column {
-		return ""
-	}
-	if r.SortAscending {
-		return " ▲"
-	}
-	return " ▼"
-}
-
-// renderColumnHeader creates a clickable column header with sort indicator
-func (r *Renderer) renderColumnHeader(gtx layout.Context, btn *widget.Clickable, label string, column SortColumn, alignment text.Alignment) layout.Dimensions {
-	// Build the label with sort indicator
-	displayLabel := label + r.getSortIndicator(column)
-
-	// Determine text color based on whether this column is sorted
-	textColor := color.NRGBA{R: 100, G: 100, B: 100, A: 255}
-	fontWeight := font.Normal
-	if r.SortColumn == column {
-		textColor = color.NRGBA{R: 0, G: 0, B: 0, A: 255}
-		fontWeight = font.Medium
-	}
-
-	return material.Clickable(gtx, btn, func(gtx layout.Context) layout.Dimensions {
-		lbl := material.Body2(r.Theme, displayLabel)
-		lbl.Color = textColor
-		lbl.Font.Weight = fontWeight
-		lbl.Alignment = alignment
-		return lbl.Layout(gtx)
-	})
-}
-
-// --- MAIN LAYOUT ---
+// renderColumns handles all 4 column headers with a table-driven approach
 func (r *Renderer) renderColumns(gtx layout.Context) (layout.Dimensions, UIEvent) {
-	var eventOut UIEvent
-
-	// Handle column header clicks
-	if r.nameHeaderBtn.Clicked(gtx) {
-		if r.SortColumn == SortByName {
-			r.SortAscending = !r.SortAscending
-		} else {
-			r.SortColumn = SortByName
-			r.SortAscending = true
-		}
-		eventOut = UIEvent{Action: ActionSort, SortColumn: r.SortColumn, SortAscending: r.SortAscending}
+	type colDef struct {
+		label string
+		col   SortColumn
+		flex  float32
+		align text.Alignment
 	}
-	if r.dateHeaderBtn.Clicked(gtx) {
-		if r.SortColumn == SortByDate {
-			r.SortAscending = !r.SortAscending
-		} else {
-			r.SortColumn = SortByDate
-			r.SortAscending = true
-		}
-		eventOut = UIEvent{Action: ActionSort, SortColumn: r.SortColumn, SortAscending: r.SortAscending}
-	}
-	if r.typeHeaderBtn.Clicked(gtx) {
-		if r.SortColumn == SortByType {
-			r.SortAscending = !r.SortAscending
-		} else {
-			r.SortColumn = SortByType
-			r.SortAscending = true
-		}
-		eventOut = UIEvent{Action: ActionSort, SortColumn: r.SortColumn, SortAscending: r.SortAscending}
-	}
-	if r.sizeHeaderBtn.Clicked(gtx) {
-		if r.SortColumn == SortBySize {
-			r.SortAscending = !r.SortAscending
-		} else {
-			r.SortColumn = SortBySize
-			r.SortAscending = true
-		}
-		eventOut = UIEvent{Action: ActionSort, SortColumn: r.SortColumn, SortAscending: r.SortAscending}
+	cols := []colDef{
+		{"Name", SortByName, 0.5, text.Start},
+		{"Date Modified", SortByDate, 0.25, text.Start},
+		{"Type", SortByType, 0.15, text.Start},
+		{"Size", SortBySize, 0.10, text.End},
 	}
 
-	dims := layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween}.Layout(gtx,
-		layout.Flexed(0.5, func(gtx layout.Context) layout.Dimensions {
-			return r.renderColumnHeader(gtx, &r.nameHeaderBtn, "Name", SortByName, text.Start)
-		}),
-		layout.Flexed(0.25, func(gtx layout.Context) layout.Dimensions {
-			return r.renderColumnHeader(gtx, &r.dateHeaderBtn, "Date Modified", SortByDate, text.Start)
-		}),
-		layout.Flexed(0.15, func(gtx layout.Context) layout.Dimensions {
-			return r.renderColumnHeader(gtx, &r.typeHeaderBtn, "Type", SortByType, text.Start)
-		}),
-		layout.Flexed(0.10, func(gtx layout.Context) layout.Dimensions {
-			return r.renderColumnHeader(gtx, &r.sizeHeaderBtn, "Size", SortBySize, text.End)
-		}),
-	)
+	var evt UIEvent
+	children := make([]layout.FlexChild, len(cols))
 
-	return dims, eventOut
+	for i, c := range cols {
+		i, c := i, c // capture
+		if r.headerBtns[i].Clicked(gtx) {
+			if r.SortColumn == c.col {
+				r.SortAscending = !r.SortAscending
+			} else {
+				r.SortColumn, r.SortAscending = c.col, true
+			}
+			evt = UIEvent{Action: ActionSort, SortColumn: r.SortColumn, SortAscending: r.SortAscending}
+		}
+
+		children[i] = layout.Flexed(c.flex, func(gtx layout.Context) layout.Dimensions {
+			label := c.label
+			if r.SortColumn == c.col {
+				if r.SortAscending {
+					label += " ▲"
+				} else {
+					label += " ▼"
+				}
+			}
+			textColor, weight := colGray, font.Normal
+			if r.SortColumn == c.col {
+				textColor, weight = colBlack, font.Medium
+			}
+			return material.Clickable(gtx, &r.headerBtns[i], func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body2(r.Theme, label)
+				lbl.Color, lbl.Font.Weight, lbl.Alignment = textColor, weight, c.align
+				return lbl.Layout(gtx)
+			})
+		})
+	}
+
+	return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween}.Layout(gtx, children...), evt
 }
 
-func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, selected bool) layout.Dimensions {
+// clickableRow creates a row with left-click and right-click support - shared by both file list and favorites
+func (r *Renderer) clickableRow(gtx layout.Context, clk *widget.Clickable, rightTag *int, selected bool, content layout.Widget) layout.Dimensions {
 	return layout.Stack{}.Layout(gtx,
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-			return material.Clickable(gtx, &item.Clickable, func(gtx layout.Context) layout.Dimensions {
+			return material.Clickable(gtx, clk, func(gtx layout.Context) layout.Dimensions {
 				return layout.Stack{}.Layout(gtx,
 					layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 						if selected {
-							paint.FillShape(gtx.Ops, color.NRGBA{R: 200, G: 220, B: 255, A: 255}, clip.Rect{Max: gtx.Constraints.Min}.Op())
+							paint.FillShape(gtx.Ops, colSelected, clip.Rect{Max: gtx.Constraints.Min}.Op())
 						}
 						return layout.Dimensions{}
 					}),
-					layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-						name := item.Name
-						typeStr := "File"
-						sizeStr := formatSize(item.Size)
-						dateStr := item.ModTime.Format("01/02/06 03:04 PM")
-						textColor := color.NRGBA{R: 0, G: 0, B: 0, A: 255}
-						weight := font.Normal
-
-						if item.IsDir {
-							name = item.Name + "/"
-							typeStr = "File Folder"
-							sizeStr = ""
-							textColor = color.NRGBA{R: 0, G: 0, B: 128, A: 255}
-							weight = font.Bold
-						} else {
-							ext := filepath.Ext(item.Name)
-							if len(ext) > 1 {
-								typeStr = strings.ToUpper(ext[1:]) + " File"
-							}
-						}
-
-						return layout.Inset{
-							Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12),
-						}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween, Alignment: layout.Middle}.Layout(gtx,
-								layout.Flexed(0.5, func(gtx layout.Context) layout.Dimensions {
-									lbl := material.Body1(r.Theme, name)
-									lbl.Color = textColor
-									lbl.Font.Weight = weight
-									lbl.MaxLines = 1
-									return lbl.Layout(gtx)
-								}),
-								layout.Flexed(0.25, func(gtx layout.Context) layout.Dimensions {
-									lbl := material.Body2(r.Theme, dateStr)
-									lbl.Color = color.NRGBA{R: 100, G: 100, B: 100, A: 255}
-									lbl.MaxLines = 1
-									return lbl.Layout(gtx)
-								}),
-								layout.Flexed(0.15, func(gtx layout.Context) layout.Dimensions {
-									lbl := material.Body2(r.Theme, typeStr)
-									lbl.Color = color.NRGBA{R: 100, G: 100, B: 100, A: 255}
-									lbl.MaxLines = 1
-									return lbl.Layout(gtx)
-								}),
-								layout.Flexed(0.10, func(gtx layout.Context) layout.Dimensions {
-									lbl := material.Body2(r.Theme, sizeStr)
-									lbl.Color = color.NRGBA{R: 100, G: 100, B: 100, A: 255}
-									lbl.Alignment = text.End
-									lbl.MaxLines = 1
-									return lbl.Layout(gtx)
-								}),
-							)
-						})
-					}),
+					layout.Stacked(content),
 				)
 			})
 		}),
-
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 			defer clip.Rect{Max: gtx.Constraints.Min}.Push(gtx.Ops).Pop()
-			event.Op(gtx.Ops, &item.RightClickTag)
+			event.Op(gtx.Ops, rightTag)
 			defer pointer.PassOp{}.Push(gtx.Ops).Pop()
 			return layout.Dimensions{Size: gtx.Constraints.Min}
 		}),
 	)
+}
+
+func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, selected bool) layout.Dimensions {
+	return r.clickableRow(gtx, &item.Clickable, &item.RightClickTag, selected, func(gtx layout.Context) layout.Dimensions {
+		name, typeStr, sizeStr := item.Name, "File", formatSize(item.Size)
+		dateStr := item.ModTime.Format("01/02/06 03:04 PM")
+		textColor, weight := colBlack, font.Normal
+
+		if item.IsDir {
+			name, typeStr, sizeStr = item.Name+"/", "File Folder", ""
+			textColor, weight = colDirBlue, font.Bold
+		} else if ext := filepath.Ext(item.Name); len(ext) > 1 {
+			typeStr = strings.ToUpper(ext[1:]) + " File"
+		}
+
+		return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
+			func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween, Alignment: layout.Middle}.Layout(gtx,
+					layout.Flexed(0.5, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body1(r.Theme, name)
+						lbl.Color, lbl.Font.Weight, lbl.MaxLines = textColor, weight, 1
+						return lbl.Layout(gtx)
+					}),
+					layout.Flexed(0.25, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(r.Theme, dateStr)
+						lbl.Color, lbl.MaxLines = colGray, 1
+						return lbl.Layout(gtx)
+					}),
+					layout.Flexed(0.15, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(r.Theme, typeStr)
+						lbl.Color, lbl.MaxLines = colGray, 1
+						return lbl.Layout(gtx)
+					}),
+					layout.Flexed(0.10, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(r.Theme, sizeStr)
+						lbl.Color, lbl.Alignment, lbl.MaxLines = colGray, text.End, 1
+						return lbl.Layout(gtx)
+					}),
+				)
+			})
+	})
+}
+
+func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem) layout.Dimensions {
+	return r.clickableRow(gtx, &fav.Clickable, &fav.RightClickTag, false, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
+			func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body1(r.Theme, fav.Name)
+						lbl.Color, lbl.MaxLines = colDirBlue, 1
+						return lbl.Layout(gtx)
+					}),
+				)
+			})
+	})
+}
+
+func formatSize(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
