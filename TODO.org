@@ -92,18 +92,26 @@
    - [X] Indeterminate progress bar (animated sliding bar) for external search
    - [X] Search engine setting saved to database (persists across restarts)
 
-* In Progress
-** TODO Rename File/Folder
-   - [ ] Add "Rename" to context menu
-   - [ ] Inline editing in file list
-   - [ ] Keyboard shortcut (F2)
-   - [ ] Validation (prevent duplicates, invalid chars)
+** DONE Rename File/Folder
+   CLOSED: [2024-11-29]
+   - [X] Add "Rename" to context menu
+   - [X] Inline editing in file list
+   - [X] Keyboard shortcut (F2)
+   - [X] Validation (prevent duplicates, invalid chars)
 
-** TODO Drag and Drop
+** DONE Theme Settings
+   CLOSED: [2024-11-29]
+   - [X] Light/Dark theme toggle in settings
+   - [X] Theme preference saved to database
+   - [X] Theme applied on startup
+
+* In Progress
+** TODO Drag and Drop (On Hold)
    - [ ] Drag files to move
    - [ ] Drag to folders to move into
    - [ ] Ctrl+drag to copy
    - [ ] Visual feedback during drag
+   Note: Put on hold due to implementation challenges with Gio
 
 * Planned Features
 ** TODO File Preview Panel
@@ -117,6 +125,9 @@
    - [ ] Ctrl+T new tab
    - [ ] Ctrl+W close tab
    - [ ] Drag tabs to reorder
+   - [ ] Click tab to switch between open navigation tabs
+   - [ ] Split window view (stretch goal)
+   - [ ] Vertical/horizontal split options
 
 *** Implementation Plan
 **** Phase 1: Core Tab Data Structures
@@ -215,13 +226,17 @@
    - [ ] Customizable shortcuts
 
 ** TODO Settings/Preferences
-   - [ ] Theme selection (light/dark)
+   - [X] Theme selection (light/dark)
    - [ ] Font size options
    - [ ] Default view mode
    - [ ] Startup directory
-   - [ ] Confirm before delete toggle
+   - [X] Confirm before delete toggle
 
 * Known Bugs
+** TODO Fix dark mode
+   - Theme colors not fully applied to all UI elements
+   - Need to update hardcoded colors to use theme palette
+
 ** TODO Context menu positioning
    - Menu can appear off-screen near edges
 
