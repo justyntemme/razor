@@ -182,24 +182,48 @@
           "position": "bottom",
           "height": 200
         }
-      }
+      },
+      "favorites": [
+        {
+          "name": "Home",
+          "path": "~",
+          "icon": "home"
+        },
+        {
+          "name": "Documents",
+          "path": "~/Documents",
+          "icon": "folder"
+        },
+        {
+          "name": "Projects",
+          "type": "group",
+          "expanded": true,
+          "items": [
+            {"name": "Work", "path": "~/Projects/work"},
+            {"name": "Personal", "path": "~/Projects/personal"}
+          ]
+        }
+      ]
     }
     #+END_SRC
 
 *** Architecture Rationale:
-    Config.json and SQLite serve DIFFERENT purposes - do NOT sync between them:
-    - config.json = User-editable settings (static configuration)
-    - SQLite = Application-managed data (dynamic, queryable data)
+    Config.json and SQLite serve DIFFERENT purposes - keep them distinct:
+    - config.json = User-editable settings, UI composition, AND favorites
+    - SQLite = Application-managed dynamic data (search history only for now)
 
-    Why NOT to read config.json into DB:
-    - Redundancy: Same data in two places creates sync issues
-    - File editing risk: Manual config.json edits lost if user forgets to "sync"
-    - Unnecessary complexity: Sync logic, conflict resolution, hotkeys - all overhead
+    Data flow:
+    - config.json is THE source of truth for all settings and favorites
+    - Load config.json into memory on startup (Config struct)
+    - Application reads from in-memory Config struct (fast, no I/O)
+    - Settings UI writes to config.json, then reloads into memory
+    - SQLite is ONLY for search history (append-only, queryable data)
 
-    Correct approach:
-    - config.json is THE source of truth for settings
-    - Load on startup, optionally hot-reload on file change (fsnotify)
-    - SQLite never stores anything from config.json
+    Why favorites belong in config.json:
+    - User-editable: power users can manually edit favorites
+    - Portable: copy config.json to new machine = all settings + favorites
+    - Simple: no DB schema migrations for favorites changes
+    - Grouped favorites are just nested JSON (natural fit)
 
 *** Implementation:
     - Create internal/config package for JSON config handling
@@ -209,13 +233,14 @@
     - Hot-reload config changes using fsnotify (or require app restart)
     - Validation and schema versioning
 
-*** Keep in SQLite (store.DB) for future features:
-    - Favorites (queryable, groupable)
-    - Search history (searchable, limitable)
+*** Keep in SQLite (store.DB):
+    - Search history (append-only, searchable, limitable)
+
+*** Future SQLite expansion (if needed):
     - Recent files/directories (queryable by date, path)
     - File tags/labels (many-to-many relationships)
-    - Custom file associations
     - Cached thumbnails metadata
+    - Full-text search index
 
 ** TODO PRIORITY 2: Composable Sidebar UI
    Make the sidebar layout configurable, allowing users to choose between:
@@ -242,31 +267,27 @@
     }
     #+END_SRC
 
-** TODO PRIORITY 3: Database Features (using freed SQLite)
-   Expand SQLite usage for data that benefits from database features.
+** TODO PRIORITY 3: Search History (SQLite)
+   Implement search history using SQLite for queryable, append-only data.
 
-*** Search History:
+*** Features:
     - Store past search queries with timestamps
     - Quick access to recent/frequent searches
-    - Auto-complete from search history
-    - Limit history size (configurable)
+    - Auto-complete dropdown from search history
+    - Limit history size (configurable in config.json)
+    - Clear history option in settings
 
-*** Recent Files/Directories:
-    - Track recently accessed paths
-    - "Recent" section in sidebar or quick-access menu
-    - Configurable history length
-    - Clear history option
+*** Implementation:
+    - Table: search_history (id, query, timestamp, result_count)
+    - Query recent: SELECT * FROM search_history ORDER BY timestamp DESC LIMIT N
+    - Query frequent: SELECT query, COUNT(*) FROM search_history GROUP BY query ORDER BY COUNT(*) DESC
+    - Auto-complete: Match prefix against stored queries
+    - Prune old entries periodically (keep last N or last 30 days)
 
-*** File Tags/Labels:
-    - User-defined tags for files/folders
-    - Color-coded labels
-    - Filter/search by tags
-    - Tag management UI
-
-*** Cached Metadata:
-    - Thumbnail cache references
-    - File preview cache
-    - Directory size cache (for large dirs)
+*** Future SQLite Features (lower priority):
+    - Recent files/directories (queryable by date, path)
+    - File tags/labels (many-to-many relationships)
+    - Cached metadata (thumbnails, directory sizes)
 
 ** TODO PRIORITY 4: Refactor orchestrator.go into logical sub-files
    Split the monolithic orchestrator.go into separate files within the same package.
