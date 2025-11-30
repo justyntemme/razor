@@ -186,12 +186,27 @@
     }
     #+END_SRC
 
+*** Architecture Rationale:
+    Config.json and SQLite serve DIFFERENT purposes - do NOT sync between them:
+    - config.json = User-editable settings (static configuration)
+    - SQLite = Application-managed data (dynamic, queryable data)
+
+    Why NOT to read config.json into DB:
+    - Redundancy: Same data in two places creates sync issues
+    - File editing risk: Manual config.json edits lost if user forgets to "sync"
+    - Unnecessary complexity: Sync logic, conflict resolution, hotkeys - all overhead
+
+    Correct approach:
+    - config.json is THE source of truth for settings
+    - Load on startup, optionally hot-reload on file change (fsnotify)
+    - SQLite never stores anything from config.json
+
 *** Implementation:
     - Create internal/config package for JSON config handling
     - Load config on startup, create default if not exists
     - Remove settings from store.DB (keep schema for future use)
     - Settings UI reads/writes to config.json
-    - Hot-reload config changes where possible
+    - Hot-reload config changes using fsnotify (or require app restart)
     - Validation and schema versioning
 
 *** Keep in SQLite (store.DB) for future features:
@@ -1061,6 +1076,8 @@
 
 ** TODO Context menu positioning
    - Menu can appear off-screen near edges
+   - Allow drawing outside of app container so right-click menus don't reposition unexpectedly
+   - Consider using system-level popup windows or Gio's window.Option for overflow
 
 ** TODO Large directory performance
    - Directories with 10k+ files can be slow
