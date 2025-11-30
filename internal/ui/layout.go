@@ -163,16 +163,17 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 				circle := clip.Ellipse{Min: image.Pt(0, 0), Max: image.Pt(size, size)}.Op(gtx.Ops)
 				paint.FillShape(gtx.Ops, colHomeBtnBg, circle)
 
-				// Center the icon
-				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					gtx.Constraints.Min = image.Pt(size, size)
-					gtx.Constraints.Max = image.Pt(size, size)
-					lbl := material.Body1(r.Theme, "⌂")
-					lbl.Color = colWhite
-					lbl.Alignment = text.Middle
-					// Offset slightly for visual centering
-					return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, lbl.Layout)
-				})
+				// Center the icon using Stack for proper centering
+				gtx.Constraints.Min = image.Pt(size, size)
+				gtx.Constraints.Max = image.Pt(size, size)
+				return layout.Stack{Alignment: layout.Center}.Layout(gtx,
+					layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body1(r.Theme, "⌂")
+						lbl.Color = colWhite
+						lbl.Alignment = text.Middle
+						return lbl.Layout(gtx)
+					}),
+				)
 			})
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
@@ -379,11 +380,33 @@ func (r *Renderer) navButton(gtx layout.Context, btn *widget.Clickable, label st
 		action()
 		gtx.Execute(key.FocusCmd{Tag: keyTag})
 	}
-	b := material.Button(r.Theme, btn, label)
+
+	// Circular nav button (same size as home button)
+	size := gtx.Dp(32)
+	bgColor := colAccent
+	textColor := colWhite
 	if !enabled {
-		b.Background, b.Color = colLightGray, colDisabled
+		bgColor = colLightGray
+		textColor = colDisabled
 	}
-	return b.Layout(gtx)
+
+	return material.Clickable(gtx, btn, func(gtx layout.Context) layout.Dimensions {
+		// Draw circular background
+		circle := clip.Ellipse{Min: image.Pt(0, 0), Max: image.Pt(size, size)}.Op(gtx.Ops)
+		paint.FillShape(gtx.Ops, bgColor, circle)
+
+		// Center the icon using Stack for proper centering
+		gtx.Constraints.Min = image.Pt(size, size)
+		gtx.Constraints.Max = image.Pt(size, size)
+		return layout.Stack{Alignment: layout.Center}.Layout(gtx,
+			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body1(r.Theme, label)
+				lbl.Color = textColor
+				lbl.Alignment = text.Middle
+				return lbl.Layout(gtx)
+			}),
+		)
+	})
 }
 
 // layoutSearchWithHistory renders the search box (dropdown is rendered as overlay in main Layout)
