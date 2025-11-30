@@ -1059,33 +1059,39 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 			return dims
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			// === BACKGROUND RIGHT-CLICK DETECTION ===
-			// Create a hit area filling the entire available space behind the list.
-			// This catches clicks that miss the rows (empty space).
-			defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
-			event.Op(gtx.Ops, &r.bgRightClickTag)
-
-			// Process events for the background tag
-			for {
-				ev, ok := gtx.Event(pointer.Filter{Target: &r.bgRightClickTag, Kinds: pointer.Press})
-				if !ok {
-					break
-				}
-				if e, ok := ev.(pointer.Event); ok && e.Buttons.Contain(pointer.ButtonSecondary) {
-					// Empty space clicked -> Show Background Menu
-					r.menuVisible = true
-					r.menuPos = r.mousePos // Use global mouse position
-					r.menuPath = state.CurrentPath
-					r.menuIsDir = true
-					r.menuIsFav = false
-					r.menuIsBackground = true
-					// Deselect items when clicking background
-					*eventOut = UIEvent{Action: ActionSelect, NewIndex: -1}
-				}
+			// Check for left-clicks on file list area to dismiss menus
+			if r.fileListClick.Clicked(gtx) {
+				r.onLeftClick()
 			}
 
-			// Layout file list
-			listDims := r.listState.Layout(gtx, len(state.Entries), func(gtx layout.Context, i int) layout.Dimensions {
+			return invisibleClickable(gtx, &r.fileListClick, func(gtx layout.Context) layout.Dimensions {
+				// === BACKGROUND RIGHT-CLICK DETECTION ===
+				// Create a hit area filling the entire available space behind the list.
+				// This catches clicks that miss the rows (empty space).
+				defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
+				event.Op(gtx.Ops, &r.bgRightClickTag)
+
+				// Process events for the background tag
+				for {
+					ev, ok := gtx.Event(pointer.Filter{Target: &r.bgRightClickTag, Kinds: pointer.Press})
+					if !ok {
+						break
+					}
+					if e, ok := ev.(pointer.Event); ok && e.Buttons.Contain(pointer.ButtonSecondary) {
+						// Empty space clicked -> Show Background Menu
+						r.menuVisible = true
+						r.menuPos = r.mousePos // Use global mouse position
+						r.menuPath = state.CurrentPath
+						r.menuIsDir = true
+						r.menuIsFav = false
+						r.menuIsBackground = true
+						// Deselect items when clicking background
+						*eventOut = UIEvent{Action: ActionSelect, NewIndex: -1}
+					}
+				}
+
+				// Layout file list
+				listDims := r.listState.Layout(gtx, len(state.Entries), func(gtx layout.Context, i int) layout.Dimensions {
 				item := &state.Entries[i]
 				isRenaming := r.renameIndex == i
 
@@ -1127,9 +1133,10 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 				}
 
 				return rowDims
-			})
+				})
 
-			return listDims
+				return listDims
+			})
 		}),
 	)
 }

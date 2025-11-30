@@ -239,6 +239,7 @@ type Renderer struct {
 	driveState          layout.List
 	sidebarScroll       layout.List      // Scrollable container for entire sidebar
 	sidebarClick        widget.Clickable // For dismissing menus when clicking sidebar empty space
+	fileListClick       widget.Clickable // For dismissing menus when clicking file list empty space
 	sidebarTabs         *TabBar     // Tab bar for Favorites/Drives switching
 	sidebarLayout       string      // "tabbed" | "stacked" | "favorites_only" | "drives_only"
 	backBtn, fwdBtn     widget.Clickable
