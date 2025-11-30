@@ -3,10 +3,14 @@
 package app
 
 import (
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+
+	"github.com/charlievieth/fastwalk"
 )
 
 // platformOpen opens the file using the macOS 'open' command.
@@ -61,28 +65,50 @@ func platformGetApplications(filePath string) ([]AppInfo, error) {
 		appDirs = append(appDirs, filepath.Join(home, "Applications"))
 	}
 
-	// Scan for .app bundles
+	// Scan for .app bundles using fastwalk
 	seen := make(map[string]bool)
+	var mu sync.Mutex
+	conf := &fastwalk.Config{Follow: true}
+
 	for _, dir := range appDirs {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if !entry.IsDir() || !strings.HasSuffix(entry.Name(), ".app") {
-				continue
+		fastwalk.Walk(conf, dir, func(fullPath string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return nil // Skip errors
 			}
-			appPath := filepath.Join(dir, entry.Name())
-			appName := strings.TrimSuffix(entry.Name(), ".app")
+
+			// Skip the root directory itself
+			if fullPath == dir {
+				return nil
+			}
+
+			// Only process direct children
+			if filepath.Dir(fullPath) != dir {
+				if d.IsDir() {
+					return fastwalk.SkipDir
+				}
+				return nil
+			}
+
+			if !d.IsDir() || !strings.HasSuffix(d.Name(), ".app") {
+				return nil
+			}
+
+			appName := strings.TrimSuffix(d.Name(), ".app")
+
+			mu.Lock()
 			if seen[appName] {
-				continue
+				mu.Unlock()
+				return fastwalk.SkipDir
 			}
 			seen[appName] = true
 			apps = append(apps, AppInfo{
 				Name: appName,
-				Path: appPath,
+				Path: fullPath,
 			})
-		}
+			mu.Unlock()
+
+			return fastwalk.SkipDir // Don't recurse into .app bundles
+		})
 	}
 
 	return apps, nil
