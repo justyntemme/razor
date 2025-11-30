@@ -25,6 +25,12 @@ import (
 	"github.com/justyntemme/razor/internal/debug"
 )
 
+// UI timing constants
+const (
+	doubleClickInterval = 500 * time.Millisecond // Maximum time between clicks for double-click
+	animationFrameRate  = 16 * time.Millisecond  // ~60fps for smooth animations
+)
+
 func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 	defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
 
@@ -1145,7 +1151,7 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 					r.isEditing = false
 					*eventOut = UIEvent{Action: ActionSelect, NewIndex: i}
 					gtx.Execute(key.FocusCmd{Tag: keyTag})
-					if now := time.Now(); !item.LastClick.IsZero() && now.Sub(item.LastClick) < 500*time.Millisecond {
+					if now := time.Now(); !item.LastClick.IsZero() && now.Sub(item.LastClick) < doubleClickInterval {
 						if item.IsDir {
 							*eventOut = UIEvent{Action: ActionNavigate, Path: item.Path}
 						} else {
@@ -1237,7 +1243,7 @@ func (r *Renderer) layoutProgressBar(gtx layout.Context, state *State) layout.Di
 						}.Op())
 						
 						// Request redraw for animation
-						gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
+						gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(animationFrameRate)})
 					}
 					return layout.Dimensions{Size: image.Pt(width, height)}
 				}),

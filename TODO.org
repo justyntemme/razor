@@ -27,12 +27,50 @@ Rules that all LLMs should follow when working on this codebase:
 
 ** Current Priorities
 
-*** TODO Fix right-click context menu handling
-- Right-click on files should show context menu
-- Right-click on empty space should show background menu (New File/Folder)
-- Left-click anywhere should dismiss menu
+*** TODO Improve User Feedback (Error Handling)
+- Critical errors currently go to log.Printf, invisible to GUI users
+- Add ToastError(msg string) method to Renderer
+- Show permission denied, file open failures, etc. to user
+
+*** TODO Windows Drive Enumeration Fix
+- GetVolumeInformationW can block for seconds on disconnected network drives
+- Freezes UI while waiting
+- Move drive enumeration to background goroutine
 
 ** Completed Features
+
+*** DONE Right-click context menu handling
+- Right-click on files shows context menu (Copy, Cut, Paste, Delete, Rename, Open With)
+- Right-click on empty space shows background menu (New File/Folder)
+- Right-click on favorites shows favorite-specific menu
+- Left-click anywhere dismisses menu
+
+*** DONE Image preview in preview pane
+- Preview pane supports image files (PNG, JPG, GIF, BMP, WebP, HEIC)
+- Images scaled to fit preview pane
+- Text preview still works for text-based files
+
+*** DONE Resizable preview pane
+- Drag handle on preview pane edge
+- Smooth resize with mouse drag
+- Minimum/maximum size constraints
+
+*** DONE File rename preserves extension selection
+- When renaming, only filename (not extension) is selected
+- Directories select full name
+
+*** DONE Orchestrator refactor (God Object split)
+- Created SearchController for search operations
+- Created NavigationController for path navigation
+- Orchestrator now delegates to controllers
+- SharedDeps and SharedState for clean dependency sharing
+
+*** DONE Code deduplication refactor
+- pathExists(), deleteItem(), refreshCurrentDir() utilities
+- resetUIState() helper for navigation handlers
+- Search directive constants extracted
+- Config manager lock pattern fixed (no more lock reacquisition)
+- File permission and time duration constants
 
 *** DONE Recent Files feature
 - Virtual folder showing recently opened files

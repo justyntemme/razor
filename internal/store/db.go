@@ -22,6 +22,9 @@ const (
 	FetchRecentFiles
 )
 
+// File permission constant
+const dirPermission = 0o755
+
 // SearchHistoryEntry represents a single search history entry
 type SearchHistoryEntry struct {
 	Query     string
@@ -67,7 +70,7 @@ func NewDB() *DB {
 func (d *DB) Open(dbPath string) error {
 	debug.Log(debug.STORE, "Opening database: %s", dbPath)
 
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dbPath), dirPermission); err != nil {
 		debug.Log(debug.STORE, "Failed to create db directory: %v", err)
 		return err
 	}

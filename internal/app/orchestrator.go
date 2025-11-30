@@ -22,41 +22,50 @@ import (
 	"github.com/justyntemme/razor/internal/ui"
 )
 
-const maxHistorySize = 100 // Limit history to prevent unbounded memory growth
+const (
+	maxHistorySize       = 100                      // Limit history to prevent unbounded memory growth
+	progressThrottleTime = 100 * time.Millisecond  // Minimum interval between progress updates
+)
 
+// Orchestrator is the central coordinator that wires together all components.
+// It owns shared state and dependencies, delegating domain-specific logic to controllers.
 type Orchestrator struct {
-	window         *app.Window
-	fs             *fs.System
-	store          *store.DB
-	config         *config.Manager // Config manager for settings
-	ui             *ui.Renderer
-	stateMu        sync.RWMutex // Protects state from concurrent read/write
-	state          ui.State
-	history        []string
-	historyIndex   int
-	sortColumn     ui.SortColumn
-	sortAsc        bool
-	showDotfiles   bool
-	rawEntries     []ui.UIEntry // Current display entries (filtered/sorted)
-	dirEntries     []ui.UIEntry // Original directory entries (never overwritten by search)
-	progressMu     sync.Mutex
-	homePath       string
-	searchGen      atomic.Int64 // Tracks search generation to ignore stale results (atomic for perf)
+	// Core dependencies
+	window *app.Window
+	fs     *fs.System
+	store  *store.DB
+	config *config.Manager
+	ui     *ui.Renderer
 
-	// Progress throttling - avoid flooding UI with updates
+	// Shared state (protected by stateMu)
+	stateMu    sync.RWMutex
+	state      ui.State
+	rawEntries []ui.UIEntry // Current display entries (filtered/sorted)
+	dirEntries []ui.UIEntry // Original directory entries (cache)
+	searchGen  atomic.Int64 // Search generation counter
+
+	// Controllers (own their domain-specific state, share deps/state via pointers)
+	searchCtrl *SearchController
+	navCtrl    *NavigationController
+
+	// Sorting state
+	sortColumn   ui.SortColumn
+	sortAsc      bool
+	showDotfiles bool
+
+	// Progress tracking
+	progressMu         sync.Mutex
 	lastProgressUpdate time.Time
 	progressThrottleMu sync.Mutex
 
 	// Conflict resolution state
-	conflictResolution ui.ConflictResolution       // Current resolution mode
-	conflictResponse   chan ui.ConflictResolution  // Channel for dialog response
-	conflictAbort      bool                        // True if user clicked Stop
+	conflictResolution ui.ConflictResolution
+	conflictResponse   chan ui.ConflictResolution
+	conflictAbort      bool
 
-	// Search engine settings
-	searchEngines     []search.EngineInfo // Detected search engines
-	selectedEngine    search.SearchEngine // Currently selected engine
-	selectedEngineCmd string              // Command for the selected engine
-	defaultDepth      int                 // Default recursive search depth
+	// Shared dependencies for controllers (set during init)
+	sharedDeps  *SharedDeps
+	sharedState *SharedState
 }
 
 func NewOrchestrator() *Orchestrator {
@@ -84,6 +93,7 @@ func NewOrchestrator() *Orchestrator {
 		}
 	}
 
+	// Create core orchestrator
 	o := &Orchestrator{
 		window:           new(app.Window),
 		fs:               fs.NewSystem(),
@@ -91,15 +101,30 @@ func NewOrchestrator() *Orchestrator {
 		config:           cfgMgr,
 		ui:               ui.NewRenderer(),
 		state:            ui.State{SelectedIndex: -1, Favorites: make(map[string]bool)},
-		historyIndex:     -1,
 		sortAsc:          cfg.UI.FileList.SortAscending,
 		showDotfiles:     cfg.UI.FileList.ShowDotfiles,
-		homePath:         home,
 		conflictResponse: make(chan ui.ConflictResolution, 1),
-		searchEngines:    engines,
-		selectedEngine:   search.EngineBuiltin,
-		defaultDepth:     cfg.Search.DefaultDepth,
 	}
+
+	// Create shared dependencies and state for controllers
+	o.sharedDeps = &SharedDeps{
+		Window:   o.window,
+		FS:       o.fs,
+		Store:    o.store,
+		UI:       o.ui,
+		HomePath: home,
+	}
+
+	o.sharedState = &SharedState{
+		State:     &o.state,
+		SearchGen: &o.searchGen,
+	}
+
+	// Create controllers with shared dependencies
+	o.searchCtrl = NewSearchController(o.sharedDeps, o.sharedState, engines)
+	o.searchCtrl.DefaultDepth = cfg.Search.DefaultDepth
+
+	o.navCtrl = NewNavigationController(o.sharedDeps, o.sharedState)
 
 	// Set up UI with detected engines
 	o.ui.SearchEngines = uiEngines
@@ -116,7 +141,7 @@ func NewOrchestrator() *Orchestrator {
 	o.ui.SetPreviewConfig(cfg.Preview.TextExtensions, cfg.Preview.ImageExtensions, cfg.Preview.MaxFileSize, cfg.Preview.WidthPercent)
 
 	// Set search engine from config
-	o.handleSearchEngineChange(cfg.Search.Engine)
+	o.searchCtrl.ChangeEngine(cfg.Search.Engine)
 
 	// Set config error banner if config failed to parse
 	if parseErr := cfgMgr.ParseError(); parseErr != nil {
@@ -135,6 +160,7 @@ func (o *Orchestrator) loadFavoritesFromConfig() {
 	o.state.Favorites = make(map[string]bool)
 	o.state.FavList = make([]ui.FavoriteItem, 0, len(favorites))
 
+	homePath := o.sharedDeps.HomePath
 	for _, fav := range favorites {
 		// Skip groups for now (flat list only)
 		if fav.Type == "group" {
@@ -144,7 +170,7 @@ func (o *Orchestrator) loadFavoritesFromConfig() {
 		// Expand ~ in path
 		path := fav.Path
 		if len(path) > 0 && path[0] == '~' {
-			path = filepath.Join(o.homePath, path[1:])
+			path = filepath.Join(homePath, path[1:])
 		}
 		o.state.Favorites[path] = true
 		o.state.FavList = append(o.state.FavList, ui.FavoriteItem{
@@ -162,8 +188,7 @@ func (o *Orchestrator) Run(startPath string) error {
 
 	// Database is still used for search history
 	// Use ~/.config/razor/ on all platforms for consistency
-	home, _ := os.UserHomeDir()
-	dbPath := filepath.Join(home, ".config", "razor", "razor.db")
+	dbPath := filepath.Join(o.sharedDeps.HomePath, ".config", "razor", "razor.db")
 	debug.Log(debug.APP, "Opening database: %s", dbPath)
 	if err := o.store.Open(dbPath); err != nil {
 		log.Printf("Failed to open DB: %v", err)
@@ -181,12 +206,12 @@ func (o *Orchestrator) Run(startPath string) error {
 	o.refreshDrives()
 
 	if startPath == "" {
-		startPath = o.homePath
+		startPath = o.sharedDeps.HomePath
 		if startPath == "" {
 			startPath, _ = os.Getwd()
 		}
 	}
-	o.navigate(startPath)
+	o.navCtrl.Navigate(startPath)
 
 	var ops op.Ops
 	for {
@@ -218,44 +243,50 @@ func (o *Orchestrator) refreshDrives() {
 	}
 }
 
+// resetUIState cancels any active rename, hides preview, and exits recent view.
+// Called before navigation operations to ensure clean state.
+func (o *Orchestrator) resetUIState() {
+	o.ui.CancelRename()
+	o.ui.HidePreview()
+	o.ui.SetRecentView(false)
+}
+
+// restoreDirectory restores the cached directory entries after a search is cleared.
+// Returns true if entries were restored, false if a re-fetch is needed.
+func (o *Orchestrator) restoreDirectory() bool {
+	if len(o.dirEntries) > 0 {
+		o.rawEntries = o.dirEntries
+		o.applyFilterAndSort()
+		return true
+	}
+	return false
+}
+
 func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 	switch evt.Action {
 	case ui.ActionNavigate:
-		// Cancel any active rename and hide preview
-		o.ui.CancelRename()
-		o.ui.HidePreview()
-		o.ui.SetRecentView(false) // Exit recent view
-		// Expand the path before navigating
-		expandedPath := o.expandPath(evt.Path)
-		// Validate the path exists
-		if exists, isDir := o.validatePath(expandedPath); exists && isDir {
-			o.navigate(expandedPath)
+		o.resetUIState()
+		expandedPath := o.navCtrl.ExpandPath(evt.Path)
+		if exists, isDir := o.navCtrl.ValidatePath(expandedPath); exists && isDir {
+			o.navCtrl.Navigate(expandedPath)
 		} else if exists && !isDir {
 			// It's a file, open it instead
 			if err := platformOpen(expandedPath); err != nil {
 				log.Printf("Error opening file: %v", err)
 			}
-			// Track in recent files
 			o.store.RequestChan <- store.Request{Op: store.AddRecentFile, Path: expandedPath}
 		} else {
-			// Path doesn't exist - log error
 			log.Printf("Path does not exist: %s (expanded from: %s)", expandedPath, evt.Path)
 		}
 	case ui.ActionBack:
-		o.ui.CancelRename()
-		o.ui.HidePreview()
-		o.ui.SetRecentView(false)
-		o.goBack()
+		o.resetUIState()
+		o.navCtrl.GoBack(nil)
 	case ui.ActionForward:
-		o.ui.CancelRename()
-		o.ui.HidePreview()
-		o.ui.SetRecentView(false)
-		o.goForward()
+		o.resetUIState()
+		o.navCtrl.GoForward()
 	case ui.ActionHome:
-		o.ui.CancelRename()
-		o.ui.HidePreview()
-		o.ui.SetRecentView(false)
-		o.navigate(o.homePath)
+		o.resetUIState()
+		o.navCtrl.GoHome()
 	case ui.ActionNewWindow:
 		o.openNewWindow()
 	case ui.ActionSelect:
@@ -271,7 +302,7 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		}
 		o.window.Invalidate()
 	case ui.ActionSearch:
-		o.doSearch(evt.Path, evt.SearchSubmitted)
+		o.searchCtrl.DoSearch(evt.Path, evt.SearchSubmitted, o.restoreDirectory, o.setProgress)
 	case ui.ActionOpen:
 		if err := platformOpen(evt.Path); err != nil {
 			log.Printf("Error opening file: %v", err)
@@ -328,16 +359,7 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		go o.doRename(evt.OldPath, evt.Path)
 	case ui.ActionClearSearch:
 		debug.Log(debug.APP, "ClearSearch: cancelling search")
-		// Send cancel request to stop any ongoing search
-		o.fs.RequestChan <- fs.Request{Op: fs.CancelSearch}
-		// Clear all search state and restore original directory contents
-		o.state.IsSearchResult = false
-		o.state.SearchQuery = ""
-		// Clear progress bar
-		o.setProgress(false, "", 0, 0)
-		// Increment generation to invalidate any pending search results (atomic)
-		newGen := o.searchGen.Add(1)
-		debug.Log(debug.APP, "ClearSearch: generation=%d", newGen)
+		o.searchCtrl.CancelSearch(o.setProgress)
 		// Restore from cached directory entries (no disk access needed)
 		if len(o.dirEntries) > 0 {
 			o.rawEntries = o.dirEntries
@@ -345,7 +367,7 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 			o.window.Invalidate()
 		} else {
 			// Fallback: re-fetch if dirEntries is empty
-			o.requestDir(o.state.CurrentPath)
+			o.navCtrl.RequestDir(o.state.CurrentPath)
 		}
 	case ui.ActionConflictReplace:
 		o.handleConflictResolution(ui.ConflictReplaceAll)
@@ -357,11 +379,11 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		o.handleConflictResolution(ui.ConflictAsk) // Stop uses Ask to signal abort
 		o.conflictAbort = true
 	case ui.ActionChangeSearchEngine:
-		o.handleSearchEngineChange(evt.SearchEngine)
+		o.searchCtrl.ChangeEngine(evt.SearchEngine)
 		// Save setting to config.json
 		o.config.SetSearchEngine(evt.SearchEngine)
 	case ui.ActionChangeDefaultDepth:
-		o.defaultDepth = evt.DefaultDepth
+		o.searchCtrl.DefaultDepth = evt.DefaultDepth
 		o.ui.DefaultDepth = evt.DefaultDepth
 		// Save setting to config.json
 		o.config.SetDefaultDepth(evt.DefaultDepth)
@@ -384,7 +406,7 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		// Switch to recent files view
 		o.showRecentFiles()
 	case ui.ActionOpenFileLocation:
-		// Navigate to the directory containing the file
+		// Navigate to the directory containing the file (with file selection)
 		o.openFileLocation(evt.Path)
 	}
 }
@@ -424,7 +446,7 @@ func (o *Orchestrator) handleProgress(p fs.Progress) {
 	// Throttle progress updates to avoid flooding UI (100ms minimum interval)
 	o.progressThrottleMu.Lock()
 	now := time.Now()
-	if now.Sub(o.lastProgressUpdate) < 100*time.Millisecond {
+	if now.Sub(o.lastProgressUpdate) < progressThrottleTime {
 		o.progressThrottleMu.Unlock()
 		return
 	}
@@ -493,7 +515,7 @@ func (o *Orchestrator) handleFSResponse(resp fs.Response) {
 
 	parent := filepath.Dir(o.state.CurrentPath)
 	o.state.CanBack = parent != o.state.CurrentPath
-	o.state.CanForward = o.historyIndex < len(o.history)-1
+	o.state.CanForward = o.navCtrl.HistoryIndex < len(o.navCtrl.History)-1
 
 	if o.state.SelectedIndex >= len(o.state.Entries) {
 		o.state.SelectedIndex = -1
@@ -638,7 +660,7 @@ func (o *Orchestrator) openFileLocation(path string) {
 	debug.Log(debug.APP, "Open file location: %s", path)
 	dir := filepath.Dir(path)
 	o.ui.SetRecentView(false)
-	o.navigate(dir)
+	o.navCtrl.Navigate(dir)
 
 	// Optionally select the file after navigation
 	// We'll do this asynchronously after the directory loads

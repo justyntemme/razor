@@ -10,6 +10,12 @@ import (
 	"time"
 )
 
+// File permission constants
+const (
+	dirPermission  = 0o755 // Standard directory permissions
+	filePermission = 0o644 // Standard file permissions
+)
+
 // Config holds all user-configurable settings loaded from config.json
 type Config struct {
 	UI        UIConfig        `json:"ui"`
@@ -233,7 +239,7 @@ func (m *Manager) Load() error {
 
 	// Ensure config directory exists
 	configDir := filepath.Dir(m.path)
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
+	if err := os.MkdirAll(configDir, dirPermission); err != nil {
 		log.Printf("Config: failed to create directory %s: %v", configDir, err)
 		return err
 	}
@@ -277,7 +283,7 @@ func (m *Manager) saveUnlocked() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(m.path, data, 0o644)
+	return os.WriteFile(m.path, data, filePermission)
 }
 
 // Save writes the current configuration to disk
@@ -307,41 +313,41 @@ func (m *Manager) ParseError() error {
 // SetTheme updates the theme setting
 func (m *Manager) SetTheme(theme string) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.config.UI.Theme = theme
-	m.mu.Unlock()
-	m.Save()
+	m.saveUnlocked()
 }
 
 // SetShowDotfiles updates the show dotfiles setting
 func (m *Manager) SetShowDotfiles(show bool) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.config.UI.FileList.ShowDotfiles = show
-	m.mu.Unlock()
-	m.Save()
+	m.saveUnlocked()
 }
 
 // SetSearchEngine updates the search engine setting
 func (m *Manager) SetSearchEngine(engine string) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.config.Search.Engine = engine
-	m.mu.Unlock()
-	m.Save()
+	m.saveUnlocked()
 }
 
 // SetDefaultDepth updates the default search depth
 func (m *Manager) SetDefaultDepth(depth int) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.config.Search.DefaultDepth = depth
-	m.mu.Unlock()
-	m.Save()
+	m.saveUnlocked()
 }
 
 // SetSidebarLayout updates the sidebar layout
 func (m *Manager) SetSidebarLayout(layout string) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.config.UI.Sidebar.Layout = layout
-	m.mu.Unlock()
-	m.Save()
+	m.saveUnlocked()
 }
 
 // GetSidebarTabStyle returns the sidebar tab style
@@ -357,26 +363,26 @@ func (m *Manager) GetSidebarTabStyle() string {
 // AddFavorite adds a new favorite
 func (m *Manager) AddFavorite(name, path string) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.config.Favorites = append(m.config.Favorites, FavoriteEntry{
 		Name: name,
 		Path: path,
 		Icon: "folder",
 	})
-	m.mu.Unlock()
-	m.Save()
+	m.saveUnlocked()
 }
 
 // RemoveFavorite removes a favorite by path
 func (m *Manager) RemoveFavorite(path string) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	for i, fav := range m.config.Favorites {
 		if fav.Path == path {
 			m.config.Favorites = append(m.config.Favorites[:i], m.config.Favorites[i+1:]...)
 			break
 		}
 	}
-	m.mu.Unlock()
-	m.Save()
+	m.saveUnlocked()
 }
 
 // GetFavorites returns a flat list of favorite paths (for backwards compatibility)
@@ -425,14 +431,14 @@ func GenerateConfig() (backupPath string, err error) {
 		}
 
 		// Write backup
-		if err := os.WriteFile(backupPath, data, 0o644); err != nil {
+		if err := os.WriteFile(backupPath, data, filePermission); err != nil {
 			return "", fmt.Errorf("failed to write backup: %w", err)
 		}
 	}
 
 	// Ensure config directory exists
 	configDir := filepath.Dir(configPath)
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
+	if err := os.MkdirAll(configDir, dirPermission); err != nil {
 		return backupPath, fmt.Errorf("failed to create config directory: %w", err)
 	}
 
@@ -443,7 +449,7 @@ func GenerateConfig() (backupPath string, err error) {
 		return backupPath, fmt.Errorf("failed to marshal default config: %w", err)
 	}
 
-	if err := os.WriteFile(configPath, data, 0o644); err != nil {
+	if err := os.WriteFile(configPath, data, filePermission); err != nil {
 		return backupPath, fmt.Errorf("failed to write config: %w", err)
 	}
 
