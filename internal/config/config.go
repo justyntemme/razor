@@ -2,10 +2,12 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 // Config holds all user-configurable settings loaded from config.json
@@ -15,6 +17,7 @@ type Config struct {
 	Behavior  BehaviorConfig  `json:"behavior"`
 	Tabs      TabsConfig      `json:"tabs"`
 	Panels    PanelsConfig    `json:"panels"`
+	Preview   PreviewConfig   `json:"preview"`
 	Favorites []FavoriteEntry `json:"favorites"`
 }
 
@@ -96,6 +99,15 @@ type PanelConfig struct {
 	Position string `json:"position"` // "right" | "bottom" | "left"
 	Width    int    `json:"width"`    // For left/right panels
 	Height   int    `json:"height"`   // For top/bottom panels
+}
+
+// PreviewConfig holds preview pane settings
+type PreviewConfig struct {
+	Enabled        bool     `json:"enabled"`
+	Position       string   `json:"position"`       // "right" | "bottom"
+	WidthPercent   int      `json:"widthPercent"`   // Percentage of screen width (e.g., 33 for 1/3)
+	TextExtensions []string `json:"textExtensions"` // Extensions to show text preview for
+	MaxFileSize    int64    `json:"maxFileSize"`    // Max file size in bytes to preview (0 = no limit)
 }
 
 // FavoriteEntry represents a single favorite or a group of favorites
@@ -184,6 +196,13 @@ func DefaultConfig() *Config {
 				Position: "bottom",
 				Height:   200,
 			},
+		},
+		Preview: PreviewConfig{
+			Enabled:        true,
+			Position:       "right",
+			WidthPercent:   33, // 1/3 of screen width
+			TextExtensions: []string{".txt", ".json", ".csv", ".md", ".log", ".xml", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg"},
+			MaxFileSize:    1024 * 1024, // 1MB default limit
 		},
 		Favorites: []FavoriteEntry{
 			{Name: "Home", Path: home, Icon: "home"},
@@ -377,4 +396,54 @@ func (m *Manager) GetSidebarLayout() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.config.UI.Sidebar.Layout
+}
+
+// GetPreviewConfig returns the preview pane configuration
+func (m *Manager) GetPreviewConfig() PreviewConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.config.Preview
+}
+
+// GenerateConfig backs up existing config and creates a fresh default config
+// Returns the backup path if a backup was created, or empty string if no existing config
+func GenerateConfig() (backupPath string, err error) {
+	configPath := ConfigPath()
+
+	// Check if existing config exists
+	if _, err := os.Stat(configPath); err == nil {
+		// Create backup with timestamp
+		timestamp := time.Now().Format("20060102-150405")
+		backupPath = filepath.Join(filepath.Dir(configPath), "config.backup."+timestamp+".json")
+
+		// Read existing config
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			return "", fmt.Errorf("failed to read existing config: %w", err)
+		}
+
+		// Write backup
+		if err := os.WriteFile(backupPath, data, 0o644); err != nil {
+			return "", fmt.Errorf("failed to write backup: %w", err)
+		}
+	}
+
+	// Ensure config directory exists
+	configDir := filepath.Dir(configPath)
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		return backupPath, fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	// Write fresh default config
+	defaultCfg := DefaultConfig()
+	data, err := json.MarshalIndent(defaultCfg, "", "  ")
+	if err != nil {
+		return backupPath, fmt.Errorf("failed to marshal default config: %w", err)
+	}
+
+	if err := os.WriteFile(configPath, data, 0o644); err != nil {
+		return backupPath, fmt.Errorf("failed to write config: %w", err)
+	}
+
+	return backupPath, nil
 }

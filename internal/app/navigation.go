@@ -103,8 +103,22 @@ func (o *Orchestrator) navigate(path string) {
 	o.requestDir(path)
 }
 
-// goBack navigates to the parent directory
+// goBack navigates to the parent directory or previous location
 func (o *Orchestrator) goBack() {
+	// If in recent view, go to last actual directory in history
+	if o.ui.IsRecentView() {
+		if o.historyIndex >= 0 && o.historyIndex < len(o.history) {
+			o.requestDir(o.history[o.historyIndex])
+		} else if len(o.history) > 0 {
+			o.historyIndex = len(o.history) - 1
+			o.requestDir(o.history[o.historyIndex])
+		} else {
+			// Fallback to home
+			o.navigate(o.homePath)
+		}
+		return
+	}
+
 	parent := filepath.Dir(o.state.CurrentPath)
 	if parent == o.state.CurrentPath {
 		return

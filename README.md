@@ -44,6 +44,9 @@ razor
 
 # Start in specific directory
 razor -path /some/directory
+
+# Generate fresh config.json (backs up existing with timestamp)
+razor --generate-config
 ```
 
 ## Search
@@ -195,6 +198,17 @@ To get the legacy horizontal tab layout, set:
   }
 }
 ```
+
+### Preview Pane
+
+**Preview** (`preview`):
+- `enabled` - Whether preview is enabled (default: `true`)
+- `position` - Position of preview pane: `"right"` | `"bottom"` (default: `"right"`)
+- `widthPercent` - Width as percentage of screen (default: `33` for 1/3)
+- `textExtensions` - File extensions to preview (default: `[".txt", ".json", ".csv", ".md", ".log", ".xml", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg"]`)
+- `maxFileSize` - Maximum file size to preview in bytes (default: `1048576` = 1MB)
+
+When you click a file with a supported extension, the preview pane opens on the right. JSON files are automatically formatted with indentation. Press Escape or navigate away to close the preview.
 
 ### Search Engines
 

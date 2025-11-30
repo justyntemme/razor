@@ -282,20 +282,85 @@
     - Auto-complete: Match prefix against stored queries
     - Prune old entries periodically (keep last N or last 30 days)
 
-** TODO PRIORITY 4: Recent Files/Directories (SQLite)
+** DONE PRIORITY 4: Recent Files/Directories (SQLite)
+   CLOSED: [2024-11-30]
    Track recently accessed paths for quick navigation.
 
 *** Features:
-    - Track recently opened files and directories
-    - "Recent" section in sidebar or quick-access menu
-    - Configurable history length (in config.json)
-    - Clear history option
+    - [X] Track recently opened files and directories
+    - [X] "Recent Files" virtual folder in sidebar (above Favorites)
+    - [X] Last 50 files tracked and displayed
+    - [X] "Open File Location" context menu option
+    - [X] Stale files filtered out automatically
 
 *** Implementation:
-    - Table: recent_paths (id, path, type, timestamp, access_count)
-    - Query: SELECT * FROM recent_paths ORDER BY timestamp DESC LIMIT N
+    - Table: recent_files (id, path, name, is_dir, timestamp)
+    - Query: SELECT * FROM recent_files ORDER BY timestamp DESC LIMIT 50
+    - Virtual directory view with navigation back to real directories
 
-** TODO PRIORITY 5: File Tags/Labels (SQLite)
+** TODO PRIORITY 5: Syntax Highlighting Module (internal/highlight)
+   Reusable code formatting module for preview pane and markdown code blocks.
+   Uses popular open-source libraries for AST parsing and syntax highlighting.
+
+*** Goals:
+    - Single module provides formatting for multiple contexts
+    - Preview pane uses it for raw code file display
+    - Markdown renderer uses it for fenced code blocks
+    - Extensible to support new languages easily
+
+*** Architecture:
+    #+BEGIN_SRC go
+    package highlight
+
+    // Highlighter formats source code into richtext spans
+    type Highlighter struct {
+        theme   Theme           // Color scheme
+        shaper  *text.Shaper    // For richtext rendering
+    }
+
+    // Highlight parses source and returns styled spans
+    func (h *Highlighter) Highlight(source []byte, lang string) []richtext.SpanStyle
+
+    // SupportedLanguages returns available language identifiers
+    func (h *Highlighter) SupportedLanguages() []string
+    #+END_SRC
+
+*** Libraries to evaluate:
+    - github.com/alecthomas/chroma - Full-featured syntax highlighter
+    - github.com/yuin/goldmark - Markdown parsing (already planned)
+    - Tree-sitter bindings (if available for Go)
+
+*** Features:
+    - [ ] Language detection from file extension
+    - [ ] Language detection from markdown fence (```go, ```python, etc.)
+    - [ ] JSON formatting with indentation (already have basic version)
+    - [ ] Go, Python, JavaScript, TypeScript, Rust, C/C++, Shell
+    - [ ] YAML, TOML, XML, HTML, CSS
+    - [ ] Line numbers option
+    - [ ] Theme support (light/dark modes)
+
+*** Integration Points:
+    - Preview pane: layoutPreviewPane() uses Highlighter for code files
+    - Markdown preview: AST walker uses Highlighter for CodeBlock/FencedCodeBlock nodes
+    - Both share same color theme based on app theme setting
+
+** TODO PRIORITY 6: Markdown Preview with Tabs
+   Add rendered markdown preview alongside raw view for .md files.
+
+*** Features:
+    - [ ] "Raw" and "Preview" tabs in preview pane header
+    - [ ] Parse markdown with goldmark (github.com/yuin/goldmark)
+    - [ ] Walk AST to build richtext spans
+    - [ ] Support: headings, bold, italic, code, lists, links, blockquotes
+    - [ ] Code blocks use Syntax Highlighting Module (Priority 5)
+
+*** Implementation:
+    - Add previewMode field to Renderer ("raw" | "rendered")
+    - Add tab buttons in preview header
+    - layoutMarkdownPreview() function for rendered view
+    - astToRichtext() walks goldmark AST, builds []richtext.SpanStyle
+
+** TODO PRIORITY 8: File Tags/Labels (SQLite)
    User-defined tags for organizing files and folders.
 
 *** Features:
@@ -309,7 +374,7 @@
     - Table: file_tags (id, path, tag_id) - many-to-many
     - Query by tag: SELECT path FROM file_tags WHERE tag_id = ?
 
-** TODO PRIORITY 6: Cached Metadata (SQLite)
+** TODO PRIORITY 9: Cached Metadata (SQLite)
    Cache expensive-to-compute metadata for performance.
 
 *** Features:
@@ -322,7 +387,7 @@
     - Table: dir_size_cache (id, path, size_bytes, file_count, cached_at)
     - Invalidate on mtime change
 
-** TODO PRIORITY 7: Refactor orchestrator.go into logical sub-files
+** TODO PRIORITY 10: Refactor orchestrator.go into logical sub-files
    Split the monolithic orchestrator.go into separate files within the same package.
    This keeps all code in internal/app without import changes.
 

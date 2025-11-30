@@ -1,9 +1,11 @@
 package ui
 
 import (
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -62,6 +64,9 @@ const (
 	// Search history
 	ActionRequestSearchHistory
 	ActionSelectSearchHistory
+	// Recent files
+	ActionShowRecentFiles
+	ActionOpenFileLocation
 )
 
 type ClipOp int
@@ -334,6 +339,25 @@ type Renderer struct {
 	lastHistoryQuery      string              // Track last query we fetched history for
 	searchBoxPos          image.Point         // Position of search box for overlay dropdown
 	searchEditorFocused   bool                // Track if search editor has focus
+
+	// Preview pane state
+	previewVisible    bool           // Whether preview pane is shown
+	previewPath       string         // Path of file being previewed
+	previewContent    string         // Content loaded for preview
+	previewError      string         // Error message if load failed
+	previewIsJSON     bool           // Whether content is JSON (for formatting)
+	previewScroll     layout.List    // Scrollable list for preview content
+	previewExtensions []string       // Extensions that trigger preview
+	previewMaxSize    int64          // Max file size to preview
+	previewWidthPct   int            // Width percentage for preview pane
+
+	// Recent files state
+	recentFilesBtn    widget.Clickable // Button to show recent files
+	openLocationBtn   widget.Clickable // Context menu item to open file location
+	isRecentView      bool             // True when viewing recent files
+
+	// Preview pane close button
+	previewCloseBtn   widget.Clickable
 }
 
 var (
@@ -364,6 +388,7 @@ func NewRenderer() *Renderer {
 	r.favState.Axis = layout.Vertical
 	r.driveState.Axis = layout.Vertical
 	r.sidebarScroll.Axis = layout.Vertical
+	r.previewScroll.Axis = layout.Vertical
 
 	// Initialize sidebar tabs (default to manila, can be changed via SetSidebarTabStyle)
 	r.sidebarTabs = NewTabBar(
@@ -379,6 +404,12 @@ func NewRenderer() *Renderer {
 	r.renameEditor.SingleLine, r.renameEditor.Submit = true, true
 	r.searchEngine.Value = "builtin"
 	r.SelectedEngine = "builtin"
+
+	// Default preview config (will be overridden by SetPreviewConfig)
+	r.previewExtensions = []string{".txt", ".json", ".csv", ".md", ".log"}
+	r.previewMaxSize = 1024 * 1024 // 1MB
+	r.previewWidthPct = 33
+
 	return r
 }
 
@@ -446,6 +477,108 @@ func (r *Renderer) SetSidebarLayout(layout string) {
 	default:
 		r.sidebarLayout = "stacked"
 	}
+}
+
+// SetPreviewConfig sets the preview pane configuration
+func (r *Renderer) SetPreviewConfig(extensions []string, maxSize int64, widthPct int) {
+	r.previewExtensions = extensions
+	r.previewMaxSize = maxSize
+	r.previewWidthPct = widthPct
+}
+
+// ShowPreview loads and displays the preview pane for the given file
+func (r *Renderer) ShowPreview(path string) error {
+	// Check file extension
+	ext := strings.ToLower(filepath.Ext(path))
+	supported := false
+	for _, e := range r.previewExtensions {
+		if strings.ToLower(e) == ext {
+			supported = true
+			break
+		}
+	}
+	if !supported {
+		r.HidePreview()
+		return nil
+	}
+
+	// Check file size
+	info, err := os.Stat(path)
+	if err != nil {
+		r.previewError = fmt.Sprintf("Cannot access file: %v", err)
+		r.previewVisible = true
+		r.previewPath = path
+		r.previewContent = ""
+		return err
+	}
+	if info.IsDir() {
+		r.HidePreview()
+		return nil
+	}
+	if r.previewMaxSize > 0 && info.Size() > r.previewMaxSize {
+		r.previewError = fmt.Sprintf("File too large (%s)", formatSize(info.Size()))
+		r.previewVisible = true
+		r.previewPath = path
+		r.previewContent = ""
+		return nil
+	}
+
+	// Read file content
+	data, err := os.ReadFile(path)
+	if err != nil {
+		r.previewError = fmt.Sprintf("Cannot read file: %v", err)
+		r.previewVisible = true
+		r.previewPath = path
+		r.previewContent = ""
+		return err
+	}
+
+	r.previewPath = path
+	r.previewError = ""
+	r.previewIsJSON = ext == ".json"
+
+	// Format JSON with indentation
+	if r.previewIsJSON {
+		var jsonData interface{}
+		if err := json.Unmarshal(data, &jsonData); err == nil {
+			if formatted, err := json.MarshalIndent(jsonData, "", "  "); err == nil {
+				r.previewContent = string(formatted)
+			} else {
+				r.previewContent = string(data)
+			}
+		} else {
+			r.previewContent = string(data)
+			r.previewError = "Invalid JSON: " + err.Error()
+		}
+	} else {
+		r.previewContent = string(data)
+	}
+
+	r.previewVisible = true
+	return nil
+}
+
+// HidePreview hides the preview pane
+func (r *Renderer) HidePreview() {
+	r.previewVisible = false
+	r.previewPath = ""
+	r.previewContent = ""
+	r.previewError = ""
+}
+
+// IsPreviewVisible returns whether the preview pane is currently shown
+func (r *Renderer) IsPreviewVisible() bool {
+	return r.previewVisible
+}
+
+// SetRecentView sets whether we're viewing recent files
+func (r *Renderer) SetRecentView(isRecent bool) {
+	r.isRecentView = isRecent
+}
+
+// IsRecentView returns whether we're viewing recent files
+func (r *Renderer) IsRecentView() bool {
+	return r.isRecentView
 }
 
 func (r *Renderer) applyTheme() {
@@ -570,6 +703,11 @@ func (r *Renderer) processGlobalInput(gtx layout.Context, state *State) UIEvent 
 			if state.SelectedIndex >= 0 {
 				r.deleteConfirmOpen = true
 				state.DeleteTarget = state.Entries[state.SelectedIndex].Path
+			}
+		case key.NameEscape:
+			// Dismiss preview pane on Escape
+			if r.previewVisible {
+				r.HidePreview()
 			}
 		}
 	}

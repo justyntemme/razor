@@ -22,6 +22,9 @@ const (
 	// Search history operations
 	AddSearchHistory
 	FetchSearchHistory
+	// Recent files operations
+	AddRecentFile
+	FetchRecentFiles
 )
 
 // SearchHistoryEntry represents a single search history entry
@@ -29,6 +32,14 @@ type SearchHistoryEntry struct {
 	Query     string
 	Timestamp time.Time
 	Score     float64 // For fuzzy matching ranking
+}
+
+// RecentFileEntry represents a recently accessed file
+type RecentFileEntry struct {
+	Path      string
+	Name      string
+	IsDir     bool
+	Timestamp time.Time
 }
 
 type Request struct {
@@ -44,6 +55,7 @@ type Response struct {
 	Favorites     []string
 	Settings      map[string]string
 	SearchHistory []SearchHistoryEntry
+	RecentFiles   []RecentFileEntry
 	Err           error
 }
 
@@ -91,6 +103,14 @@ func (d *DB) Open(dbPath string) error {
 		);
 		CREATE INDEX IF NOT EXISTS idx_search_history_timestamp ON search_history(timestamp DESC);
 		CREATE INDEX IF NOT EXISTS idx_search_history_query ON search_history(query);
+		CREATE TABLE IF NOT EXISTS recent_files (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			path TEXT NOT NULL UNIQUE,
+			name TEXT NOT NULL,
+			is_dir INTEGER NOT NULL DEFAULT 0,
+			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_recent_files_timestamp ON recent_files(timestamp DESC);
 	`
 	if _, err := db.Exec(schema); err != nil {
 		debug.Log(debug.STORE, "Failed to create schema: %v", err)
@@ -122,6 +142,10 @@ func (d *DB) Start() {
 			d.addSearchHistory(req.Query)
 		case FetchSearchHistory:
 			d.fetchSearchHistory(req.Query, req.Limit)
+		case AddRecentFile:
+			d.addRecentFile(req.Path)
+		case FetchRecentFiles:
+			d.fetchRecentFiles(req.Limit)
 		}
 	}
 }
@@ -356,4 +380,82 @@ func fuzzyScore(text, pattern string) float64 {
 
 	baseScore := float64(matchCount) / float64(len(text))
 	return baseScore*0.3 + consecutiveBonus
+}
+
+// addRecentFile adds or updates a file in the recent files list
+func (d *DB) addRecentFile(path string) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return
+	}
+
+	// Get file info for the name
+	name := filepath.Base(path)
+
+	// Check if it's a directory
+	isDir := 0
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		isDir = 1
+	}
+
+	debug.Log(debug.STORE, "addRecentFile: %q (isDir=%d)", path, isDir)
+
+	// Insert or update (using REPLACE to update timestamp if path exists)
+	if _, err := d.conn.Exec(`
+		INSERT INTO recent_files (path, name, is_dir, timestamp)
+		VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(path) DO UPDATE SET timestamp = CURRENT_TIMESTAMP
+	`, path, name, isDir); err != nil {
+		debug.Log(debug.STORE, "addRecentFile error: %v", err)
+		return
+	}
+
+	// Prune to keep only the last 50 entries
+	if _, err := d.conn.Exec(`
+		DELETE FROM recent_files
+		WHERE id NOT IN (
+			SELECT id FROM recent_files
+			ORDER BY timestamp DESC
+			LIMIT 50
+		)
+	`); err != nil {
+		debug.Log(debug.STORE, "addRecentFile prune error: %v", err)
+	}
+}
+
+// fetchRecentFiles retrieves the most recent files
+func (d *DB) fetchRecentFiles(limit int) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	debug.Log(debug.STORE, "fetchRecentFiles: limit=%d", limit)
+
+	rows, err := d.conn.Query(`
+		SELECT path, name, is_dir, timestamp
+		FROM recent_files
+		ORDER BY timestamp DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		debug.Log(debug.STORE, "fetchRecentFiles error: %v", err)
+		d.ResponseChan <- Response{Op: FetchRecentFiles, Err: err}
+		return
+	}
+	defer rows.Close()
+
+	var entries []RecentFileEntry
+	for rows.Next() {
+		var entry RecentFileEntry
+		var ts string
+		var isDir int
+		if err := rows.Scan(&entry.Path, &entry.Name, &isDir, &ts); err == nil {
+			entry.Timestamp, _ = time.Parse("2006-01-02 15:04:05", ts)
+			entry.IsDir = isDir == 1
+			entries = append(entries, entry)
+		}
+	}
+
+	debug.Log(debug.STORE, "fetchRecentFiles: returning %d entries", len(entries))
+	d.ResponseChan <- Response{Op: FetchRecentFiles, RecentFiles: entries}
 }

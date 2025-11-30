@@ -104,23 +104,53 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					// Track vertical offset: File button (~32dp) + navbar (~44dp) + insets (~16dp) ≈ 92dp
 					verticalOffset := gtx.Dp(92)
-					
-					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+
+					// Build flex children dynamically based on preview visibility
+					children := []layout.FlexChild{
+						// Sidebar
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							gtx.Constraints.Min.X, gtx.Constraints.Max.X = gtx.Dp(180), gtx.Dp(180)
 							paint.FillShape(gtx.Ops, colSidebar, clip.Rect{Max: gtx.Constraints.Max}.Op())
 							return r.layoutSidebar(gtx, state, &eventOut)
 						}),
+						// Sidebar divider
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							paint.FillShape(gtx.Ops, color.NRGBA{A: 50}, clip.Rect{Max: image.Pt(gtx.Dp(1), gtx.Constraints.Max.Y)}.Op())
 							return layout.Dimensions{Size: image.Pt(gtx.Dp(1), gtx.Constraints.Max.Y)}
 						}),
-						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							// Horizontal offset: sidebar (180dp) + divider (1dp) = 181dp
-							r.fileListOffset = image.Pt(gtx.Dp(181), verticalOffset)
-							return r.layoutFileList(gtx, state, keyTag, &eventOut)
-						}),
-					)
+					}
+
+					// Calculate file list flex weight based on preview visibility
+					if r.previewVisible {
+						// File list takes remaining space minus preview
+						fileListWeight := float32(100-r.previewWidthPct) / 100.0
+						previewWeight := float32(r.previewWidthPct) / 100.0
+
+						children = append(children,
+							layout.Flexed(fileListWeight, func(gtx layout.Context) layout.Dimensions {
+								r.fileListOffset = image.Pt(gtx.Dp(181), verticalOffset)
+								return r.layoutFileList(gtx, state, keyTag, &eventOut)
+							}),
+							// Preview divider
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								paint.FillShape(gtx.Ops, color.NRGBA{A: 50}, clip.Rect{Max: image.Pt(gtx.Dp(1), gtx.Constraints.Max.Y)}.Op())
+								return layout.Dimensions{Size: image.Pt(gtx.Dp(1), gtx.Constraints.Max.Y)}
+							}),
+							// Preview pane
+							layout.Flexed(previewWeight, func(gtx layout.Context) layout.Dimensions {
+								return r.layoutPreviewPane(gtx, state)
+							}),
+						)
+					} else {
+						children = append(children,
+							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+								r.fileListOffset = image.Pt(gtx.Dp(181), verticalOffset)
+								return r.layoutFileList(gtx, state, keyTag, &eventOut)
+							}),
+						)
+					}
+
+					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, children...)
 				}),
 
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -156,25 +186,7 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 				*eventOut = UIEvent{Action: ActionHome}
 				gtx.Execute(key.FocusCmd{Tag: keyTag})
 			}
-			// Circular home button
-			size := gtx.Dp(32)
-			return material.Clickable(gtx, &r.homeBtn, func(gtx layout.Context) layout.Dimensions {
-				// Draw circular background
-				circle := clip.Ellipse{Min: image.Pt(0, 0), Max: image.Pt(size, size)}.Op(gtx.Ops)
-				paint.FillShape(gtx.Ops, colHomeBtnBg, circle)
-
-				// Center the icon using Stack for proper centering
-				gtx.Constraints.Min = image.Pt(size, size)
-				gtx.Constraints.Max = image.Pt(size, size)
-				return layout.Stack{Alignment: layout.Center}.Layout(gtx,
-					layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body1(r.Theme, "⌂")
-						lbl.Color = colWhite
-						lbl.Alignment = text.Middle
-						return lbl.Layout(gtx)
-					}),
-				)
-			})
+			return r.circleButton(gtx, &r.homeBtn, "⌂", colHomeBtnBg, colWhite)
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
 
@@ -375,30 +387,24 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 	)
 }
 
-func (r *Renderer) navButton(gtx layout.Context, btn *widget.Clickable, label string, enabled bool, action func(), keyTag *layout.List) layout.Dimensions {
-	if enabled && btn.Clicked(gtx) {
-		action()
-		gtx.Execute(key.FocusCmd{Tag: keyTag})
-	}
-
-	// Circular nav button (same size as home button)
+// circleButton renders a circular button with centered icon text
+func (r *Renderer) circleButton(gtx layout.Context, btn *widget.Clickable, label string, bgColor, textColor color.NRGBA) layout.Dimensions {
 	size := gtx.Dp(32)
-	bgColor := colAccent
-	textColor := colWhite
-	if !enabled {
-		bgColor = colLightGray
-		textColor = colDisabled
-	}
+
+	// Set fixed size for the entire button
+	gtx.Constraints.Min = image.Pt(size, size)
+	gtx.Constraints.Max = image.Pt(size, size)
 
 	return material.Clickable(gtx, btn, func(gtx layout.Context) layout.Dimensions {
-		// Draw circular background
-		circle := clip.Ellipse{Min: image.Pt(0, 0), Max: image.Pt(size, size)}.Op(gtx.Ops)
-		paint.FillShape(gtx.Ops, bgColor, circle)
-
-		// Center the icon using Stack for proper centering
-		gtx.Constraints.Min = image.Pt(size, size)
-		gtx.Constraints.Max = image.Pt(size, size)
+		// Use Stack to layer background and centered text
 		return layout.Stack{Alignment: layout.Center}.Layout(gtx,
+			// Background circle
+			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+				circle := clip.Ellipse{Min: image.Pt(0, 0), Max: image.Pt(size, size)}.Op(gtx.Ops)
+				paint.FillShape(gtx.Ops, bgColor, circle)
+				return layout.Dimensions{Size: image.Pt(size, size)}
+			}),
+			// Centered icon text
 			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body1(r.Theme, label)
 				lbl.Color = textColor
@@ -407,6 +413,22 @@ func (r *Renderer) navButton(gtx layout.Context, btn *widget.Clickable, label st
 			}),
 		)
 	})
+}
+
+func (r *Renderer) navButton(gtx layout.Context, btn *widget.Clickable, label string, enabled bool, action func(), keyTag *layout.List) layout.Dimensions {
+	if enabled && btn.Clicked(gtx) {
+		action()
+		gtx.Execute(key.FocusCmd{Tag: keyTag})
+	}
+
+	bgColor := colAccent
+	textColor := colWhite
+	if !enabled {
+		bgColor = colLightGray
+		textColor = colDisabled
+	}
+
+	return r.circleButton(gtx, btn, label, bgColor, textColor)
 }
 
 // layoutSearchWithHistory renders the search box (dropdown is rendered as overlay in main Layout)
@@ -722,9 +744,22 @@ func (r *Renderer) layoutSidebarTabbed(gtx layout.Context, state *State, eventOu
 func (r *Renderer) layoutSidebarStacked(gtx layout.Context, state *State, eventOut *UIEvent, sidebarYOffset int) layout.Dimensions {
 	return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			// Recent Files entry (above Favorites)
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return r.layoutRecentFilesEntry(gtx, eventOut)
+			}),
+			// Separator after Recent Files
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx,
+					func(gtx layout.Context) layout.Dimensions {
+						height := gtx.Dp(unit.Dp(1))
+						paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, height)}.Op())
+						return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, height)}
+					})
+			}),
 			// Favorites section header
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(4), Left: unit.Dp(8)}.Layout(gtx,
+				return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(8)}.Layout(gtx,
 					func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Body2(r.Theme, "Favorites")
 						lbl.Font.Weight = 600
@@ -763,8 +798,36 @@ func (r *Renderer) layoutSidebarStacked(gtx layout.Context, state *State, eventO
 	})
 }
 
-// layoutFavoritesList renders the favorites list content
+// layoutFavoritesList renders the favorites list content (with Recent Files entry in tabbed mode)
 func (r *Renderer) layoutFavoritesList(gtx layout.Context, state *State, eventOut *UIEvent, yOffset int) layout.Dimensions {
+	// In tabbed mode, add Recent Files entry at top of favorites list
+	if r.sidebarLayout == "tabbed" || r.sidebarLayout == "favorites_only" {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			// Recent Files entry
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return r.layoutRecentFilesEntry(gtx, eventOut)
+			}),
+			// Separator
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx,
+					func(gtx layout.Context) layout.Dimensions {
+						height := gtx.Dp(unit.Dp(1))
+						paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, height)}.Op())
+						return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, height)}
+					})
+			}),
+			// Favorites list
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				return r.layoutFavoritesListContent(gtx, state, eventOut, yOffset)
+			}),
+		)
+	}
+
+	return r.layoutFavoritesListContent(gtx, state, eventOut, yOffset)
+}
+
+// layoutFavoritesListContent renders the actual favorites list content
+func (r *Renderer) layoutFavoritesListContent(gtx layout.Context, state *State, eventOut *UIEvent, yOffset int) layout.Dimensions {
 	if len(state.FavList) == 0 {
 		// Show empty state message
 		return layout.Inset{Top: unit.Dp(16), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx,
@@ -827,6 +890,37 @@ func (r *Renderer) layoutDrivesList(gtx layout.Context, state *State, eventOut *
 
 			return rowDims
 		})
+	})
+}
+
+// layoutRecentFilesEntry renders the "Recent Files" clickable entry
+func (r *Renderer) layoutRecentFilesEntry(gtx layout.Context, eventOut *UIEvent) layout.Dimensions {
+	// Check for click BEFORE layout
+	if r.recentFilesBtn.Clicked(gtx) {
+		*eventOut = UIEvent{Action: ActionShowRecentFiles}
+	}
+
+	// Determine colors based on whether we're in recent view
+	bgColor := color.NRGBA{A: 0} // Transparent by default
+	textColor := colDirBlue
+	if r.isRecentView {
+		bgColor = colSelected // Highlight when viewing recent files
+	}
+
+	return material.Clickable(gtx, &r.recentFilesBtn, func(gtx layout.Context) layout.Dimensions {
+		// Draw selection background if viewing recent
+		if r.isRecentView {
+			paint.FillShape(gtx.Ops, bgColor, clip.Rect{Max: gtx.Constraints.Max}.Op())
+		}
+
+		return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
+			func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body1(r.Theme, "Recent Files")
+				lbl.Color = textColor
+				lbl.Font.Weight = font.Medium
+				lbl.MaxLines = 1
+				return lbl.Layout(gtx)
+			})
 	})
 }
 
@@ -1150,6 +1244,10 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, state *State, eventOut 
 		r.menuVisible = false
 		*eventOut = UIEvent{Action: ActionOpenWith, Path: r.menuPath}
 	}
+	if r.openLocationBtn.Clicked(gtx) {
+		r.menuVisible = false
+		*eventOut = UIEvent{Action: ActionOpenFileLocation, Path: r.menuPath}
+	}
 	if r.copyBtn.Clicked(gtx) {
 		r.menuVisible = false
 		*eventOut = UIEvent{Action: ActionCopy, Path: r.menuPath}
@@ -1237,6 +1335,13 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, state *State, eventOut 
 					return layout.Dimensions{}
 				}
 				return r.menuItem(gtx, &r.openWithBtn, "Open With...")
+			}),
+			// "Open file location" only shown when viewing recent files
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				if !r.isRecentView {
+					return layout.Dimensions{}
+				}
+				return r.menuItem(gtx, &r.openLocationBtn, "Open File Location")
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return r.menuItem(gtx, &r.copyBtn, "Copy")
@@ -1618,6 +1723,101 @@ func formatSizeForDialog(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// layoutPreviewPane renders the file preview pane
+func (r *Renderer) layoutPreviewPane(gtx layout.Context, state *State) layout.Dimensions {
+	if !r.previewVisible {
+		return layout.Dimensions{}
+	}
+
+	// Handle close button click
+	if r.previewCloseBtn.Clicked(gtx) {
+		r.HidePreview()
+	}
+
+	// Background
+	paint.FillShape(gtx.Ops, colWhite, clip.Rect{Max: gtx.Constraints.Max}.Op())
+
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		// Header with filename and close button
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(8)}.Layout(gtx,
+				func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle, Spacing: layout.SpaceBetween}.Layout(gtx,
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							filename := filepath.Base(r.previewPath)
+							lbl := material.Body1(r.Theme, filename)
+							lbl.Font.Weight = font.Bold
+							lbl.MaxLines = 1
+							return lbl.Layout(gtx)
+						}),
+						// Close button
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return material.Clickable(gtx, &r.previewCloseBtn, func(gtx layout.Context) layout.Dimensions {
+								return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(4), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx,
+									func(gtx layout.Context) layout.Dimensions {
+										lbl := material.Body1(r.Theme, "✕")
+										lbl.Color = colGray
+										return lbl.Layout(gtx)
+									})
+							})
+						}),
+					)
+				})
+		}),
+		// Divider
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, gtx.Dp(1))}.Op())
+			return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(1))}
+		}),
+		// Error message if any
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if r.previewError == "" {
+				return layout.Dimensions{}
+			}
+			return layout.Inset{Top: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
+				func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(r.Theme, r.previewError)
+					lbl.Color = colDanger
+					return lbl.Layout(gtx)
+				})
+		}),
+		// Content area (scrollable)
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			if r.previewContent == "" {
+				return layout.Dimensions{}
+			}
+
+			// Split content into lines for scrollable rendering
+			lines := strings.Split(r.previewContent, "\n")
+
+			return layout.Inset{Top: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12), Bottom: unit.Dp(8)}.Layout(gtx,
+				func(gtx layout.Context) layout.Dimensions {
+					return r.previewScroll.Layout(gtx, len(lines), func(gtx layout.Context, i int) layout.Dimensions {
+						line := lines[i]
+						if line == "" {
+							line = " " // Preserve empty lines
+						}
+
+						lbl := material.Body2(r.Theme, line)
+						lbl.Font.Typeface = "monospace"
+						lbl.TextSize = unit.Sp(12)
+
+						// Syntax coloring for JSON
+						if r.previewIsJSON {
+							// Color keys vs values (simple heuristic)
+							trimmed := strings.TrimSpace(line)
+							if strings.HasPrefix(trimmed, "\"") && strings.Contains(line, ":") {
+								lbl.Color = colAccent // Keys in blue
+							}
+						}
+
+						return lbl.Layout(gtx)
+					})
+				})
+		}),
+	)
 }
 
 func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) layout.Dimensions {

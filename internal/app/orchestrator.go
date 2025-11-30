@@ -112,6 +112,9 @@ func NewOrchestrator() *Orchestrator {
 	o.ui.SetSidebarLayout(cfg.UI.Sidebar.Layout)
 	o.ui.SetSidebarTabStyle(cfg.UI.Sidebar.TabStyle)
 
+	// Set preview pane config
+	o.ui.SetPreviewConfig(cfg.Preview.TextExtensions, cfg.Preview.MaxFileSize, cfg.Preview.WidthPercent)
+
 	// Set search engine from config
 	o.handleSearchEngineChange(cfg.Search.Engine)
 
@@ -218,8 +221,10 @@ func (o *Orchestrator) refreshDrives() {
 func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 	switch evt.Action {
 	case ui.ActionNavigate:
-		// Cancel any active rename
+		// Cancel any active rename and hide preview
 		o.ui.CancelRename()
+		o.ui.HidePreview()
+		o.ui.SetRecentView(false) // Exit recent view
 		// Expand the path before navigating
 		expandedPath := o.expandPath(evt.Path)
 		// Validate the path exists
@@ -230,23 +235,40 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 			if err := platformOpen(expandedPath); err != nil {
 				log.Printf("Error opening file: %v", err)
 			}
+			// Track in recent files
+			o.store.RequestChan <- store.Request{Op: store.AddRecentFile, Path: expandedPath}
 		} else {
 			// Path doesn't exist - log error
 			log.Printf("Path does not exist: %s (expanded from: %s)", expandedPath, evt.Path)
 		}
 	case ui.ActionBack:
 		o.ui.CancelRename()
+		o.ui.HidePreview()
+		o.ui.SetRecentView(false)
 		o.goBack()
 	case ui.ActionForward:
 		o.ui.CancelRename()
+		o.ui.HidePreview()
+		o.ui.SetRecentView(false)
 		o.goForward()
 	case ui.ActionHome:
 		o.ui.CancelRename()
+		o.ui.HidePreview()
+		o.ui.SetRecentView(false)
 		o.navigate(o.homePath)
 	case ui.ActionNewWindow:
 		o.openNewWindow()
 	case ui.ActionSelect:
 		o.state.SelectedIndex = evt.NewIndex
+		// Show preview for selected file if it's a previewable type
+		if evt.NewIndex >= 0 && evt.NewIndex < len(o.state.Entries) {
+			entry := &o.state.Entries[evt.NewIndex]
+			if !entry.IsDir {
+				o.ui.ShowPreview(entry.Path)
+			} else {
+				o.ui.HidePreview()
+			}
+		}
 		o.window.Invalidate()
 	case ui.ActionSearch:
 		o.doSearch(evt.Path, evt.SearchSubmitted)
@@ -254,6 +276,8 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		if err := platformOpen(evt.Path); err != nil {
 			log.Printf("Error opening file: %v", err)
 		}
+		// Track in recent files
+		o.store.RequestChan <- store.Request{Op: store.AddRecentFile, Path: evt.Path}
 	case ui.ActionOpenWith:
 		// Show the system "Open With" dialog
 		if err := platformOpenWith(evt.Path, ""); err != nil {
@@ -356,6 +380,12 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 			Query: evt.SearchHistoryQuery,
 			Limit: 3,
 		}
+	case ui.ActionShowRecentFiles:
+		// Switch to recent files view
+		o.showRecentFiles()
+	case ui.ActionOpenFileLocation:
+		// Navigate to the directory containing the file
+		o.openFileLocation(evt.Path)
 	}
 }
 
@@ -497,6 +527,9 @@ func (o *Orchestrator) handleStoreResponse(resp store.Response) {
 		}
 		o.ui.SetSearchHistory(items)
 		o.window.Invalidate()
+	case store.FetchRecentFiles:
+		// Convert recent files to UI entries
+		o.handleRecentFilesResponse(resp.RecentFiles)
 	}
 }
 
@@ -554,6 +587,81 @@ func (o *Orchestrator) setProgress(active bool, label string, current, total int
 	o.state.Progress = ui.ProgressState{Active: active, Label: label, Current: current, Total: total}
 	o.progressMu.Unlock()
 	o.window.Invalidate()
+}
+
+// handleRecentFilesResponse processes recent files from the database
+func (o *Orchestrator) handleRecentFilesResponse(recentFiles []store.RecentFileEntry) {
+	debug.Log(debug.APP, "handleRecentFilesResponse: %d entries", len(recentFiles))
+
+	// Convert to UI entries, filtering out files that no longer exist
+	entries := make([]ui.UIEntry, 0, len(recentFiles))
+	for _, rf := range recentFiles {
+		// Check if file still exists
+		info, err := os.Stat(rf.Path)
+		if err != nil {
+			// File no longer exists, skip it
+			continue
+		}
+
+		entries = append(entries, ui.UIEntry{
+			Name:    rf.Name,
+			Path:    rf.Path,
+			IsDir:   info.IsDir(),
+			Size:    info.Size(),
+			ModTime: info.ModTime(),
+		})
+	}
+
+	// Update state
+	o.stateMu.Lock()
+	o.state.CurrentPath = "Recent Files"
+	o.state.Entries = entries
+	o.state.SelectedIndex = -1
+	o.state.IsSearchResult = false
+	o.state.SearchQuery = ""
+	o.state.CanBack = true // Allow going back
+	o.rawEntries = entries
+	o.stateMu.Unlock()
+
+	o.window.Invalidate()
+}
+
+// showRecentFiles switches to the virtual "Recent Files" view
+func (o *Orchestrator) showRecentFiles() {
+	debug.Log(debug.APP, "Showing recent files")
+	o.ui.SetRecentView(true)
+	o.ui.HidePreview()
+
+	// Request recent files from database
+	o.store.RequestChan <- store.Request{
+		Op:    store.FetchRecentFiles,
+		Limit: 50,
+	}
+}
+
+// openFileLocation navigates to the directory containing the file
+func (o *Orchestrator) openFileLocation(path string) {
+	debug.Log(debug.APP, "Open file location: %s", path)
+	dir := filepath.Dir(path)
+	o.ui.SetRecentView(false)
+	o.navigate(dir)
+
+	// Optionally select the file after navigation
+	// We'll do this asynchronously after the directory loads
+	go func() {
+		// Give time for directory to load
+		time.Sleep(100 * time.Millisecond)
+		o.stateMu.Lock()
+		for i, entry := range o.state.Entries {
+			if entry.Path == path {
+				o.state.SelectedIndex = i
+				o.stateMu.Unlock()
+				o.window.Invalidate()
+				return
+			}
+		}
+		o.stateMu.Unlock()
+	}()
 }
 
 func Main(startPath string) {
