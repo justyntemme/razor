@@ -150,7 +150,7 @@ func searchWithRipgrep(ctx context.Context, cmd, pattern, basePath string, maxDe
 	// --max-depth 2 = specified dir + 1 level of subdirs
 	// Our maxDepth=1 means current dir only, which maps to rg --max-depth 1
 	if maxDepth > 0 {
-		args = append(args, "--max-depth", itoa(maxDepth))
+		args = append(args, "--max-depth", strconv.Itoa(maxDepth))
 	}
 
 	args = append(args, "--", pattern, basePath)
@@ -172,7 +172,7 @@ func searchWithUgrep(ctx context.Context, cmd, pattern, basePath string, maxDept
 	// --max-depth=2 = specified dir + 1 level of subdirs
 	// Our maxDepth=1 means current dir only, which maps to ug --max-depth=1
 	if maxDepth > 0 {
-		args = append(args, "--max-depth="+itoa(maxDepth))
+		args = append(args, "--max-depth="+strconv.Itoa(maxDepth))
 	}
 
 	args = append(args, "--", pattern, basePath)
@@ -232,10 +232,6 @@ func runSearchCommand(ctx context.Context, cmd string, args []string, progressFn
 
 	log.Printf("[EXTERNAL_SEARCH] Complete: found %d files", len(results))
 	return results, scanner.Err()
-}
-
-func itoa(i int) string {
-	return strconv.Itoa(i)
 }
 
 // MatchesExternalResults checks if a path is in the external search results

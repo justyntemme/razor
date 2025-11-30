@@ -353,7 +353,7 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		o.defaultDepth = evt.DefaultDepth
 		o.ui.DefaultDepth = evt.DefaultDepth
 		// Save setting to database
-		o.store.RequestChan <- store.Request{Op: store.SaveSetting, Key: "default_depth", Value: itoa(evt.DefaultDepth)}
+		o.store.RequestChan <- store.Request{Op: store.SaveSetting, Key: "default_depth", Value: strconv.Itoa(evt.DefaultDepth)}
 		debug.Log(debug.APP, "Settings: default_depth=%d", evt.DefaultDepth)
 	case ui.ActionChangeTheme:
 		val := "false"
@@ -879,7 +879,7 @@ func (o *Orchestrator) doPaste() {
 			ext := filepath.Ext(dstName)
 			base := strings.TrimSuffix(dstName, ext)
 			for i := 1; ; i++ {
-				dst = filepath.Join(dstDir, base+"_copy"+itoa(i)+ext)
+				dst = filepath.Join(dstDir, base+"_copy"+strconv.Itoa(i)+ext)
 				if _, err := os.Stat(dst); os.IsNotExist(err) {
 					break
 				}
@@ -968,13 +968,11 @@ func (o *Orchestrator) copyFile(src, dst string, move bool) error {
 	}
 	defer dstFile.Close()
 
-	// Progress-tracking writer
+	// Progress-tracking writer (uses atomic add to avoid races with UI thread)
 	pw := &progressWriter{
 		w: dstFile,
 		onWrite: func(n int64) {
-			o.progressMu.Lock()
-			o.state.Progress.Current += n
-			o.progressMu.Unlock()
+			atomic.AddInt64(&o.state.Progress.Current, n)
 			o.window.Invalidate()
 		},
 	}
@@ -1103,12 +1101,11 @@ func (o *Orchestrator) copyFileWithProgress(src, dst string) error {
 	}
 	defer dstFile.Close()
 
+	// Progress-tracking writer (uses atomic add to avoid races with UI thread)
 	pw := &progressWriter{
 		w: dstFile,
 		onWrite: func(n int64) {
-			o.progressMu.Lock()
-			o.state.Progress.Current += n
-			o.progressMu.Unlock()
+			atomic.AddInt64(&o.state.Progress.Current, n)
 			o.window.Invalidate()
 		},
 	}
@@ -1156,18 +1153,6 @@ func (pw *progressWriter) Write(p []byte) (int, error) {
 		pw.onWrite(int64(n))
 	}
 	return n, err
-}
-
-func itoa(i int) string {
-	if i == 0 {
-		return "0"
-	}
-	s := ""
-	for i > 0 {
-		s = string(rune('0'+i%10)) + s
-		i /= 10
-	}
-	return s
 }
 
 func Main(startPath string) {

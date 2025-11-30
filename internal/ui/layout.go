@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/font"
@@ -611,18 +612,22 @@ func (r *Renderer) layoutProgressBar(gtx layout.Context, state *State) layout.Di
 		r.progressAnimStart = gtx.Now
 	}
 
+	// Read progress values atomically to avoid races with background updates
+	progressCurrent := atomic.LoadInt64(&state.Progress.Current)
+	progressTotal := state.Progress.Total // Total is set atomically in setProgress, not incremented
+
 	return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx,
 		func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					var label string
-					if state.Progress.Total > 0 {
+					if progressTotal > 0 {
 						// Determinate progress - show percentage
-						pct := float32(state.Progress.Current) / float32(state.Progress.Total)
+						pct := float32(progressCurrent) / float32(progressTotal)
 						label = fmt.Sprintf("%s - %s / %s (%.0f%%)",
 							state.Progress.Label,
-							formatSize(state.Progress.Current),
-							formatSize(state.Progress.Total),
+							formatSize(progressCurrent),
+							formatSize(progressTotal),
 							pct*100)
 					} else {
 						// Indeterminate progress - just show the label (e.g., "Found 42 files...")
@@ -636,13 +641,13 @@ func (r *Renderer) layoutProgressBar(gtx layout.Context, state *State) layout.Di
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					height := gtx.Dp(unit.Dp(8))
 					width := gtx.Constraints.Max.X
-					
+
 					// Draw background
 					paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(width, height)}.Op())
-					
-					if state.Progress.Total > 0 {
+
+					if progressTotal > 0 {
 						// Determinate progress - fill based on percentage
-						pct := float32(state.Progress.Current) / float32(state.Progress.Total)
+						pct := float32(progressCurrent) / float32(progressTotal)
 						fillWidth := int(float32(width) * pct)
 						paint.FillShape(gtx.Ops, colProgress, clip.Rect{Max: image.Pt(fillWidth, height)}.Op())
 					} else {

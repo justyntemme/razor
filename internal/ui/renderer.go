@@ -149,7 +149,7 @@ type FavoriteItem struct {
 type ProgressState struct {
 	Active  bool
 	Label   string
-	Current int64
+	Current int64 // Updated atomically via sync/atomic in orchestrator
 	Total   int64
 }
 
