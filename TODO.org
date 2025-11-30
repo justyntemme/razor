@@ -129,6 +129,54 @@
    - [ ] Split window view (stretch goal)
    - [ ] Vertical/horizontal split options
 
+*** Implementation Plan
+**** Phase 1: Core Tab Data Structures
+     - Create TabState struct to hold per-tab state:
+       - CurrentPath, Entries, SelectedIndex, CanBack, CanForward
+       - History stack ([]string) and historyIndex per tab
+       - rawEntries, dirEntries (for search state)
+       - IsSearchResult, SearchQuery
+     - Create TabManager to manage multiple tabs:
+       - tabs []TabState
+       - activeTabIndex int
+       - Methods: NewTab(), CloseTab(), SwitchTab(), GetActiveTab()
+
+**** Phase 2: Refactor State Management
+     - Move per-directory state from Orchestrator to TabState
+     - Keep global state in Orchestrator (window, fs, store, ui, clipboard, etc.)
+     - Orchestrator.state becomes Orchestrator.tabs[activeTab]
+     - Update all state references to go through GetActiveTab()
+
+**** Phase 3: Tab Bar UI Component
+     - Add tab bar between File menu and nav bar in layout.go
+     - Each tab shows: folder name (or path), close button (X)
+     - Active tab visually highlighted
+     - "+" button to create new tab
+     - Tab clicks switch active tab
+     - Tab close button removes tab (minimum 1 tab required)
+
+**** Phase 4: Keyboard Shortcuts
+     - Ctrl+T: Create new tab (in current directory or home)
+     - Ctrl+W: Close current tab (if more than 1 tab)
+     - Ctrl+Tab / Ctrl+Shift+Tab: Cycle through tabs
+     - Ctrl+1-9: Switch to tab by number
+
+**** Phase 5: Tab Persistence (Optional)
+     - Save open tabs to database on exit
+     - Restore tabs on startup
+
+**** Future: Split View Architecture Considerations
+     - TabManager could evolve to PaneManager
+     - Each Pane contains its own TabManager
+     - Split creates two Panes, each with their own tabs
+     - File operations between panes (drag from left to right)
+
+**** Questions to Resolve
+     - Q1: Should new tabs open in same directory as current tab, or home?
+     - Q2: Should closing last tab close the app, or keep one tab open?
+     - Q3: Tab limit? (browsers often have soft limits like 100+)
+     - Q4: Should tabs be reorderable via drag in Phase 1, or defer?
+
 ** TODO Bookmarks Enhancement
    - [ ] Bookmark folders (not just favorites)
    - [ ] Bookmark groups/categories

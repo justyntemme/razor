@@ -58,6 +58,7 @@ const (
 	// Settings actions
 	ActionChangeSearchEngine
 	ActionChangeDefaultDepth
+	ActionChangeTheme
 )
 
 type ClipOp int
@@ -126,6 +127,7 @@ type UIEvent struct {
 	AppPath       string
 	SearchEngine  string // Selected search engine ID
 	DefaultDepth  int    // Default recursive search depth
+	DarkMode      bool   // Theme dark mode setting
 }
 
 type UIEntry struct {
@@ -301,6 +303,10 @@ type Renderer struct {
 	
 	// Animation state for indeterminate progress
 	progressAnimStart time.Time
+
+	// Theme settings
+	DarkMode      bool
+	darkModeCheck widget.Bool
 }
 
 var (
@@ -345,6 +351,28 @@ func (r *Renderer) SetSearchEngine(engineID string) {
 
 func (r *Renderer) SetDefaultDepth(depth int) {
 	r.DefaultDepth = depth
+}
+
+func (r *Renderer) SetDarkMode(dark bool) {
+	r.DarkMode = dark
+	r.darkModeCheck.Value = dark
+	r.applyTheme()
+}
+
+func (r *Renderer) applyTheme() {
+	if r.DarkMode {
+		// Dark theme colors
+		r.Theme.Palette.Bg = color.NRGBA{R: 30, G: 30, B: 30, A: 255}
+		r.Theme.Palette.Fg = color.NRGBA{R: 220, G: 220, B: 220, A: 255}
+		r.Theme.Palette.ContrastBg = color.NRGBA{R: 50, G: 50, B: 50, A: 255}
+		r.Theme.Palette.ContrastFg = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+	} else {
+		// Light theme colors (default)
+		r.Theme.Palette.Bg = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+		r.Theme.Palette.Fg = color.NRGBA{R: 0, G: 0, B: 0, A: 255}
+		r.Theme.Palette.ContrastBg = color.NRGBA{R: 66, G: 133, B: 244, A: 255}
+		r.Theme.Palette.ContrastFg = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+	}
 }
 
 func (r *Renderer) ShowCreateDialog(isDir bool) {
@@ -694,25 +722,16 @@ func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem) (lay
 func (r *Renderer) renderDriveRow(gtx layout.Context, drive *DriveItem) (layout.Dimensions, bool) {
 	// Check for click BEFORE layout
 	clicked := drive.Clickable.Clicked(gtx)
-	
+
 	dims := material.Clickable(gtx, &drive.Clickable, func(gtx layout.Context) layout.Dimensions {
 		return layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(6), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
 			func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body1(r.Theme, "💾")
-						return lbl.Layout(gtx)
-					}),
-					layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body2(r.Theme, drive.Name)
-						lbl.Color, lbl.MaxLines = colDriveIcon, 1
-						return lbl.Layout(gtx)
-					}),
-				)
+				lbl := material.Body2(r.Theme, drive.Name)
+				lbl.Color, lbl.MaxLines = colDriveIcon, 1
+				return lbl.Layout(gtx)
 			})
 	})
-	
+
 	return dims, clicked
 }
 

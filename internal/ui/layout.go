@@ -1236,6 +1236,13 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) la
 		r.ShowDotfiles = r.showDotfilesCheck.Value
 		*eventOut = UIEvent{Action: ActionToggleDotfiles, ShowDotfiles: r.ShowDotfiles}
 	}
+
+	// Check for dark mode toggle
+	if r.darkModeCheck.Update(gtx) {
+		r.DarkMode = r.darkModeCheck.Value
+		r.applyTheme()
+		*eventOut = UIEvent{Action: ActionChangeTheme, DarkMode: r.DarkMode}
+	}
 	
 	// Check for search engine selection changes
 	if r.searchEngine.Update(gtx) {
@@ -1285,6 +1292,12 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) la
 							layout.Rigid(layout.Spacer{Height: unit.Dp(20)}.Layout),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								cb := material.CheckBox(r.Theme, &r.showDotfilesCheck, "Show dotfiles")
+								cb.Color = colBlack
+								return cb.Layout(gtx)
+							}),
+							layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								cb := material.CheckBox(r.Theme, &r.darkModeCheck, "Dark mode")
 								cb.Color = colBlack
 								return cb.Layout(gtx)
 							}),
