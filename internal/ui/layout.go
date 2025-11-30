@@ -1411,45 +1411,51 @@ func (r *Renderer) browserTabChildren(gtx layout.Context, tabHeight, tabMinWidth
 				paint.FillShape(gtx.Ops, colLightGray, borderRect.Op())
 				stack.Pop()
 
-				// Tab content: title + close button
-				layout.Inset{Left: unit.Dp(8), Right: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-						// Tab title
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							lbl := material.Body2(r.Theme, title)
-							lbl.Color = colBlack
-							if isActive {
-								lbl.Font.Weight = 600
-							}
-							return lbl.Layout(gtx)
-						}),
-						// Spacer
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layout.Spacer{Width: unit.Dp(4)}.Layout(gtx)
-						}),
-						// Close button
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return material.Clickable(gtx, &tab.closeBtn, func(gtx layout.Context) layout.Dimensions {
-								// Draw X
-								centerX := float32(closeSize) / 2
-								centerY := float32(closeSize) / 2
-								armLen := float32(closeSize) / 4
+				// Tab content: title + close button, vertically centered
+				gtx.Constraints.Min.Y = tabHeight
+				gtx.Constraints.Max.Y = tabHeight
+				layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Spacer{Width: unit.Dp(8)}.Layout(gtx)
+					}),
+					// Tab title
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(r.Theme, title)
+						lbl.Color = colBlack
+						if isActive {
+							lbl.Font.Weight = 600
+						}
+						return lbl.Layout(gtx)
+					}),
+					// Spacer
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Spacer{Width: unit.Dp(4)}.Layout(gtx)
+					}),
+					// Close button
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return material.Clickable(gtx, &tab.closeBtn, func(gtx layout.Context) layout.Dimensions {
+							// Draw X
+							centerX := float32(closeSize) / 2
+							centerY := float32(closeSize) / 2
+							armLen := float32(closeSize) / 4
 
-								xColor := colGray
-								// Draw X lines
-								var p clip.Path
-								p.Begin(gtx.Ops)
-								p.MoveTo(f32.Pt(centerX-armLen, centerY-armLen))
-								p.LineTo(f32.Pt(centerX+armLen, centerY+armLen))
-								p.MoveTo(f32.Pt(centerX+armLen, centerY-armLen))
-								p.LineTo(f32.Pt(centerX-armLen, centerY+armLen))
-								paint.FillShape(gtx.Ops, xColor, clip.Stroke{Path: p.End(), Width: 1.5}.Op())
+							xColor := colGray
+							// Draw X lines
+							var p clip.Path
+							p.Begin(gtx.Ops)
+							p.MoveTo(f32.Pt(centerX-armLen, centerY-armLen))
+							p.LineTo(f32.Pt(centerX+armLen, centerY+armLen))
+							p.MoveTo(f32.Pt(centerX+armLen, centerY-armLen))
+							p.LineTo(f32.Pt(centerX-armLen, centerY+armLen))
+							paint.FillShape(gtx.Ops, xColor, clip.Stroke{Path: p.End(), Width: 1.5}.Op())
 
-								return layout.Dimensions{Size: image.Pt(closeSize, closeSize)}
-							})
-						}),
-					)
-				})
+							return layout.Dimensions{Size: image.Pt(closeSize, closeSize)}
+						})
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Spacer{Width: unit.Dp(4)}.Layout(gtx)
+					}),
+				)
 
 				return layout.Dimensions{Size: image.Pt(tabWidth, tabHeight)}
 			})
