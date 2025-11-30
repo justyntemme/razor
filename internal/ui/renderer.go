@@ -358,6 +358,13 @@ type Renderer struct {
 
 	// Preview pane close button
 	previewCloseBtn   widget.Clickable
+
+	// Global right-click handling
+	pendingRightClick    bool            // True if a right-click was detected this frame
+	pendingRightClickPos image.Point     // Position where right-click occurred (window coords)
+	fileListBounds       image.Rectangle // Bounds of the file list area for hit testing
+	rowBounds            []image.Rectangle // Bounds of each visible row (window coords)
+	favBounds            []image.Rectangle // Bounds of each favorite row (window coords)
 }
 
 var (

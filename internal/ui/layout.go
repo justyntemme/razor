@@ -26,8 +26,8 @@ import (
 func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 	defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
 
-	// ===== TRACK GLOBAL MOUSE POSITION =====
-	// Register for all pointer events at root level to track mouse position
+	// ===== GLOBAL MOUSE POSITION TRACKING =====
+	// Track mouse position for menu placement
 	// Use PassOp so events pass through to elements underneath
 	areaStack := clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops)
 	passOp := pointer.PassOp{}.Push(gtx.Ops)
@@ -35,9 +35,9 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 	passOp.Pop()
 	areaStack.Pop()
 
-	// Process mouse position events
+	// Process mouse move events to track position
 	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: &r.mouseTag, Kinds: pointer.Move | pointer.Press})
+		ev, ok := gtx.Event(pointer.Filter{Target: &r.mouseTag, Kinds: pointer.Move})
 		if !ok {
 			break
 		}
@@ -856,6 +856,8 @@ func (r *Renderer) layoutFavoritesList(gtx layout.Context, state *State, eventOu
 // layoutFavoritesListContent renders the actual favorites list content
 func (r *Renderer) layoutFavoritesListContent(gtx layout.Context, state *State, eventOut *UIEvent, yOffset int) layout.Dimensions {
 	if len(state.FavList) == 0 {
+		// Clear favorite bounds when empty
+		r.favBounds = r.favBounds[:0]
 		// Show empty state message
 		return layout.Inset{Top: unit.Dp(16), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx,
 			func(gtx layout.Context) layout.Dimensions {
@@ -865,24 +867,30 @@ func (r *Renderer) layoutFavoritesListContent(gtx layout.Context, state *State, 
 			})
 	}
 
+	// Reset favorite bounds (reuse capacity)
+	r.favBounds = r.favBounds[:0]
+
 	return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		defer pointer.PassOp{}.Push(gtx.Ops).Pop()
 		return r.favState.Layout(gtx, len(state.FavList), func(gtx layout.Context, i int) layout.Dimensions {
 			fav := &state.FavList[i]
 
-			// Render and get click states (position unused, we use global mousePos)
+			// Render row and capture right-click event
 			rowDims, leftClicked, rightClicked, _ := r.renderFavoriteRow(gtx, fav)
+
+			// Handle right-click on favorite
+			if rightClicked {
+				r.menuVisible = true
+				r.menuPos = r.mousePos
+				r.menuPath = fav.Path
+				r.menuIsDir = true
+				r.menuIsFav = true
+				r.menuIsBackground = false
+			}
 
 			// Handle left-click
 			if leftClicked {
+				r.menuVisible = false // Dismiss menu on left-click
 				*eventOut = UIEvent{Action: ActionNavigate, Path: fav.Path}
-			}
-
-			// Handle right-click - use global mouse position for menu
-			if rightClicked {
-				r.menuVisible, r.menuPos, r.menuPath = true, r.mousePos, fav.Path
-				r.menuIsDir, r.menuIsFav = true, true
-				r.menuIsBackground = false
 			}
 
 			return rowDims
@@ -903,7 +911,6 @@ func (r *Renderer) layoutDrivesList(gtx layout.Context, state *State, eventOut *
 	}
 
 	return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		defer pointer.PassOp{}.Push(gtx.Ops).Pop()
 		return r.driveState.Layout(gtx, len(state.Drives), func(gtx layout.Context, i int) layout.Dimensions {
 			drive := &state.Drives[i]
 
@@ -920,64 +927,40 @@ func (r *Renderer) layoutDrivesList(gtx layout.Context, state *State, eventOut *
 	})
 }
 
-// layoutRecentFilesEntry renders the "Recent Files" as a styled navigation button
+// layoutRecentFilesEntry renders the "Recent Files" entry matching favorites style
 func (r *Renderer) layoutRecentFilesEntry(gtx layout.Context, eventOut *UIEvent) layout.Dimensions {
 	// Check for click BEFORE layout
 	if r.recentFilesBtn.Clicked(gtx) {
 		*eventOut = UIEvent{Action: ActionShowRecentFiles}
 	}
 
-	// Style as a pill button
-	bgColor := color.NRGBA{R: 240, G: 240, B: 245, A: 255} // Light gray background
-	textColor := colAccent
-	if r.isRecentView {
-		bgColor = colAccent
-		textColor = colWhite
-	}
+	// Match favorites styling - use material.Clickable for hover effect
+	return material.Clickable(gtx, &r.recentFilesBtn, func(gtx layout.Context) layout.Dimensions {
+		// Draw selection background if viewing recent
+		if r.isRecentView {
+			paint.FillShape(gtx.Ops, colSelected, clip.Rect{Max: gtx.Constraints.Max}.Op())
+		}
 
-	return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx,
-		func(gtx layout.Context) layout.Dimensions {
-			// First measure the content to know the size
-			macro := op.Record(gtx.Ops)
-			contentDims := layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(6), Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx,
-				func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-						// Clock icon (drawn)
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							size := gtx.Dp(12)
-							// Offset slightly to align with text baseline
-							return layout.Inset{Top: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								r.drawClockIcon(gtx.Ops, size, textColor)
-								return layout.Dimensions{Size: image.Pt(size, size)}
-							})
-						}),
-						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-						// Label
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							lbl := material.Body2(r.Theme, "Recent")
-							lbl.Color = textColor
-							lbl.Font.Weight = font.Medium
-							return lbl.Layout(gtx)
-						}),
-					)
-				})
-			contentCall := macro.Stop()
-
-			// Now draw with proper clickable area matching the pill
-			return material.Clickable(gtx, &r.recentFilesBtn, func(gtx layout.Context) layout.Dimensions {
-				// Draw pill background at content size
-				rr := gtx.Dp(unit.Dp(6))
-				rect := clip.RRect{
-					Rect: image.Rectangle{Max: contentDims.Size},
-					NE:   rr, NW: rr, SE: rr, SW: rr,
-				}
-				paint.FillShape(gtx.Ops, bgColor, rect.Op(gtx.Ops))
-
-				// Replay the content
-				contentCall.Add(gtx.Ops)
-				return contentDims
+		return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
+			func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					// Clock icon
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						size := gtx.Dp(14)
+						r.drawClockIcon(gtx.Ops, size, colAccent)
+						return layout.Dimensions{Size: image.Pt(size, size)}
+					}),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+					// Label
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body1(r.Theme, "Recent Files")
+						lbl.Color = colDirBlue
+						lbl.MaxLines = 1
+						return lbl.Layout(gtx)
+					}),
+				)
 			})
-		})
+	})
 }
 
 // drawClockIcon draws a simple clock icon
@@ -1012,9 +995,12 @@ func (r *Renderer) drawClockIcon(ops *op.Ops, size int, iconColor color.NRGBA) {
 }
 
 func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layout.List, eventOut *UIEvent) layout.Dimensions {
+	// Track vertical offset for row bounds calculation
+	headerHeight := 0
+
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
+			dims := layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
 				func(gtx layout.Context) layout.Dimensions {
 					dims, evt := r.renderColumns(gtx)
 					if evt.Action != ActionNone {
@@ -1022,46 +1008,73 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 					}
 					return dims
 				})
+			headerHeight = dims.Size.Y
+			return dims
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return widget.Border{Color: color.NRGBA{A: 50}, Width: unit.Dp(1)}.Layout(gtx,
+			dims := widget.Border{Color: color.NRGBA{A: 50}, Width: unit.Dp(1)}.Layout(gtx,
 				func(gtx layout.Context) layout.Dimensions {
 					return layout.Spacer{Height: unit.Dp(1), Width: unit.Dp(1)}.Layout(gtx)
 				})
+			headerHeight += dims.Size.Y
+			return dims
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			// Register background right-click handler FIRST, covering entire area
-			// Use PassOp so events pass through to list items on top
-			bgArea := clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops)
-			passOp := pointer.PassOp{}.Push(gtx.Ops)
+			// === BACKGROUND RIGHT-CLICK DETECTION ===
+			// Create a hit area filling the entire available space behind the list.
+			// This catches clicks that miss the rows (empty space).
+			defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
 			event.Op(gtx.Ops, &r.bgRightClickTag)
-			passOp.Pop()
-			bgArea.Pop()
-			
-			// Track if any file row was right-clicked
-			fileRightClicked := false
-			
-			// Use PassOp on the list so events pass through to background handler
-			defer pointer.PassOp{}.Push(gtx.Ops).Pop()
-			
-			// Layout file list (row handlers register on top of background)
-			dims := r.listState.Layout(gtx, len(state.Entries), func(gtx layout.Context, i int) layout.Dimensions {
+
+			// Process events for the background tag
+			for {
+				ev, ok := gtx.Event(pointer.Filter{Target: &r.bgRightClickTag, Kinds: pointer.Press})
+				if !ok {
+					break
+				}
+				if e, ok := ev.(pointer.Event); ok && e.Buttons.Contain(pointer.ButtonSecondary) {
+					// Empty space clicked -> Show Background Menu
+					r.menuVisible = true
+					r.menuPos = r.mousePos // Use global mouse position
+					r.menuPath = state.CurrentPath
+					r.menuIsDir = true
+					r.menuIsFav = false
+					r.menuIsBackground = true
+					// Deselect items when clicking background
+					*eventOut = UIEvent{Action: ActionSelect, NewIndex: -1}
+				}
+			}
+
+			// Layout file list
+			listDims := r.listState.Layout(gtx, len(state.Entries), func(gtx layout.Context, i int) layout.Dimensions {
 				item := &state.Entries[i]
 				isRenaming := r.renameIndex == i
-				
-				// Render row and get click states (position unused, we use global mousePos) + rename event
+
+				// Render row and capture right-click event
 				rowDims, leftClicked, rightClicked, _, renameEvt := r.renderRow(gtx, item, i, i == state.SelectedIndex, isRenaming)
-				
+
 				// Handle rename event
 				if renameEvt != nil {
 					*eventOut = *renameEvt
 				}
-				
+
+				// Handle right-click on file/folder
+				if rightClicked && !isRenaming {
+					r.menuVisible = true
+					r.menuPos = r.mousePos // Use global mouse position
+					r.menuPath = item.Path
+					r.menuIsDir = item.IsDir
+					_, r.menuIsFav = state.Favorites[item.Path]
+					r.menuIsBackground = false
+					// Auto-select row on right-click
+					*eventOut = UIEvent{Action: ActionSelect, NewIndex: i}
+				}
+
 				// Handle left-click (but not if renaming)
 				if leftClicked && !isRenaming {
-					// Cancel any active rename
 					r.CancelRename()
 					r.isEditing, r.fileMenuOpen = false, false
+					r.menuVisible = false // Dismiss menu on left-click
 					*eventOut = UIEvent{Action: ActionSelect, NewIndex: i}
 					gtx.Execute(key.FocusCmd{Tag: keyTag})
 					if now := time.Now(); !item.LastClick.IsZero() && now.Sub(item.LastClick) < 500*time.Millisecond {
@@ -1073,43 +1086,11 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 					}
 					item.LastClick = time.Now()
 				}
-				
-				// Handle right-click on file - use global mouse position for menu
-				if rightClicked && !isRenaming {
-					// Cancel any active rename
-					r.CancelRename()
-					fileRightClicked = true
-					r.menuVisible, r.menuPos, r.menuPath = true, r.mousePos, item.Path
-					r.menuIsDir = item.IsDir
-					_, r.menuIsFav = state.Favorites[item.Path]
-					r.menuIsBackground = false
-					*eventOut = UIEvent{Action: ActionSelect, NewIndex: i}
-				}
-				
+
 				return rowDims
 			})
-			
-			// Check for background right-click AFTER processing file rows
-			// Only show background menu if no file was right-clicked
-			if !fileRightClicked {
-				for {
-					ev, ok := gtx.Event(pointer.Filter{Target: &r.bgRightClickTag, Kinds: pointer.Press})
-					if !ok {
-						break
-					}
-					if e, ok := ev.(pointer.Event); ok && e.Buttons.Contain(pointer.ButtonSecondary) {
-						// Use global mouse position for menu
-						r.menuVisible = true
-						r.menuPos = r.mousePos
-						r.menuPath = state.CurrentPath
-						r.menuIsDir = true
-						r.menuIsFav = false
-						r.menuIsBackground = true
-					}
-				}
-			}
-			
-			return dims
+
+			return listDims
 		}),
 	)
 }
