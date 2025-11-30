@@ -360,13 +360,6 @@ type Renderer struct {
 
 	// Preview pane close button
 	previewCloseBtn   widget.Clickable
-
-	// Global right-click handling
-	pendingRightClick    bool            // True if a right-click was detected this frame
-	pendingRightClickPos image.Point     // Position where right-click occurred (window coords)
-	fileListBounds       image.Rectangle // Bounds of the file list area for hit testing
-	rowBounds            []image.Rectangle // Bounds of each visible row (window coords)
-	favBounds            []image.Rectangle // Bounds of each favorite row (window coords)
 }
 
 var (
@@ -630,6 +623,13 @@ func (r *Renderer) CancelRename() {
 func (r *Renderer) onLeftClick() {
 	r.menuVisible = false
 	r.fileMenuOpen = false
+}
+
+// invisibleClickable renders content inside an invisible clickable area.
+// Unlike material.Clickable, this does not add any visual hover or press effects.
+// Use this for areas that need to detect clicks to dismiss menus without visual feedback.
+func invisibleClickable(gtx layout.Context, click *widget.Clickable, w layout.Widget) layout.Dimensions {
+	return click.Layout(gtx, w)
 }
 
 func (r *Renderer) detectRightClick(gtx layout.Context, tag event.Tag) bool {

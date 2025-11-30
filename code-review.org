@@ -1,0 +1,105 @@
+#+TITLE: Refactor Plan: Razor File Explorer
+#+AUTHOR: Senior Software Engineer
+#+DATE: 2025-11-30
+#+STATUS: DRAFT
+
+* Executive Summary
+The application demonstrates a solid foundation with clear separation of concerns between UI (~internal/ui~), Filesystem (~internal/fs~), and State Orchestration (~internal/app~). The use of ~fastwalk~ and atomic counters for search generations demonstrates performance awareness.
+
+However, significant technical debt exists regarding the "Source of Truth" for user data (specifically Favorites), and the ~Orchestrator~ struct is approaching "God Object" status. This plan outlines immediate cleanup tasks to stabilize the codebase and long-term architectural improvements to ensure stability across Windows, macOS, and Linux.
+
+* Phase 1: Dead Code Removal & "Split Brain" Fix
+** Context
+Currently, Favorites are loaded from ~config.json~, but the SQLite implementation (~internal/store/db.go~) still retains schema definitions, query logic, and event handlers for Favorites. This creates confusion regarding the single source of truth.
+
+** Action Items
+*** [X] Cleanup ~internal/store/db.go~
+Remove all logic related to favorites storage in the database.
+DONE: Removed FetchFavorites, AddFavorite, RemoveFavorite, FetchSettings, SaveSetting
+constants, removed favorites and settings tables from schema, removed all related methods.
+
+#+BEGIN_SRC go
+// (This is suggested code and may not reflect the actual changes as the codebase may have changed since the review)
+
+// Remove these constants
+const (
+    FetchFavorites EventType = iota // DELETE
+    AddFavorite                     // DELETE
+    RemoveFavorite                  // DELETE
+    // ... keep others
+)
+
+// Remove table creation in Open()
+// CREATE TABLE IF NOT EXISTS favorites ... // DELETE
+
+// Remove methods
+// func (d *DB) fetchFavorites() ... // DELETE
+#+END_SRC
+
+*** [X] Cleanup ~internal/ui/layout.go~
+With the new event-driven right-click implementation in ~renderer.go~, the manual hit-testing logic in the main layout file is obsolete.
+DONE: Removed pendingRightClick, pendingRightClickPos, fileListBounds, rowBounds, favBounds
+fields from Renderer struct. Removed favBounds clearing code from layoutFavoritesListContent.
+
+#+BEGIN_SRC go
+// (This is suggested code and may not reflect the actual changes as the codebase may have changed since the review)
+
+// Remove the post-layout processing block
+// if r.pendingRightClick {
+//     r.processRightClick(state, &eventOut)
+// }
+
+// Remove the processRightClick function entirely
+#+END_SRC
+
+*** [X] Cleanup ~internal/app/orchestrator.go~
+Stop listening for DB events that will no longer fire.
+DONE: Removed FetchFavorites and FetchSettings cases from handleStoreResponse.
+
+#+BEGIN_SRC go
+// (This is suggested code and may not reflect the actual changes as the codebase may have changed since the review)
+
+func (o *Orchestrator) handleStoreResponse(resp store.Response) {
+    switch resp.Op {
+    // DELETE this case
+    // case store.FetchFavorites:
+    //    ...
+    }
+}
+#+END_SRC
+
+* Phase 2: Architectural Improvements
+** Refactor the "God Object" (Orchestrator)
+The ~Orchestrator~ currently manages windowing, config, search, FS events, DB events, and UI dispatching.
+*** Proposal
+Split ~Orchestrator~ into distinct controllers:
+1. *SearchController*: Encapsulate ~searchEngines~, ~selectedEngine~, ~searchGen~, and ~doSearch~ logic.
+2. *NavigationController*: Encapsulate ~history~, ~historyIndex~, ~navigate~, ~goBack~, and ~expandPath~.
+3. *Orchestrator*: Remains the wiring layer that passes messages between controllers and the UI.
+
+** Improve User Feedback (Error Handling)
+Currently, critical errors (e.g., file open failure, permission denied) are logged to ~stderr~ via ~log.Printf~, which is invisible to end-users in a GUI app.
+*** Proposal
+1. Add a ~ToastError(msg string)~ method to the ~Renderer~.
+2. Trigger this toast from the Orchestrator when operations return non-nil errors.
+
+** Harden Concurrency
+*** Issue: Buffered Channels
+~internal/fs/system.go~ uses a buffered channel of size 10. Rapid user actions (e.g., holding down a navigation key) could fill this buffer, blocking the UI thread.
+*** Fix
+Implement non-blocking sends or a "drop newest/oldest" strategy for high-frequency events, or move channel writes to a dedicated goroutine (with care to avoid leaks).
+
+** Platform Specifics (Windows)
+*** Issue: Blocking syscalls
+In ~internal/fs/drives_windows.go~, drive enumeration uses ~GetVolumeInformationW~. If a mapped network drive is disconnected, this syscall can block for seconds, freezing the UI frame.
+*** Fix
+Drive enumeration must occur in a detached goroutine, updating the state via a callback or channel when complete.
+
+* Phase 3: Memory Management Review
+** Context
+The application stores directory listings in memory (~dirEntries~ and ~rawEntries~). While Go's garbage collector and runtime are generally highly efficient, managing lists of 100,000+ files requires verification that we are adhering to best practices.
+
+** Discussion Points
+1. *Current Strategy*: We currently hold full slices of struct representations of files.
+2. *Verification*: We need to verify that ~dirEntries~ does not cause GC pauses during filtering/sorting operations on large directories.
+3. *Conclusion*: If profiling confirms the current approach is performant (likely, given Go's efficiency), no changes are needed. If GC pressure is high, we will discuss optimizations (pointer vs value semantics, pre-allocation strategies) at that time.

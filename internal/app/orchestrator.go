@@ -510,12 +510,6 @@ func (o *Orchestrator) handleStoreResponse(resp store.Response) {
 	}
 
 	switch resp.Op {
-	case store.FetchFavorites:
-		// Legacy: favorites are now loaded from config.json
-		debug.Log(debug.STORE, "FetchFavorites received but favorites are now in config.json")
-	case store.FetchSettings:
-		// Legacy: settings are now loaded from config.json
-		debug.Log(debug.STORE, "FetchSettings received but settings are now in config.json")
 	case store.FetchSearchHistory:
 		// Update UI with search history results
 		items := make([]ui.SearchHistoryItem, len(resp.SearchHistory))

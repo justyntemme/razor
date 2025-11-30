@@ -471,7 +471,7 @@ func (r *Renderer) layoutSearchWithHistory(gtx layout.Context, hasDirectivePrefi
 		r.onLeftClick()
 	}
 
-	return material.Clickable(gtx, &r.searchBoxClick, func(gtx layout.Context) layout.Dimensions {
+	return invisibleClickable(gtx, &r.searchBoxClick, func(gtx layout.Context) layout.Dimensions {
 		return widget.Border{Color: colLightGray, Width: unit.Dp(1), CornerRadius: unit.Dp(4)}.Layout(gtx,
 			func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(6), Right: unit.Dp(4)}.Layout(gtx,
@@ -707,13 +707,13 @@ func (r *Renderer) layoutSidebar(gtx layout.Context, state *State, eventOut *UIE
 	case "stacked":
 		return r.layoutSidebarStacked(gtx, state, eventOut, sidebarYOffset)
 	case "favorites_only":
-		return material.Clickable(gtx, &r.sidebarClick, func(gtx layout.Context) layout.Dimensions {
+		return invisibleClickable(gtx, &r.sidebarClick, func(gtx layout.Context) layout.Dimensions {
 			return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
 				return r.layoutFavoritesList(gtx, state, eventOut, sidebarYOffset)
 			})
 		})
 	case "drives_only":
-		return material.Clickable(gtx, &r.sidebarClick, func(gtx layout.Context) layout.Dimensions {
+		return invisibleClickable(gtx, &r.sidebarClick, func(gtx layout.Context) layout.Dimensions {
 			return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
 				return r.layoutDrivesList(gtx, state, eventOut)
 			})
@@ -751,7 +751,7 @@ func (r *Renderer) layoutSidebarTabbed(gtx layout.Context, state *State, eventOu
 				if r.sidebarClick.Clicked(gtx) {
 					r.onLeftClick()
 				}
-				return material.Clickable(gtx, &r.sidebarClick, func(gtx layout.Context) layout.Dimensions {
+				return invisibleClickable(gtx, &r.sidebarClick, func(gtx layout.Context) layout.Dimensions {
 					return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
 						switch r.sidebarTabs.SelectedID() {
 						case "favorites":
@@ -791,7 +791,7 @@ func (r *Renderer) layoutSidebarTabbed(gtx layout.Context, state *State, eventOu
 			if r.sidebarClick.Clicked(gtx) {
 				r.onLeftClick()
 			}
-			return material.Clickable(gtx, &r.sidebarClick, func(gtx layout.Context) layout.Dimensions {
+			return invisibleClickable(gtx, &r.sidebarClick, func(gtx layout.Context) layout.Dimensions {
 				return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
 					switch r.sidebarTabs.SelectedID() {
 					case "favorites":
@@ -809,7 +809,7 @@ func (r *Renderer) layoutSidebarTabbed(gtx layout.Context, state *State, eventOu
 
 // layoutSidebarStacked renders both Favorites and Drives stacked vertically
 func (r *Renderer) layoutSidebarStacked(gtx layout.Context, state *State, eventOut *UIEvent, sidebarYOffset int) layout.Dimensions {
-	return material.Clickable(gtx, &r.sidebarClick, func(gtx layout.Context) layout.Dimensions {
+	return invisibleClickable(gtx, &r.sidebarClick, func(gtx layout.Context) layout.Dimensions {
 		return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			// Recent Files entry (above Favorites)
@@ -898,8 +898,6 @@ func (r *Renderer) layoutFavoritesList(gtx layout.Context, state *State, eventOu
 // layoutFavoritesListContent renders the actual favorites list content
 func (r *Renderer) layoutFavoritesListContent(gtx layout.Context, state *State, eventOut *UIEvent, yOffset int) layout.Dimensions {
 	if len(state.FavList) == 0 {
-		// Clear favorite bounds when empty
-		r.favBounds = r.favBounds[:0]
 		// Show empty state message
 		return layout.Inset{Top: unit.Dp(16), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx,
 			func(gtx layout.Context) layout.Dimensions {
@@ -908,9 +906,6 @@ func (r *Renderer) layoutFavoritesListContent(gtx layout.Context, state *State, 
 				return lbl.Layout(gtx)
 			})
 	}
-
-	// Reset favorite bounds (reuse capacity)
-	r.favBounds = r.favBounds[:0]
 
 	return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return r.favState.Layout(gtx, len(state.FavList), func(gtx layout.Context, i int) layout.Dimensions {

@@ -14,13 +14,8 @@ import (
 type EventType int
 
 const (
-	FetchFavorites EventType = iota
-	AddFavorite
-	RemoveFavorite
-	FetchSettings
-	SaveSetting
 	// Search history operations
-	AddSearchHistory
+	AddSearchHistory EventType = iota
 	FetchSearchHistory
 	// Recent files operations
 	AddRecentFile
@@ -43,17 +38,14 @@ type RecentFileEntry struct {
 }
 
 type Request struct {
-	Op         EventType
-	Path       string
-	Key, Value string
-	Query      string // For search history
-	Limit      int    // For search history limit
+	Op    EventType
+	Path  string // For recent files
+	Query string // For search history
+	Limit int    // For search history/recent files limit
 }
 
 type Response struct {
 	Op            EventType
-	Favorites     []string
-	Settings      map[string]string
 	SearchHistory []SearchHistoryEntry
 	RecentFiles   []RecentFileEntry
 	Err           error
@@ -93,9 +85,9 @@ func (d *DB) Open(dbPath string) error {
 		}
 	}
 
+	// Database schema: only history tables (search history and recent files)
+	// User settings and favorites are stored in config.json
 	schema := `
-		CREATE TABLE IF NOT EXISTS favorites (path TEXT PRIMARY KEY, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
-		CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 		CREATE TABLE IF NOT EXISTS search_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			query TEXT NOT NULL,
@@ -125,19 +117,9 @@ func (d *DB) Open(dbPath string) error {
 func (d *DB) Start() {
 	debug.Log(debug.STORE, "Store goroutine started")
 	for req := range d.RequestChan {
-		debug.Log(debug.STORE, "Request: op=%d path=%q key=%q query=%q", req.Op, req.Path, req.Key, req.Query)
+		debug.Log(debug.STORE, "Request: op=%d path=%q query=%q", req.Op, req.Path, req.Query)
 
 		switch req.Op {
-		case FetchFavorites:
-			d.fetchFavorites()
-		case AddFavorite:
-			d.execAndFetch("INSERT OR IGNORE INTO favorites (path) VALUES (?)", req.Path)
-		case RemoveFavorite:
-			d.execAndFetch("DELETE FROM favorites WHERE path = ?", req.Path)
-		case FetchSettings:
-			d.fetchSettings()
-		case SaveSetting:
-			d.saveSetting(req.Key, req.Value)
 		case AddSearchHistory:
 			d.addSearchHistory(req.Query)
 		case FetchSearchHistory:
@@ -148,61 +130,6 @@ func (d *DB) Start() {
 			d.fetchRecentFiles(req.Limit)
 		}
 	}
-}
-
-func (d *DB) fetchFavorites() {
-	rows, err := d.conn.Query("SELECT path FROM favorites ORDER BY created_at ASC")
-	if err != nil {
-		debug.Log(debug.STORE, "fetchFavorites error: %v", err)
-		d.ResponseChan <- Response{Op: FetchFavorites, Err: err}
-		return
-	}
-	defer rows.Close()
-
-	var favs []string
-	for rows.Next() {
-		var path string
-		if rows.Scan(&path) == nil {
-			favs = append(favs, path)
-		}
-	}
-	debug.Log(debug.STORE, "fetchFavorites: returning %d favorites", len(favs))
-	d.ResponseChan <- Response{Op: FetchFavorites, Favorites: favs}
-}
-
-func (d *DB) execAndFetch(query, path string) {
-	if _, err := d.conn.Exec(query, path); err != nil {
-		debug.Log(debug.STORE, "execAndFetch error: %v", err)
-	}
-	d.fetchFavorites()
-}
-
-func (d *DB) fetchSettings() {
-	rows, err := d.conn.Query("SELECT key, value FROM settings")
-	if err != nil {
-		debug.Log(debug.STORE, "fetchSettings error: %v", err)
-		d.ResponseChan <- Response{Op: FetchSettings, Err: err}
-		return
-	}
-	defer rows.Close()
-
-	settings := make(map[string]string)
-	for rows.Next() {
-		var k, v string
-		if rows.Scan(&k, &v) == nil {
-			settings[k] = v
-		}
-	}
-	debug.Log(debug.STORE, "fetchSettings: returning %d settings", len(settings))
-	d.ResponseChan <- Response{Op: FetchSettings, Settings: settings}
-}
-
-func (d *DB) saveSetting(key, value string) {
-	debug.Log(debug.STORE, "saveSetting: %q = %q", key, value)
-	if _, err := d.conn.Exec("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", key, value); err != nil {
-		debug.Log(debug.STORE, "saveSetting error: %v", err)
-	}
-	d.fetchSettings()
 }
 
 func (d *DB) Close() {
