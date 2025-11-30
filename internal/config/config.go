@@ -88,7 +88,8 @@ type BehaviorConfig struct {
 // TabsConfig holds tab-related settings
 type TabsConfig struct {
 	Enabled            bool   `json:"enabled"`
-	NewTabLocation     string `json:"newTabLocation"`     // "current" | "home" | "custom"
+	NewTabLocation     string `json:"newTabLocation"`     // "current" | "home" | "recent" | path string
+	CustomTabPath      string `json:"customTabPath"`      // Custom path when NewTabLocation is a path
 	LastTabBehavior    string `json:"lastTabBehavior"`    // "close_app" | "keep_empty" | "reopen_home"
 	RestoreTabsOnStart bool   `json:"restoreTabsOnStart"`
 }
@@ -188,7 +189,8 @@ func DefaultConfig() *Config {
 		},
 		Tabs: TabsConfig{
 			Enabled:            false,
-			NewTabLocation:     "current",
+			NewTabLocation:     "home",
+			CustomTabPath:      "",
 			LastTabBehavior:    "close_app",
 			RestoreTabsOnStart: false,
 		},
@@ -411,6 +413,13 @@ func (m *Manager) GetPreviewConfig() PreviewConfig {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.config.Preview
+}
+
+// GetTabsConfig returns the tabs configuration
+func (m *Manager) GetTabsConfig() TabsConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.config.Tabs
 }
 
 // GenerateConfig backs up existing config and creates a fresh default config

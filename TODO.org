@@ -1,8 +1,10 @@
-* Razor File Manager - Project TODO
+#+TITLE: Razor File Manager - Project Status
+#+AUTHOR: justyntemme
+#+DATE: 2024
 
-** Design Philosophies
+* Design Philosophies
 
-*** LLM Commandments
+** LLM Commandments
 Rules that all LLMs should follow when working on this codebase:
 
 1. *Always review Gio documentation before making assumptions about UI behavior*
@@ -25,58 +27,244 @@ Rules that all LLMs should follow when working on this codebase:
    - Event registration in frame N delivers events in frame N+1
    - State must be stored in the Renderer struct between frames
 
-** Current Priorities
+5. *Avoid over-abstraction*
+   - Simple one-liners like strings.ToLower(filepath.Ext(path)) should NOT be wrapped in helper functions
+   - Only create abstractions when they provide clear value (reduce duplication of complex logic)
+   - Constants are acceptable for magic numbers that aid readability
 
-*** TODO Improve User Feedback (Error Handling)
+* Current Priorities
+
+** TODO Improve User Feedback (Error Handling)
 - Critical errors currently go to log.Printf, invisible to GUI users
 - Add ToastError(msg string) method to Renderer
 - Show permission denied, file open failures, etc. to user
 
-*** TODO Windows Drive Enumeration Fix
+** TODO Windows Drive Enumeration Fix
 - GetVolumeInformationW can block for seconds on disconnected network drives
 - Freezes UI while waiting
 - Move drive enumeration to background goroutine
 
-** Completed Features
+** TODO Syntax Highlighting Module (internal/highlight)
+Reusable code formatting module for preview pane and markdown code blocks.
 
-*** DONE Right-click context menu handling
-- Right-click on files shows context menu (Copy, Cut, Paste, Delete, Rename, Open With)
-- Right-click on empty space shows background menu (New File/Folder)
-- Right-click on favorites shows favorite-specific menu
-- Left-click anywhere dismisses menu
+*** Goals:
+    - Single module provides formatting for multiple contexts
+    - Preview pane uses it for raw code file display
+    - Markdown renderer uses it for fenced code blocks
+    - Extensible to support new languages easily
 
-*** DONE Image preview in preview pane
-- Preview pane supports image files (PNG, JPG, GIF, BMP, WebP, HEIC)
-- Images scaled to fit preview pane
-- Text preview still works for text-based files
+*** Libraries to evaluate:
+    - github.com/alecthomas/chroma - Full-featured syntax highlighter
+    - github.com/yuin/goldmark - Markdown parsing
 
-*** DONE Resizable preview pane
-- Drag handle on preview pane edge
-- Smooth resize with mouse drag
-- Minimum/maximum size constraints
+** TODO Markdown Preview with Tabs
+Add rendered markdown preview alongside raw view for .md files.
 
-*** DONE File rename preserves extension selection
-- When renaming, only filename (not extension) is selected
-- Directories select full name
+*** Features:
+    - [ ] "Raw" and "Preview" tabs in preview pane header
+    - [ ] Parse markdown with goldmark (github.com/yuin/goldmark)
+    - [ ] Walk AST to build richtext spans
+    - [ ] Support: headings, bold, italic, code, lists, links, blockquotes
+    - [ ] Code blocks use Syntax Highlighting Module
 
-*** DONE Orchestrator refactor (God Object split)
-- Created SearchController for search operations
-- Created NavigationController for path navigation
-- Orchestrator now delegates to controllers
-- SharedDeps and SharedState for clean dependency sharing
+** TODO Recent Files View Improvements
+- [ ] Apply search bar filtering to Recent Files entries
+- [ ] Filter by filename as user types
+- [ ] Maintain same search-as-you-type behavior as normal file list
+- [ ] Disable paste in Recent Files view (no target directory to paste to)
 
-*** DONE Code deduplication refactor
-- pathExists(), deleteItem(), refreshCurrentDir() utilities
-- resetUIState() helper for navigation handlers
-- Search directive constants extracted
-- Config manager lock pattern fixed (no more lock reacquisition)
-- File permission and time duration constants
+** TODO Drag and Drop (On Hold)
+   - [ ] Drag files to move
+   - [ ] Drag to folders to move into
+   - [ ] Ctrl+drag to copy
+   - [ ] Visual feedback during drag
+   Note: Put on hold due to implementation challenges with Gio
 
-*** DONE Recent Files feature
-- Virtual folder showing recently opened files
-- "Open File Location" context menu option
-- SQLite persistence
+* Completed Features
 
-*** DONE Navigation button styling
-- Icon-only buttons for back/forward/home
-- Programmatic icon drawing with clip.Path
+** DONE Config.json for UI/Settings Configuration
+   CLOSED: [2024-11-30]
+   - [X] Created internal/config package
+   - [X] Config file at ~/.config/razor/config.json
+   - [X] Theme, sidebar layout, search settings, preview config
+   - [X] Favorites stored in config.json (not SQLite)
+   - [X] Hot-reload not implemented (restart required)
+
+** DONE Composable Sidebar UI
+   CLOSED: [2024-11-30]
+   - [X] Tabbed view (Favorites | Drives tabs)
+   - [X] Stacked view option
+   - [X] Tab style options (manila, underline, pill)
+   - [X] Layout configurable via config.json
+
+** DONE Search History (SQLite)
+   CLOSED: [2024-11-30]
+   - [X] Store past search queries with timestamps
+   - [X] Auto-complete dropdown from search history
+   - [X] Fuzzy matching for history suggestions
+   - [X] Prune old entries (keeps last 100)
+
+** DONE Recent Files/Directories (SQLite)
+   CLOSED: [2024-11-30]
+   - [X] Track recently opened files and directories
+   - [X] "Recent Files" virtual folder accessible from sidebar
+   - [X] Last 50 files tracked and displayed
+   - [X] "Open File Location" context menu option
+   - [X] Stale files filtered out automatically
+
+** DONE File Preview Panel
+   CLOSED: [2024-11-30]
+   - [X] Text file preview with scrolling
+   - [X] Image preview (PNG, JPG, GIF, BMP, WebP, HEIC)
+   - [X] Images scaled to fit preview pane
+   - [X] Resizable preview pane with drag handle
+   - [X] File size limits (configurable)
+   - [ ] File metadata display (not implemented)
+
+** DONE Orchestrator Refactor
+   CLOSED: [2024-11-30]
+   - [X] Split into SearchController and NavigationController
+   - [X] SharedDeps and SharedState for clean dependency sharing
+   - [X] Orchestrator remains wiring layer
+   - [X] Created separate file_ops.go for file operations
+
+** DONE Code Deduplication Refactor
+   CLOSED: [2024-11-30]
+   - [X] pathExists(), deleteItem(), refreshCurrentDir() utilities
+   - [X] resetUIState() helper for navigation handlers
+   - [X] Search directive constants extracted
+   - [X] Config manager lock pattern fixed
+   - [X] File permission and time duration constants
+
+** DONE Right-Click Context Menu
+   CLOSED: [2024-11-29]
+   - [X] Right-click on files shows context menu
+   - [X] Right-click on empty space shows background menu (New File/Folder)
+   - [X] Right-click on favorites shows favorite-specific menu
+   - [X] Left-click anywhere dismisses menu
+
+** DONE Background Right-Click Menu
+   CLOSED: [2024-11-29]
+   - [X] Right-click on empty space in file list shows context menu
+   - [X] Background menu shows: New File, New Folder, Paste (if clipboard has content)
+   - [X] Works in empty directories
+
+** DONE Path Navigation Bug Fix
+   CLOSED: [2024-11-29]
+   - [X] Handle ~ for home directory
+   - [X] Handle ~/path tilde expansion
+   - [X] Handle absolute Unix paths (/usr/bin)
+   - [X] Handle relative paths (../, ./)
+   - [X] Handle Windows drive letters (C:\, D:\)
+   - [X] Handle UNC paths (\\server\share)
+   - [X] Validate paths before navigation
+
+** DONE Create New File/Folder Dialog
+   CLOSED: [2024-11-29]
+   - [X] Add "New File" to right-click context menu
+   - [X] Add "New Folder" to right-click context menu
+   - [X] Keyboard shortcuts (Ctrl+N file, Ctrl+Shift+N folder)
+   - [X] Modal dialog with text input
+   - [X] Validation (prevent duplicates)
+   - [X] Refresh directory after creation
+
+** DONE Open With Support
+   CLOSED: [2024-11-29]
+   - [X] Linux: xdg-open, kde-open5, gio support
+   - [X] macOS: open command, Finder reveal
+   - [X] Windows: ShellExecuteW, rundll32 OpenAs_RunDLL
+   - [X] Add "Open With..." to context menu (files only)
+
+** DONE Search Improvements
+   CLOSED: [2024-11-29]
+   - [X] Search-as-you-type for simple filename searches
+   - [X] Directives (contents:, ext:, size:, modified:, filename:) require Enter
+   - [X] Clear button (X) appears when search active
+   - [X] Visual directive pills with color coding
+   - [X] Generation counter prevents stale results
+   - [X] Search cancellation support
+   - [X] recursive: and depth: directives for deep search
+   - [X] Progress bar updates during search
+   - [X] Binary file detection (skip files with null bytes)
+
+** DONE Search Engine Integration
+   CLOSED: [2024-11-29]
+   - [X] Detect available search engines (ripgrep, ugrep)
+   - [X] Settings dropdown shows installed engines with versions
+   - [X] ripgrep and ugrep integration for contents: searches
+   - [X] Engine selection persisted in config.json
+
+** DONE Rename File/Folder
+   CLOSED: [2024-11-29]
+   - [X] Add "Rename" to context menu
+   - [X] Inline editing in file list
+   - [X] Keyboard shortcut (F2)
+   - [X] Only filename selected (not extension) for files
+   - [X] Validation (prevent duplicates)
+
+** DONE Theme Settings
+   CLOSED: [2024-11-29]
+   - [X] Light/Dark theme toggle in settings
+   - [X] Theme preference saved to config.json
+   - [X] Theme applied on startup
+
+** DONE Navigation button styling
+   - [X] Icon-only buttons for back/forward/home
+   - [X] Programmatic icon drawing with clip.Path
+
+* Planned Features
+
+** TODO Tabs/Multi-window
+   - [ ] Tab bar for multiple directories
+   - [ ] Ctrl+T new tab
+   - [ ] Ctrl+W close tab
+   - [ ] Drag tabs to reorder
+   - [ ] Split window view (stretch goal)
+
+** TODO Favorites Management
+*** TODO Favorites Folders (Dropdown Groups)
+    - [ ] Create "Favorites Group" data structure
+    - [ ] Collapsible group headers in sidebar
+    - [ ] Drag favorites into groups
+
+** TODO View Modes
+   - [ ] Grid/icon view
+   - [ ] List view (current)
+   - [ ] Column view (macOS style)
+   - [ ] Thumbnail size options
+
+** TODO File Operations
+   - [ ] Undo/Redo for file operations
+   - [ ] Batch rename
+   - [ ] File compression (zip/tar)
+   - [ ] File extraction
+
+** TODO Keyboard Navigation
+   - [ ] Type-to-select (type filename to jump)
+   - [ ] Vim-style navigation option
+   - [ ] Customizable shortcuts
+
+** TODO Network/Remote Access
+   - [ ] FTP connection support
+   - [ ] SFTP connection support
+   - [ ] SMB/CIFS network shares
+   - [ ] WebDAV support
+
+* Known Issues / Technical Debt
+
+** TODO Context menu positioning
+   - Menu can appear off-screen near edges
+   - Consider using system-level popup windows
+
+** TODO Large directory performance
+   - Directories with 10k+ files can be slow
+   - Consider virtualized list
+
+** TODO Dialog text input focus
+   - Create New File/Folder dialog doesn't auto-focus the text input
+   - User has to click in the textbox before typing
+
+** TODO Error Handling
+   - [ ] User-friendly error messages (toast notifications)
+   - [ ] Error notification system
+   - [ ] Logging improvements

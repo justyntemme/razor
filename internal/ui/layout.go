@@ -110,6 +110,11 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 					return r.layoutConfigErrorBanner(gtx)
 				}),
 
+				// Browser tab bar (if tabs are enabled)
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return r.layoutBrowserTabBar(gtx, state, &eventOut)
+				}),
+
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					// Track vertical offset: File button (~32dp) + navbar (~44dp) + insets (~16dp) ≈ 92dp
 					verticalOffset := gtx.Dp(92)
@@ -383,7 +388,8 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 			}
 
 			// Only show/fetch history when search box is focused
-			if r.searchEditorFocused {
+			// AND we haven't already set a search event (don't overwrite search-as-you-type)
+			if r.searchEditorFocused && eventOut.Action == ActionNone {
 				// Request search history when text changes OR when we haven't fetched yet
 				needsHistoryFetch := currentText != r.lastHistoryQuery ||
 					(currentText == "" && len(r.searchHistoryItems) == 0)
@@ -392,7 +398,7 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 					r.searchHistoryVisible = true
 					*eventOut = UIEvent{Action: ActionRequestSearchHistory, SearchHistoryQuery: currentText}
 				}
-			} else {
+			} else if !r.searchEditorFocused {
 				// Hide history when search box loses focus
 				r.searchHistoryVisible = false
 			}
@@ -1311,13 +1317,155 @@ func (r *Renderer) menuItemDanger(gtx layout.Context, btn *widget.Clickable, lab
 	return r.menuItemWithColor(gtx, btn, label, colDanger)
 }
 
+// layoutBrowserTabBar renders the browser tab bar with tabs and close buttons
+func (r *Renderer) layoutBrowserTabBar(gtx layout.Context, state *State, eventOut *UIEvent) layout.Dimensions {
+	if !r.tabsEnabled || len(r.browserTabs) == 0 {
+		return layout.Dimensions{}
+	}
+
+	tabHeight := gtx.Dp(32)
+	tabMinWidth := gtx.Dp(120)
+	tabMaxWidth := gtx.Dp(200)
+	closeSize := gtx.Dp(16)
+
+	// Background
+	bgRect := clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, tabHeight)}
+	paint.FillShape(gtx.Ops, colSidebar, bgRect.Op())
+
+	// Process tab clicks and close button clicks
+	for i := range r.browserTabs {
+		if r.browserTabs[i].tabBtn.Clicked(gtx) {
+			if i != r.activeTabIndex {
+				*eventOut = UIEvent{Action: ActionSwitchTab, TabIndex: i}
+			}
+		}
+		if r.browserTabs[i].closeBtn.Clicked(gtx) {
+			*eventOut = UIEvent{Action: ActionCloseTab, TabIndex: i}
+		}
+	}
+
+	// Layout tabs horizontally
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, r.browserTabChildren(gtx, tabHeight, tabMinWidth, tabMaxWidth, closeSize)...)
+		}),
+	)
+}
+
+// browserTabChildren creates flex children for each browser tab
+func (r *Renderer) browserTabChildren(gtx layout.Context, tabHeight, tabMinWidth, tabMaxWidth, closeSize int) []layout.FlexChild {
+	children := make([]layout.FlexChild, len(r.browserTabs))
+	padding := gtx.Dp(24) // Left padding (8) + right padding (4) + close button space (12)
+
+	for i := range r.browserTabs {
+		idx := i
+		tab := &r.browserTabs[i]
+		isActive := idx == r.activeTabIndex
+
+		children[idx] = layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			// Tab background
+			bgColor := colSidebar
+			if isActive {
+				bgColor = colWhite
+			}
+
+			title := tab.Title
+			if title == "" {
+				title = "New Tab"
+			}
+
+			// Measure text width to size tab appropriately
+			lbl := material.Body2(r.Theme, title)
+			if isActive {
+				lbl.Font.Weight = 600
+			}
+			macro := op.Record(gtx.Ops)
+			dims := lbl.Layout(gtx)
+			macro.Stop()
+
+			// Calculate tab width based on text + padding + close button
+			tabWidth := dims.Size.X + padding + closeSize
+			if tabWidth < tabMinWidth {
+				tabWidth = tabMinWidth
+			}
+			if tabWidth > tabMaxWidth {
+				tabWidth = tabMaxWidth
+			}
+
+			return material.Clickable(gtx, &tab.tabBtn, func(gtx layout.Context) layout.Dimensions {
+				// Draw background
+				rect := clip.Rect{Max: image.Pt(tabWidth, tabHeight)}
+				paint.FillShape(gtx.Ops, bgColor, rect.Op())
+
+				// Draw bottom border for inactive tabs
+				if !isActive {
+					stack := op.Offset(image.Pt(0, tabHeight-1)).Push(gtx.Ops)
+					borderRect := clip.Rect{Max: image.Pt(tabWidth, 1)}
+					paint.FillShape(gtx.Ops, colLightGray, borderRect.Op())
+					stack.Pop()
+				}
+
+				// Draw right border between tabs
+				stack := op.Offset(image.Pt(tabWidth-1, 0)).Push(gtx.Ops)
+				borderRect := clip.Rect{Max: image.Pt(1, tabHeight)}
+				paint.FillShape(gtx.Ops, colLightGray, borderRect.Op())
+				stack.Pop()
+
+				// Tab content: title + close button
+				layout.Inset{Left: unit.Dp(8), Right: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						// Tab title
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Body2(r.Theme, title)
+							lbl.Color = colBlack
+							if isActive {
+								lbl.Font.Weight = 600
+							}
+							return lbl.Layout(gtx)
+						}),
+						// Spacer
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return layout.Spacer{Width: unit.Dp(4)}.Layout(gtx)
+						}),
+						// Close button
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return material.Clickable(gtx, &tab.closeBtn, func(gtx layout.Context) layout.Dimensions {
+								// Draw X
+								centerX := float32(closeSize) / 2
+								centerY := float32(closeSize) / 2
+								armLen := float32(closeSize) / 4
+
+								xColor := colGray
+								// Draw X lines
+								var p clip.Path
+								p.Begin(gtx.Ops)
+								p.MoveTo(f32.Pt(centerX-armLen, centerY-armLen))
+								p.LineTo(f32.Pt(centerX+armLen, centerY+armLen))
+								p.MoveTo(f32.Pt(centerX+armLen, centerY-armLen))
+								p.LineTo(f32.Pt(centerX-armLen, centerY+armLen))
+								paint.FillShape(gtx.Ops, xColor, clip.Stroke{Path: p.End(), Width: 1.5}.Op())
+
+								return layout.Dimensions{Size: image.Pt(closeSize, closeSize)}
+							})
+						}),
+					)
+				})
+
+				return layout.Dimensions{Size: image.Pt(tabWidth, tabHeight)}
+			})
+		})
+	}
+
+	return children
+}
+
 func (r *Renderer) layoutFileMenu(gtx layout.Context, eventOut *UIEvent) layout.Dimensions {
 	if !r.fileMenuOpen {
 		return layout.Dimensions{}
 	}
 	defer op.Offset(image.Pt(8, 30)).Push(gtx.Ops).Pop()
 	return r.menuShell(gtx, 160, func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		children := []layout.FlexChild{
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				if r.newWindowBtn.Clicked(gtx) {
 					r.onLeftClick()
@@ -1325,6 +1473,17 @@ func (r *Renderer) layoutFileMenu(gtx layout.Context, eventOut *UIEvent) layout.
 				}
 				return r.menuItem(gtx, &r.newWindowBtn, "New Window")
 			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				if r.newTabBtn.Clicked(gtx) {
+					r.onLeftClick()
+					*eventOut = UIEvent{Action: ActionNewTab}
+				}
+				return r.menuItem(gtx, &r.newTabBtn, "New Tab")
+			}),
+		}
+
+		// Separator and Settings
+		children = append(children,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					height := gtx.Dp(unit.Dp(1))
@@ -1340,6 +1499,8 @@ func (r *Renderer) layoutFileMenu(gtx layout.Context, eventOut *UIEvent) layout.
 				return r.menuItem(gtx, &r.settingsBtn, "Settings")
 			}),
 		)
+
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 	})
 }
 
@@ -1433,6 +1594,10 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, state *State, eventOut 
 		}
 		*eventOut = UIEvent{Action: action, Path: r.menuPath}
 	}
+	if r.openInNewTabBtn.Clicked(gtx) {
+		r.menuVisible = false
+		*eventOut = UIEvent{Action: ActionOpenInNewTab, Path: r.menuPath}
+	}
 
 	// Background menu (right-click on empty space) shows limited options
 	if r.menuIsBackground {
@@ -1479,6 +1644,13 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, state *State, eventOut 
 					return layout.Dimensions{}
 				}
 				return r.menuItem(gtx, &r.openWithBtn, "Open With...")
+			}),
+			// "Open in New Tab" only shown for directories
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				if !r.menuIsDir {
+					return layout.Dimensions{}
+				}
+				return r.menuItem(gtx, &r.openInNewTabBtn, "Open in New Tab")
 			}),
 			// "Open file location" only shown when viewing recent files
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
