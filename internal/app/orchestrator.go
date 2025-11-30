@@ -347,6 +347,13 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		// Save setting to database
 		o.store.RequestChan <- store.Request{Op: store.SaveSetting, Key: "default_depth", Value: itoa(evt.DefaultDepth)}
 		log.Printf("[SETTINGS] Changed default depth to: %d", evt.DefaultDepth)
+	case ui.ActionChangeTheme:
+		val := "false"
+		if evt.DarkMode {
+			val = "true"
+		}
+		o.store.RequestChan <- store.Request{Op: store.SaveSetting, Key: "dark_mode", Value: val}
+		log.Printf("[SETTINGS] Changed theme to dark mode: %v", evt.DarkMode)
 	}
 }
 
@@ -673,6 +680,12 @@ func (o *Orchestrator) handleStoreResponse(resp store.Response) {
 				o.ui.SetDefaultDepth(depth)
 				log.Printf("[SETTINGS] Loaded default depth: %d", depth)
 			}
+		}
+		// Load dark mode setting
+		if val, ok := resp.Settings["dark_mode"]; ok {
+			darkMode := val == "true"
+			o.ui.SetDarkMode(darkMode)
+			log.Printf("[SETTINGS] Loaded dark mode: %v", darkMode)
 		}
 	}
 	o.window.Invalidate()
