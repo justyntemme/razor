@@ -235,12 +235,10 @@
 
 *** Keep in SQLite (store.DB):
     - Search history (append-only, searchable, limitable)
-
-*** Future SQLite expansion (if needed):
     - Recent files/directories (queryable by date, path)
     - File tags/labels (many-to-many relationships)
-    - Cached thumbnails metadata
-    - Full-text search index
+    - Cached metadata (thumbnails, directory sizes)
+    - Future: full-text search index
 
 ** TODO PRIORITY 2: Composable Sidebar UI
    Make the sidebar layout configurable, allowing users to choose between:
@@ -284,12 +282,47 @@
     - Auto-complete: Match prefix against stored queries
     - Prune old entries periodically (keep last N or last 30 days)
 
-*** Future SQLite Features (lower priority):
-    - Recent files/directories (queryable by date, path)
-    - File tags/labels (many-to-many relationships)
-    - Cached metadata (thumbnails, directory sizes)
+** TODO PRIORITY 4: Recent Files/Directories (SQLite)
+   Track recently accessed paths for quick navigation.
 
-** TODO PRIORITY 4: Refactor orchestrator.go into logical sub-files
+*** Features:
+    - Track recently opened files and directories
+    - "Recent" section in sidebar or quick-access menu
+    - Configurable history length (in config.json)
+    - Clear history option
+
+*** Implementation:
+    - Table: recent_paths (id, path, type, timestamp, access_count)
+    - Query: SELECT * FROM recent_paths ORDER BY timestamp DESC LIMIT N
+
+** TODO PRIORITY 5: File Tags/Labels (SQLite)
+   User-defined tags for organizing files and folders.
+
+*** Features:
+    - Create custom tags with colors
+    - Apply multiple tags to files/folders
+    - Filter/search by tags
+    - Tag management UI
+
+*** Implementation:
+    - Table: tags (id, name, color)
+    - Table: file_tags (id, path, tag_id) - many-to-many
+    - Query by tag: SELECT path FROM file_tags WHERE tag_id = ?
+
+** TODO PRIORITY 6: Cached Metadata (SQLite)
+   Cache expensive-to-compute metadata for performance.
+
+*** Features:
+    - Thumbnail cache references (path to cached thumbnail)
+    - Directory size cache (for large directories)
+    - File preview cache metadata
+
+*** Implementation:
+    - Table: thumbnail_cache (id, path, thumb_path, mtime, size)
+    - Table: dir_size_cache (id, path, size_bytes, file_count, cached_at)
+    - Invalidate on mtime change
+
+** TODO PRIORITY 7: Refactor orchestrator.go into logical sub-files
    Split the monolithic orchestrator.go into separate files within the same package.
    This keeps all code in internal/app without import changes.
 
