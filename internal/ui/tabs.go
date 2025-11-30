@@ -5,6 +5,7 @@ import (
 	"image/color"
 
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
@@ -22,6 +23,8 @@ const (
 	TabStylePill
 	// TabStyleSegmented shows segmented control style (for future use)
 	TabStyleSegmented
+	// TabStyleManila shows vertical manila folder tabs on the left side
+	TabStyleManila
 )
 
 // Tab represents a single tab in a TabBar
@@ -115,6 +118,8 @@ func (tb *TabBar) Layout(gtx layout.Context, theme *material.Theme) (layout.Dime
 		dims = tb.layoutPillStyle(gtx, theme)
 	case TabStyleSegmented:
 		dims = tb.layoutSegmentedStyle(gtx, theme)
+	case TabStyleManila:
+		dims = tb.layoutManilaStyle(gtx, theme)
 	default:
 		dims = tb.layoutUnderlineStyle(gtx, theme)
 	}
@@ -270,4 +275,139 @@ func (tb *TabBar) tabFlexChildrenPill(gtx layout.Context, theme *material.Theme,
 	}
 
 	return children
+}
+
+// layoutManilaStyle renders vertical manila folder tabs on the left side
+// Tabs are stacked vertically with no overlap, with rotated text
+func (tb *TabBar) layoutManilaStyle(gtx layout.Context, theme *material.Theme) layout.Dimensions {
+	tabWidth := gtx.Dp(32)    // Width of the tab (narrow since text is rotated)
+	tabHeight := gtx.Dp(90)   // Height of each tab (tall for vertical text)
+	gap := gtx.Dp(2)          // Gap between tabs
+	cornerRadius := gtx.Dp(6)
+
+	// Manila folder colors
+	manilaActive := color.NRGBA{R: 245, G: 222, B: 179, A: 255}   // Warm manila/buff color
+	manilaInactive := color.NRGBA{R: 230, G: 215, B: 185, A: 255} // Slightly lighter manila
+	borderColor := color.NRGBA{R: 180, G: 160, B: 120, A: 255}    // Brown border
+
+	totalHeight := len(tb.Tabs)*tabHeight + (len(tb.Tabs)-1)*gap
+
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, tb.manilaTabChildren(gtx, theme, tabWidth, tabHeight, gap, cornerRadius, manilaActive, manilaInactive, borderColor, totalHeight)...)
+}
+
+// manilaTabChildren creates flex children for manila tabs
+func (tb *TabBar) manilaTabChildren(gtx layout.Context, theme *material.Theme, tabWidth, tabHeight, gap, cornerRadius int, activeColor, inactiveColor, borderColor color.NRGBA, totalHeight int) []layout.FlexChild {
+	children := make([]layout.FlexChild, 0, len(tb.Tabs)*2)
+
+	for i := range tb.Tabs {
+		idx := i
+		tab := &tb.Tabs[i]
+		isSelected := idx == tb.Selected
+
+		// Add tab
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			// Set constraints
+			gtx.Constraints.Min = image.Pt(tabWidth, tabHeight)
+			gtx.Constraints.Max = image.Pt(tabWidth, tabHeight)
+
+			return material.Clickable(gtx, &tab.btn, func(gtx layout.Context) layout.Dimensions {
+				// Tab background color
+				bgColor := inactiveColor
+				if isSelected {
+					bgColor = activeColor
+				}
+
+				// Draw the manila tab shape (rounded on left side only)
+				tabRect := image.Rect(0, 0, tabWidth, tabHeight)
+				rr := clip.RRect{
+					Rect: tabRect,
+					NW:   cornerRadius,
+					SW:   cornerRadius,
+					NE:   0,
+					SE:   0,
+				}
+				paint.FillShape(gtx.Ops, bgColor, rr.Op(gtx.Ops))
+
+				// Draw border on inactive tabs
+				if !isSelected {
+					// Top border
+					topBorder := clip.Rect{Max: image.Pt(tabWidth, 1)}
+					paint.FillShape(gtx.Ops, borderColor, topBorder.Op())
+					// Left border
+					leftBorder := clip.Rect{Max: image.Pt(1, tabHeight)}
+					paint.FillShape(gtx.Ops, borderColor, leftBorder.Op())
+					// Bottom border
+					defer op.Offset(image.Pt(0, tabHeight-1)).Push(gtx.Ops).Pop()
+					bottomBorder := clip.Rect{Max: image.Pt(tabWidth, 1)}
+					paint.FillShape(gtx.Ops, borderColor, bottomBorder.Op())
+				} else {
+					// Selected tab gets a highlight on the left edge
+					highlightColor := color.NRGBA{R: 139, G: 90, B: 43, A: 255} // Darker brown
+					leftHighlight := clip.Rect{Max: image.Pt(3, tabHeight)}
+					paint.FillShape(gtx.Ops, highlightColor, leftHighlight.Op())
+				}
+
+				// Draw vertical text using rotation
+				// Position at center of tab, then rotate
+				centerX := tabWidth / 2
+				centerY := tabHeight / 2
+
+				// Create rotated text by drawing each character vertically
+				labelText := tab.Label
+				textColor := color.NRGBA{R: 100, G: 80, B: 50, A: 255} // Medium brown
+				if isSelected {
+					textColor = color.NRGBA{R: 60, G: 40, B: 20, A: 255} // Dark brown
+				}
+
+				// Draw text character by character vertically
+				charHeight := gtx.Dp(12)
+				startY := centerY - (len(labelText)*charHeight)/2
+
+				for j, ch := range labelText {
+					charY := startY + j*charHeight
+					func() {
+						defer op.Offset(image.Pt(centerX-gtx.Dp(5), charY)).Push(gtx.Ops).Pop()
+						lbl := material.Body2(theme, string(ch))
+						lbl.Color = textColor
+						lbl.TextSize = unit.Sp(11)
+						if isSelected {
+							lbl.Font.Weight = 600
+						}
+						lbl.Layout(gtx)
+					}()
+				}
+
+				return layout.Dimensions{Size: image.Pt(tabWidth, tabHeight)}
+			})
+		}))
+
+		// Add gap between tabs (except after last)
+		if i < len(tb.Tabs)-1 {
+			children = append(children, layout.Rigid(layout.Spacer{Height: unit.Dp(float32(gap) / float32(gtx.Metric.PxPerDp))}.Layout))
+		}
+	}
+
+	return children
+}
+
+// LayoutVertical renders the tab bar vertically (for use alongside content)
+// This is useful for manila-style tabs where tabs are on the side
+func (tb *TabBar) LayoutVertical(gtx layout.Context, theme *material.Theme) (layout.Dimensions, bool) {
+	changed := false
+
+	// Check for tab clicks
+	for i := range tb.Tabs {
+		if tb.Tabs[i].btn.Clicked(gtx) {
+			if tb.Selected != i {
+				tb.Selected = i
+				changed = true
+				if tb.OnTabChanged != nil {
+					tb.OnTabChanged(i, tb.Tabs[i].ID)
+				}
+			}
+		}
+	}
+
+	dims := tb.layoutManilaStyle(gtx, theme)
+	return dims, changed
 }

@@ -6,11 +6,13 @@ import (
 	"github.com/justyntemme/razor/internal/debug"
 	"github.com/justyntemme/razor/internal/fs"
 	"github.com/justyntemme/razor/internal/search"
+	"github.com/justyntemme/razor/internal/store"
 )
 
 // doSearch performs a search with the given query
-func (o *Orchestrator) doSearch(query string) {
-	debug.Log(debug.SEARCH, "doSearch: query=%q", query)
+// submitted indicates if the user pressed Enter (true) or if this is search-as-you-type (false)
+func (o *Orchestrator) doSearch(query string, submitted bool) {
+	debug.Log(debug.SEARCH, "doSearch: query=%q submitted=%v", query, submitted)
 	o.state.SelectedIndex = -1
 
 	// Empty query clears the search and restores directory
@@ -70,6 +72,16 @@ func (o *Orchestrator) doSearch(query string) {
 
 	// Increment generation for this search (atomic)
 	gen := o.searchGen.Add(1)
+
+	// Save search to history ONLY when submitted via Enter (not search-as-you-type)
+	// Also only save meaningful queries (2+ chars)
+	if submitted && len(query) >= 2 {
+		o.store.RequestChan <- store.Request{
+			Op:    store.AddSearchHistory,
+			Query: query,
+		}
+		debug.Log(debug.SEARCH, "doSearch: saved to history: %q", query)
+	}
 
 	debug.Log(debug.SEARCH, "doSearch: sending request path=%q gen=%d engine=%d depth=%d",
 		o.state.CurrentPath, gen, o.selectedEngine, o.defaultDepth)

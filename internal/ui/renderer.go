@@ -59,6 +59,9 @@ const (
 	ActionChangeSearchEngine
 	ActionChangeDefaultDepth
 	ActionChangeTheme
+	// Search history
+	ActionRequestSearchHistory
+	ActionSelectSearchHistory
 )
 
 type ClipOp int
@@ -115,19 +118,21 @@ type Clipboard struct {
 }
 
 type UIEvent struct {
-	Action        UIAction
-	Path          string
-	OldPath       string // Original path for rename operations
-	NewIndex      int
-	SortColumn    SortColumn
-	SortAscending bool
-	ShowDotfiles  bool
-	ClipOp        ClipOp
-	FileName      string
-	AppPath       string
-	SearchEngine  string // Selected search engine ID
-	DefaultDepth  int    // Default recursive search depth
-	DarkMode      bool   // Theme dark mode setting
+	Action             UIAction
+	Path               string
+	OldPath            string // Original path for rename operations
+	NewIndex           int
+	SortColumn         SortColumn
+	SortAscending      bool
+	ShowDotfiles       bool
+	ClipOp             ClipOp
+	FileName           string
+	AppPath            string
+	SearchEngine       string // Selected search engine ID
+	DefaultDepth       int    // Default recursive search depth
+	DarkMode           bool   // Theme dark mode setting
+	SearchHistoryQuery string // For fetching/selecting search history
+	SearchSubmitted    bool   // True if search was submitted via Enter, not typed
 }
 
 type UIEntry struct {
@@ -156,6 +161,12 @@ type ProgressState struct {
 type DriveItem struct {
 	Name, Path string
 	Clickable  widget.Clickable
+}
+
+// SearchHistoryItem represents a search history entry for UI display
+type SearchHistoryItem struct {
+	Query string
+	Score float64
 }
 
 // DetectedDirective represents a parsed search directive for visual display
@@ -310,6 +321,16 @@ type Renderer struct {
 	// Theme settings
 	DarkMode      bool
 	darkModeCheck widget.Bool
+
+	// Config error banner
+	ConfigError string // Non-empty if config.json failed to parse
+
+	// Search history dropdown
+	searchHistoryVisible  bool
+	searchHistoryItems    []SearchHistoryItem
+	searchHistoryBtns     [3]widget.Clickable // Up to 3 items
+	searchBoxClicked      bool                // Track if search box was clicked
+	lastHistoryQuery      string              // Track last query we fetched history for
 }
 
 var (
@@ -329,6 +350,9 @@ var (
 	colAccent    = color.NRGBA{R: 66, G: 133, B: 244, A: 255}
 	colDirective = color.NRGBA{R: 103, G: 58, B: 183, A: 255}  // Purple for directives
 	colDirectiveBg = color.NRGBA{R: 237, G: 231, B: 246, A: 255} // Light purple background
+	// Config error banner colors
+	colErrorBannerBg   = color.NRGBA{R: 220, G: 53, B: 69, A: 255}   // Red background
+	colErrorBannerText = color.NRGBA{R: 139, G: 69, B: 0, A: 255}    // Dark orange text (readable on red)
 )
 
 func NewRenderer() *Renderer {
@@ -338,13 +362,13 @@ func NewRenderer() *Renderer {
 	r.driveState.Axis = layout.Vertical
 	r.sidebarScroll.Axis = layout.Vertical
 
-	// Initialize sidebar tabs
+	// Initialize sidebar tabs (default to manila, can be changed via SetSidebarTabStyle)
 	r.sidebarTabs = NewTabBar(
 		Tab{Label: "Favorites", ID: "favorites"},
 		Tab{Label: "Drives", ID: "drives"},
 	)
-	r.sidebarTabs.Style = TabStyleUnderline
-	r.sidebarTabs.Distribute = true
+	r.sidebarTabs.Style = TabStyleManila
+	r.sidebarTabs.Distribute = false
 	r.pathEditor.SingleLine, r.pathEditor.Submit = true, true
 	r.searchEditor.SingleLine, r.searchEditor.Submit = true, true
 	r.createDialogEditor.SingleLine, r.createDialogEditor.Submit = true, true
@@ -369,6 +393,44 @@ func (r *Renderer) SetDarkMode(dark bool) {
 	r.DarkMode = dark
 	r.darkModeCheck.Value = dark
 	r.applyTheme()
+}
+
+// SetConfigError sets the config error message to display in the banner
+func (r *Renderer) SetConfigError(err string) {
+	r.ConfigError = err
+}
+
+// SetSearchHistory updates the search history dropdown items
+func (r *Renderer) SetSearchHistory(items []SearchHistoryItem) {
+	r.searchHistoryItems = items
+}
+
+// ShowSearchHistory shows the search history dropdown
+func (r *Renderer) ShowSearchHistory() {
+	r.searchHistoryVisible = true
+}
+
+// HideSearchHistory hides the search history dropdown
+func (r *Renderer) HideSearchHistory() {
+	r.searchHistoryVisible = false
+}
+
+// SetSidebarTabStyle sets the sidebar tab style based on config
+// Valid values: "manila", "underline", "pill"
+func (r *Renderer) SetSidebarTabStyle(style string) {
+	switch style {
+	case "underline":
+		r.sidebarTabs.Style = TabStyleUnderline
+		r.sidebarTabs.Distribute = true
+	case "pill":
+		r.sidebarTabs.Style = TabStylePill
+		r.sidebarTabs.Distribute = true
+	case "manila":
+		fallthrough
+	default:
+		r.sidebarTabs.Style = TabStyleManila
+		r.sidebarTabs.Distribute = false
+	}
 }
 
 func (r *Renderer) applyTheme() {

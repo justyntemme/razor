@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +14,7 @@ import (
 	"gioui.org/app"
 	"gioui.org/op"
 
+	"github.com/justyntemme/razor/internal/config"
 	"github.com/justyntemme/razor/internal/debug"
 	"github.com/justyntemme/razor/internal/fs"
 	"github.com/justyntemme/razor/internal/search"
@@ -28,6 +28,7 @@ type Orchestrator struct {
 	window         *app.Window
 	fs             *fs.System
 	store          *store.DB
+	config         *config.Manager // Config manager for settings
 	ui             *ui.Renderer
 	stateMu        sync.RWMutex // Protects state from concurrent read/write
 	state          ui.State
@@ -61,6 +62,13 @@ type Orchestrator struct {
 func NewOrchestrator() *Orchestrator {
 	home, _ := os.UserHomeDir()
 
+	// Initialize config manager and load config
+	cfgMgr := config.NewManager()
+	if err := cfgMgr.Load(); err != nil {
+		log.Printf("Warning: Failed to load config: %v", err)
+	}
+	cfg := cfgMgr.Get()
+
 	// Detect available search engines
 	engines := search.DetectEngines()
 
@@ -80,23 +88,66 @@ func NewOrchestrator() *Orchestrator {
 		window:           new(app.Window),
 		fs:               fs.NewSystem(),
 		store:            store.NewDB(),
+		config:           cfgMgr,
 		ui:               ui.NewRenderer(),
 		state:            ui.State{SelectedIndex: -1, Favorites: make(map[string]bool)},
 		historyIndex:     -1,
-		sortAsc:          true,
+		sortAsc:          cfg.UI.FileList.SortAscending,
+		showDotfiles:     cfg.UI.FileList.ShowDotfiles,
 		homePath:         home,
 		conflictResponse: make(chan ui.ConflictResolution, 1),
 		searchEngines:    engines,
 		selectedEngine:   search.EngineBuiltin,
-		defaultDepth:     2, // Default recursive depth
+		defaultDepth:     cfg.Search.DefaultDepth,
 	}
 
 	// Set up UI with detected engines
 	o.ui.SearchEngines = uiEngines
-	o.ui.SetSearchEngine("builtin")
-	o.ui.SetDefaultDepth(2)
+
+	// Apply config to UI
+	o.ui.ShowDotfiles = cfg.UI.FileList.ShowDotfiles
+	o.ui.SetShowDotfilesCheck(cfg.UI.FileList.ShowDotfiles)
+	o.ui.SetDefaultDepth(cfg.Search.DefaultDepth)
+	o.ui.SetDarkMode(cfg.UI.Theme == "dark")
+	o.ui.SetSidebarTabStyle(cfg.UI.Sidebar.TabStyle)
+
+	// Set search engine from config
+	o.handleSearchEngineChange(cfg.Search.Engine)
+
+	// Set config error banner if config failed to parse
+	if parseErr := cfgMgr.ParseError(); parseErr != nil {
+		o.ui.SetConfigError(parseErr.Error())
+	}
+
+	// Load favorites from config into state
+	o.loadFavoritesFromConfig()
 
 	return o
+}
+
+// loadFavoritesFromConfig loads favorites from config.json into the state
+func (o *Orchestrator) loadFavoritesFromConfig() {
+	favorites := o.config.GetFavorites()
+	o.state.Favorites = make(map[string]bool)
+	o.state.FavList = make([]ui.FavoriteItem, 0, len(favorites))
+
+	for _, fav := range favorites {
+		// Skip groups for now (flat list only)
+		if fav.Type == "group" {
+			// TODO: Handle favorite groups in the future
+			continue
+		}
+		// Expand ~ in path
+		path := fav.Path
+		if len(path) > 0 && path[0] == '~' {
+			path = filepath.Join(o.homePath, path[1:])
+		}
+		o.state.Favorites[path] = true
+		o.state.FavList = append(o.state.FavList, ui.FavoriteItem{
+			Path: path,
+			Name: fav.Name,
+		})
+	}
 }
 
 func (o *Orchestrator) Run(startPath string) error {
@@ -105,6 +156,7 @@ func (o *Orchestrator) Run(startPath string) error {
 		debug.Log(debug.APP, "Debug categories enabled: %v", debug.ListEnabled())
 	}
 
+	// Database is still used for search history (future)
 	configDir, _ := os.UserConfigDir()
 	dbPath := filepath.Join(configDir, "razor", "razor.db")
 	debug.Log(debug.APP, "Opening database: %s", dbPath)
@@ -117,8 +169,8 @@ func (o *Orchestrator) Run(startPath string) error {
 	go o.store.Start()
 	go o.processEvents()
 
-	o.store.RequestChan <- store.Request{Op: store.FetchFavorites}
-	o.store.RequestChan <- store.Request{Op: store.FetchSettings}
+	// Favorites are now loaded from config.json in NewOrchestrator
+	// Settings are also loaded from config.json
 
 	// Load drives
 	o.refreshDrives()
@@ -195,7 +247,7 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		o.state.SelectedIndex = evt.NewIndex
 		o.window.Invalidate()
 	case ui.ActionSearch:
-		o.doSearch(evt.Path)
+		o.doSearch(evt.Path, evt.SearchSubmitted)
 	case ui.ActionOpen:
 		if err := platformOpen(evt.Path); err != nil {
 			log.Printf("Error opening file: %v", err)
@@ -211,20 +263,23 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 			log.Printf("Error opening with app: %v", err)
 		}
 	case ui.ActionAddFavorite:
-		o.store.RequestChan <- store.Request{Op: store.AddFavorite, Path: evt.Path}
+		// Add favorite to config.json
+		name := filepath.Base(evt.Path)
+		o.config.AddFavorite(name, evt.Path)
+		o.loadFavoritesFromConfig()
+		o.window.Invalidate()
 	case ui.ActionRemoveFavorite:
-		o.store.RequestChan <- store.Request{Op: store.RemoveFavorite, Path: evt.Path}
+		// Remove favorite from config.json
+		o.config.RemoveFavorite(evt.Path)
+		o.loadFavoritesFromConfig()
+		o.window.Invalidate()
 	case ui.ActionSort:
 		o.sortColumn, o.sortAsc = evt.SortColumn, evt.SortAscending
 		o.applyFilterAndSort()
 		o.window.Invalidate()
 	case ui.ActionToggleDotfiles:
 		o.showDotfiles = evt.ShowDotfiles
-		val := "false"
-		if o.showDotfiles {
-			val = "true"
-		}
-		o.store.RequestChan <- store.Request{Op: store.SaveSetting, Key: "show_dotfiles", Value: val}
+		o.config.SetShowDotfiles(o.showDotfiles)
 		o.applyFilterAndSort()
 		o.window.Invalidate()
 	case ui.ActionCopy:
@@ -277,21 +332,28 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		o.conflictAbort = true
 	case ui.ActionChangeSearchEngine:
 		o.handleSearchEngineChange(evt.SearchEngine)
-		// Save setting to database
-		o.store.RequestChan <- store.Request{Op: store.SaveSetting, Key: "search_engine", Value: evt.SearchEngine}
+		// Save setting to config.json
+		o.config.SetSearchEngine(evt.SearchEngine)
 	case ui.ActionChangeDefaultDepth:
 		o.defaultDepth = evt.DefaultDepth
 		o.ui.DefaultDepth = evt.DefaultDepth
-		// Save setting to database
-		o.store.RequestChan <- store.Request{Op: store.SaveSetting, Key: "default_depth", Value: strconv.Itoa(evt.DefaultDepth)}
+		// Save setting to config.json
+		o.config.SetDefaultDepth(evt.DefaultDepth)
 		debug.Log(debug.APP, "Settings: default_depth=%d", evt.DefaultDepth)
 	case ui.ActionChangeTheme:
-		val := "false"
+		theme := "light"
 		if evt.DarkMode {
-			val = "true"
+			theme = "dark"
 		}
-		o.store.RequestChan <- store.Request{Op: store.SaveSetting, Key: "dark_mode", Value: val}
-		debug.Log(debug.APP, "Settings: dark_mode=%v", evt.DarkMode)
+		o.config.SetTheme(theme)
+		debug.Log(debug.APP, "Settings: theme=%s", theme)
+	case ui.ActionRequestSearchHistory:
+		// Request search history from database
+		o.store.RequestChan <- store.Request{
+			Op:    store.FetchSearchHistory,
+			Query: evt.SearchHistoryQuery,
+			Limit: 3,
+		}
 	}
 }
 
@@ -417,41 +479,23 @@ func (o *Orchestrator) handleStoreResponse(resp store.Response) {
 
 	switch resp.Op {
 	case store.FetchFavorites:
-		o.state.Favorites = make(map[string]bool)
-		o.state.FavList = make([]ui.FavoriteItem, len(resp.Favorites))
-		for i, path := range resp.Favorites {
-			o.state.Favorites[path] = true
-			o.state.FavList[i] = ui.FavoriteItem{Path: path, Name: filepath.Base(path)}
-		}
+		// Legacy: favorites are now loaded from config.json
+		debug.Log(debug.STORE, "FetchFavorites received but favorites are now in config.json")
 	case store.FetchSettings:
-		if val, ok := resp.Settings["show_dotfiles"]; ok {
-			o.showDotfiles = val == "true"
-			o.ui.ShowDotfiles = o.showDotfiles
-			o.ui.SetShowDotfilesCheck(o.showDotfiles)
-			if len(o.rawEntries) > 0 {
-				o.applyFilterAndSort()
+		// Legacy: settings are now loaded from config.json
+		debug.Log(debug.STORE, "FetchSettings received but settings are now in config.json")
+	case store.FetchSearchHistory:
+		// Update UI with search history results
+		items := make([]ui.SearchHistoryItem, len(resp.SearchHistory))
+		for i, entry := range resp.SearchHistory {
+			items[i] = ui.SearchHistoryItem{
+				Query: entry.Query,
+				Score: entry.Score,
 			}
 		}
-		// Load search engine setting
-		if val, ok := resp.Settings["search_engine"]; ok {
-			o.handleSearchEngineChange(val)
-		}
-		// Load default depth setting
-		if val, ok := resp.Settings["default_depth"]; ok {
-			if depth, err := strconv.Atoi(val); err == nil && depth >= 1 && depth <= 20 {
-				o.defaultDepth = depth
-				o.ui.SetDefaultDepth(depth)
-				debug.Log(debug.APP, "Settings: loaded default_depth=%d", depth)
-			}
-		}
-		// Load dark mode setting
-		if val, ok := resp.Settings["dark_mode"]; ok {
-			darkMode := val == "true"
-			o.ui.SetDarkMode(darkMode)
-			debug.Log(debug.APP, "Settings: loaded dark_mode=%v", darkMode)
-		}
+		o.ui.SetSearchHistory(items)
+		o.window.Invalidate()
 	}
-	o.window.Invalidate()
 }
 
 func (o *Orchestrator) applyFilterAndSort() {
