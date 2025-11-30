@@ -232,8 +232,9 @@ type Renderer struct {
 	searchClearBtn      widget.Clickable
 	searchActive        bool
 	lastSearchQuery     string
-	detectedDirectives  []DetectedDirective // Parsed directives for visual display
-	directiveRestored   bool                // Track if we've restored directory after detecting directive
+	detectedDirectives     []DetectedDirective // Parsed directives for visual display
+	directiveRestored      bool                // Track if we've restored directory after detecting directive
+	lastParsedSearchText   string              // Cache key for directive parsing
 	menuVisible         bool
 	menuPos             image.Point
 	menuPath            string

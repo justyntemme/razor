@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/charlievieth/fastwalk"
@@ -150,30 +149,35 @@ func (s *System) Start() {
 	}
 }
 
-// Directories to skip during search (system/special directories)
-var skipDirs = map[string]bool{
-	"/dev":     true,
-	"/proc":    true,
-	"/sys":     true,
-	"/run":     true,
-	"/snap":    true,
-	"/boot":    true,
-	"/lost+found": true,
+// skipDirRoots contains top-level directories to skip (without trailing slash)
+// Using a map for O(1) lookup of exact matches and prefix checks
+var skipDirRoots = map[string]bool{
+	"dev":        true,
+	"proc":       true,
+	"sys":        true,
+	"run":        true,
+	"snap":       true,
+	"boot":       true,
+	"lost+found": true,
 }
 
-// shouldSkipPath returns true if the path should be skipped during search
+// shouldSkipPath returns true if the path should be skipped during search.
+// Optimized: extracts first path component after "/" and does single map lookup.
 func shouldSkipPath(path string) bool {
-	// Check exact matches
-	if skipDirs[path] {
-		return true
+	// Must start with "/" (Unix absolute path)
+	if len(path) < 2 || path[0] != '/' {
+		return false
 	}
-	// Check if path is under a skip directory
-	for skipDir := range skipDirs {
-		if strings.HasPrefix(path, skipDir+"/") {
-			return true
-		}
+	// Find end of first component (e.g., "/dev/foo" -> "dev")
+	rest := path[1:]
+	slashIdx := strings.IndexByte(rest, '/')
+	var firstComponent string
+	if slashIdx == -1 {
+		firstComponent = rest // No more slashes, e.g., "/dev"
+	} else {
+		firstComponent = rest[:slashIdx] // e.g., "/dev/foo" -> "dev"
 	}
-	return false
+	return skipDirRoots[firstComponent]
 }
 
 func (s *System) fetchDir(path string) Response {
@@ -187,6 +191,8 @@ func (s *System) fetchDir(path string) Response {
 		Follow: true, // Follow symlinks to get target info
 	}
 
+	pathLen := len(path)
+
 	err := fastwalk.Walk(conf, path, func(fullPath string, d fs.DirEntry, err error) error {
 		if err != nil {
 			debug.Log(debug.FS_ENTRY, "fetchDir: walk error at %q: %v", fullPath, err)
@@ -199,9 +205,14 @@ func (s *System) fetchDir(path string) Response {
 		}
 
 		// Only process direct children (depth 1)
-		// fastwalk walks recursively, so we need to skip deeper entries
-		rel, err := filepath.Rel(path, fullPath)
-		if err != nil || strings.Contains(rel, string(filepath.Separator)) {
+		// Optimized: use string slicing instead of filepath.Rel
+		// fullPath starts with path, so check if remainder has any separators
+		relStart := pathLen
+		if relStart < len(fullPath) && (fullPath[relStart] == '/' || fullPath[relStart] == '\\') {
+			relStart++
+		}
+		rel := fullPath[relStart:]
+		if strings.ContainsAny(rel, "/\\") {
 			// This is a nested entry, skip it but don't recurse into directories
 			if d.IsDir() {
 				return fastwalk.SkipDir
@@ -335,27 +346,16 @@ func (s *System) searchDir(ctx context.Context, basePath, queryStr string, gen i
 		}
 	}
 	
-	// Use builtin search
+	// Use builtin search (single-pass with streaming progress)
 	debug.Log(debug.SEARCH, "searchDir: using builtin search")
 	matcher := search.NewMatcherWithContext(ctx, query)
 
-	// First pass: count total files/bytes for progress (skip if cancelled)
-	var totalFiles int
-	var totalBytes int64
-	if query.HasContentSearch() {
-		totalFiles, totalBytes = s.countFiles(ctx, basePath, maxDepth)
-		if ctx.Err() != nil {
-			debug.Log(debug.SEARCH, "searchDir: file counting cancelled")
-			return Response{Op: SearchDir, Path: basePath, Cancelled: true}
-		}
-		debug.Log(debug.SEARCH, "searchDir: counted %d files, %d bytes to search", totalFiles, totalBytes)
-	}
-
-	// Create progress tracker
+	// Create progress tracker with streaming/indeterminate progress
+	// (no longer doing a separate count pass - use single walk)
 	progress := &searchProgress{
 		gen:        gen,
-		totalFiles: totalFiles,
-		totalBytes: totalBytes,
+		totalFiles: 0, // Will use indeterminate progress
+		totalBytes: 0,
 		progressCh: s.ProgressChan,
 	}
 
@@ -517,70 +517,6 @@ func (p *searchProgress) report(label string) {
 	}
 }
 
-func (s *System) countFiles(ctx context.Context, path string, maxDepth int) (fileCount int, byteCount int64) {
-	debug.Log(debug.FS, "countFiles: path=%q maxDepth=%d", path, maxDepth)
-
-	var files int64
-	var bytes int64
-
-	conf := &fastwalk.Config{
-		Follow: true,
-	}
-
-	fastwalk.Walk(conf, path, func(fullPath string, d fs.DirEntry, err error) error {
-		// Check for cancellation
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-
-		if err != nil {
-			return nil // Skip errors
-		}
-
-		// Skip the root itself
-		if fullPath == path {
-			return nil
-		}
-
-		// Skip system directories
-		if shouldSkipPath(fullPath) {
-			if d.IsDir() {
-				return fastwalk.SkipDir
-			}
-			return nil
-		}
-
-		// Check depth limit
-		depth := fastwalk.DirEntryDepth(d)
-		if depth > maxDepth {
-			if d.IsDir() {
-				return fastwalk.SkipDir
-			}
-			return nil
-		}
-
-		// Only count regular files
-		if !d.IsDir() {
-			info, err := fastwalk.StatDirEntry(fullPath, d)
-			if err != nil {
-				return nil
-			}
-			// Only count regular files that would be searched (skip large files)
-			if info.Mode().IsRegular() && info.Size() <= 10*1024*1024 {
-				atomic.AddInt64(&files, 1)
-				atomic.AddInt64(&bytes, info.Size())
-			}
-		}
-
-		return nil
-	})
-
-	fileCount = int(atomic.LoadInt64(&files))
-	byteCount = atomic.LoadInt64(&bytes)
-	debug.Log(debug.FS, "countFiles: found %d files, %d bytes", fileCount, byteCount)
-	return fileCount, byteCount
-}
-
 func (s *System) walkDirWithProgress(ctx context.Context, basePath string, maxDepth int, matcher *search.Matcher, progress *searchProgress) ([]Entry, error) {
 	debug.Log(debug.FS_WALK, "walkDir: starting path=%q maxDepth=%d", basePath, maxDepth)
 
@@ -643,11 +579,11 @@ func (s *System) walkDirWithProgress(ctx context.Context, basePath string, maxDe
 			return nil
 		}
 
-		// Update progress before checking file
-		if !isDir && info.Mode().IsRegular() && info.Size() <= 10*1024*1024 {
+		// Update progress for files (streaming progress - indeterminate with count)
+		if !isDir && info.Mode().IsRegular() {
 			progress.currentFiles++
 			progress.currentBytes += info.Size()
-			progress.report("Searching file contents...")
+			progress.report(fmt.Sprintf("Searched %d files...", progress.currentFiles))
 		}
 
 		// Check if this entry matches

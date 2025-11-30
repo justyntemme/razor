@@ -2,6 +2,7 @@ package app
 
 import (
 	"io"
+	iofs "io/fs"
 	"log"
 	"os"
 	"os/exec"
@@ -11,10 +12,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"gioui.org/app"
 	"gioui.org/op"
 
+	"github.com/charlievieth/fastwalk"
 	"github.com/justyntemme/razor/internal/debug"
 	"github.com/justyntemme/razor/internal/fs"
 	"github.com/justyntemme/razor/internal/search"
@@ -37,19 +41,22 @@ type Orchestrator struct {
 	dirEntries     []ui.UIEntry // Original directory entries (never overwritten by search)
 	progressMu     sync.Mutex
 	homePath       string
-	searchGen      int64 // Tracks search generation to ignore stale results
-	searchGenMu    sync.Mutex
-	
+	searchGen      atomic.Int64 // Tracks search generation to ignore stale results (atomic for perf)
+
+	// Progress throttling - avoid flooding UI with updates
+	lastProgressUpdate time.Time
+	progressThrottleMu sync.Mutex
+
 	// Conflict resolution state
-	conflictResolution ui.ConflictResolution // Current resolution mode
-	conflictResponse   chan ui.ConflictResolution // Channel for dialog response
-	conflictAbort      bool // True if user clicked Stop
-	
+	conflictResolution ui.ConflictResolution          // Current resolution mode
+	conflictResponse   chan ui.ConflictResolution    // Channel for dialog response
+	conflictAbort      bool                          // True if user clicked Stop
+
 	// Search engine settings
-	searchEngines    []search.EngineInfo // Detected search engines
-	selectedEngine   search.SearchEngine // Currently selected engine
-	selectedEngineCmd string             // Command for the selected engine
-	defaultDepth     int                 // Default recursive search depth
+	searchEngines     []search.EngineInfo  // Detected search engines
+	selectedEngine    search.SearchEngine  // Currently selected engine
+	selectedEngineCmd string               // Command for the selected engine
+	defaultDepth      int                  // Default recursive search depth
 }
 
 func NewOrchestrator() *Orchestrator {
@@ -317,11 +324,8 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		o.state.SearchQuery = ""
 		// Clear progress bar
 		o.setProgress(false, "", 0, 0)
-		// Increment generation to invalidate any pending search results
-		o.searchGenMu.Lock()
-		o.searchGen++
-		newGen := o.searchGen
-		o.searchGenMu.Unlock()
+		// Increment generation to invalidate any pending search results (atomic)
+		newGen := o.searchGen.Add(1)
 		debug.Log(debug.APP, "ClearSearch: generation=%d", newGen)
 		// Restore from cached directory entries (no disk access needed)
 		if len(o.dirEntries) > 0 {
@@ -419,11 +423,8 @@ func (o *Orchestrator) goForward() {
 
 func (o *Orchestrator) requestDir(path string) {
 	o.state.SelectedIndex = -1
-	// Increment generation to invalidate any pending search results
-	o.searchGenMu.Lock()
-	o.searchGen++
-	gen := o.searchGen
-	o.searchGenMu.Unlock()
+	// Increment generation to invalidate any pending search results (atomic)
+	gen := o.searchGen.Add(1)
 	o.fs.RequestChan <- fs.Request{Op: fs.FetchDir, Path: path, Gen: gen}
 }
 
@@ -440,10 +441,8 @@ func (o *Orchestrator) doSearch(query string) {
 		o.state.SearchQuery = ""
 		// Clear progress bar
 		o.setProgress(false, "", 0, 0)
-		// Increment generation to invalidate any pending search results
-		o.searchGenMu.Lock()
-		o.searchGen++
-		o.searchGenMu.Unlock()
+		// Increment generation to invalidate any pending search results (atomic)
+		o.searchGen.Add(1)
 		// Restore from cached directory entries
 		if len(o.dirEntries) > 0 {
 			o.rawEntries = o.dirEntries
@@ -488,12 +487,9 @@ func (o *Orchestrator) doSearch(query string) {
 		o.setProgress(true, label, 0, 0)
 	}
 	
-	// Increment generation for this search
-	o.searchGenMu.Lock()
-	o.searchGen++
-	gen := o.searchGen
-	o.searchGenMu.Unlock()
-	
+	// Increment generation for this search (atomic)
+	gen := o.searchGen.Add(1)
+
 	debug.Log(debug.SEARCH, "doSearch: sending request path=%q gen=%d engine=%d depth=%d",
 		o.state.CurrentPath, gen, o.selectedEngine, o.defaultDepth)
 	o.fs.RequestChan <- fs.Request{
@@ -571,16 +567,24 @@ func (o *Orchestrator) processEvents() {
 }
 
 func (o *Orchestrator) handleProgress(p fs.Progress) {
-	// Check if this is for the current search
-	o.searchGenMu.Lock()
-	currentGen := o.searchGen
-	o.searchGenMu.Unlock()
-	
+	// Check if this is for the current search (atomic load)
+	currentGen := o.searchGen.Load()
+
 	if p.Gen != currentGen {
 		// Stale progress, ignore
 		return
 	}
-	
+
+	// Throttle progress updates to avoid flooding UI (100ms minimum interval)
+	o.progressThrottleMu.Lock()
+	now := time.Now()
+	if now.Sub(o.lastProgressUpdate) < 100*time.Millisecond {
+		o.progressThrottleMu.Unlock()
+		return
+	}
+	o.lastProgressUpdate = now
+	o.progressThrottleMu.Unlock()
+
 	o.setProgress(true, p.Label, p.Current, p.Total)
 	o.window.Invalidate()
 }
@@ -598,10 +602,8 @@ func (o *Orchestrator) handleFSResponse(resp fs.Response) {
 		return
 	}
 
-	// Check if this is a stale response (a newer request has been made)
-	o.searchGenMu.Lock()
-	currentGen := o.searchGen
-	o.searchGenMu.Unlock()
+	// Check if this is a stale response (a newer request has been made) - atomic load
+	currentGen := o.searchGen.Load()
 
 	if resp.Gen < currentGen {
 		// Stale response, ignore it
@@ -696,7 +698,8 @@ func (o *Orchestrator) handleStoreResponse(resp store.Response) {
 }
 
 func (o *Orchestrator) applyFilterAndSort() {
-	var entries []ui.UIEntry
+	// Pre-allocate with estimated capacity (most entries won't be dotfiles)
+	entries := make([]ui.UIEntry, 0, len(o.rawEntries))
 	for _, e := range o.rawEntries {
 		if !o.showDotfiles && strings.HasPrefix(e.Name, ".") {
 			continue
@@ -991,39 +994,86 @@ func (o *Orchestrator) copyFile(src, dst string, move bool) error {
 }
 
 func (o *Orchestrator) copyDir(src, dst string, move bool) error {
-	// Calculate total size first
-	var totalSize int64
-	filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if err == nil && !info.IsDir() {
-			totalSize += info.Size()
+	// Single-pass copy using fastwalk: count total size while building file list
+	var totalSize atomic.Int64
+	type copyItem struct {
+		srcPath string
+		dstPath string
+		isDir   bool
+		mode    iofs.FileMode
+	}
+	var items []copyItem
+	var itemsMu sync.Mutex
+
+	conf := &fastwalk.Config{Follow: true}
+	srcLen := len(src)
+
+	err := fastwalk.Walk(conf, src, func(fullPath string, d iofs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil // Skip errors, continue walking
+		}
+
+		// Get relative path from source root
+		relPath := fullPath[srcLen:]
+		if len(relPath) > 0 && (relPath[0] == '/' || relPath[0] == '\\') {
+			relPath = relPath[1:]
+		}
+		if relPath == "" {
+			return nil // Skip source root itself
+		}
+
+		dstPath := filepath.Join(dst, relPath)
+		info, err := fastwalk.StatDirEntry(fullPath, d)
+		if err != nil {
+			return nil // Skip files we can't stat
+		}
+
+		if info.IsDir() {
+			itemsMu.Lock()
+			items = append(items, copyItem{srcPath: fullPath, dstPath: dstPath, isDir: true, mode: info.Mode()})
+			itemsMu.Unlock()
+		} else {
+			totalSize.Add(info.Size())
+			itemsMu.Lock()
+			items = append(items, copyItem{srcPath: fullPath, dstPath: dstPath, isDir: false, mode: info.Mode()})
+			itemsMu.Unlock()
 		}
 		return nil
 	})
 
-	o.progressMu.Lock()
-	o.state.Progress.Total = totalSize
-	o.state.Progress.Current = 0
-	o.progressMu.Unlock()
-
-	if err := os.MkdirAll(dst, 0755); err != nil {
-		return err
-	}
-
-	entries, err := os.ReadDir(src)
 	if err != nil {
 		return err
 	}
 
-	for _, entry := range entries {
-		srcPath := filepath.Join(src, entry.Name())
-		dstPath := filepath.Join(dst, entry.Name())
+	// Set up progress with counted total
+	o.progressMu.Lock()
+	o.state.Progress.Total = totalSize.Load()
+	o.state.Progress.Current = 0
+	o.progressMu.Unlock()
 
-		if entry.IsDir() {
-			if err := o.copyDir(srcPath, dstPath, false); err != nil {
+	// Create destination root
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return err
+	}
+
+	// Process items: directories first (sorted by path length to ensure parents exist)
+	// then files
+	sort.Slice(items, func(i, j int) bool {
+		// Directories before files
+		if items[i].isDir != items[j].isDir {
+			return items[i].isDir
+		}
+		// Shorter paths first (parents before children)
+		return len(items[i].dstPath) < len(items[j].dstPath)
+	})
+
+	for _, item := range items {
+		if item.isDir {
+			if err := os.MkdirAll(item.dstPath, item.mode); err != nil {
 				return err
 			}
 		} else {
-			if err := o.copyFileWithProgress(srcPath, dstPath); err != nil {
+			if err := o.copyFileWithProgress(item.srcPath, item.dstPath); err != nil {
 				return err
 			}
 		}

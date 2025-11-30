@@ -188,9 +188,12 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 				r.searchActive = false
 			}
 			
-			// Parse directives for visual display
+			// Parse directives for visual display (cached - only re-parse when text changes)
 			currentText := strings.TrimSpace(r.searchEditor.Text())
-			r.detectedDirectives, _ = parseDirectivesForDisplay(currentText)
+			if currentText != r.lastParsedSearchText {
+				r.detectedDirectives, _ = parseDirectivesForDisplay(currentText)
+				r.lastParsedSearchText = currentText
+			}
 			
 			// Handle search editor events
 			submitPressed := false
