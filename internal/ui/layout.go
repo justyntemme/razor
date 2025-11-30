@@ -125,22 +125,43 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 
 					// Calculate file list flex weight based on preview visibility
 					if r.previewVisible {
-						// File list takes remaining space minus preview
-						fileListWeight := float32(100-r.previewWidthPct) / 100.0
-						previewWeight := float32(r.previewWidthPct) / 100.0
+						// Initialize preview width from percentage if not set
+						availableWidth := gtx.Constraints.Max.X - gtx.Dp(181) // Subtract sidebar width
+						if r.previewWidth == 0 {
+							r.previewWidth = availableWidth * r.previewWidthPct / 100
+						}
+						// Ensure preview width is within bounds
+						if r.previewWidth < r.previewResizeHandle.MinSize {
+							r.previewWidth = r.previewResizeHandle.MinSize
+						}
+						maxPreviewWidth := availableWidth - 200 // Leave at least 200px for file list
+						if r.previewResizeHandle.MaxSize > 0 && r.previewResizeHandle.MaxSize < maxPreviewWidth {
+							maxPreviewWidth = r.previewResizeHandle.MaxSize
+						}
+						if r.previewWidth > maxPreviewWidth {
+							r.previewWidth = maxPreviewWidth
+						}
 
 						children = append(children,
-							layout.Flexed(fileListWeight, func(gtx layout.Context) layout.Dimensions {
+							// File list takes remaining space
+							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 								r.fileListOffset = image.Pt(gtx.Dp(181), verticalOffset)
 								return r.layoutFileList(gtx, state, keyTag, &eventOut)
 							}),
-							// Preview divider
+							// Resize handle (draggable divider)
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								paint.FillShape(gtx.Ops, color.NRGBA{A: 50}, clip.Rect{Max: image.Pt(gtx.Dp(1), gtx.Constraints.Max.Y)}.Op())
-								return layout.Dimensions{Size: image.Pt(gtx.Dp(1), gtx.Constraints.Max.Y)}
+								style := DefaultResizeHandleStyle()
+								dims, newWidth := r.previewResizeHandle.Layout(gtx, style, r.previewWidth)
+								if newWidth != r.previewWidth {
+									r.previewWidth = newWidth
+									gtx.Execute(op.InvalidateCmd{})
+								}
+								return dims
 							}),
-							// Preview pane
-							layout.Flexed(previewWeight, func(gtx layout.Context) layout.Dimensions {
+							// Preview pane with fixed width
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								gtx.Constraints.Min.X = r.previewWidth
+								gtx.Constraints.Max.X = r.previewWidth
 								return r.layoutPreviewPane(gtx, state)
 							}),
 						)

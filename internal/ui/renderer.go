@@ -119,6 +119,137 @@ type ConflictState struct {
 	ApplyToAll  bool   // Checkbox state for "Apply to All"
 }
 
+// ResizeHandle is a reusable component for resizing containers
+// It can be placed on any edge of a container to allow drag-to-resize
+type ResizeHandle struct {
+	dragging   bool    // Whether currently being dragged
+	lastX      float32 // Last X position during drag
+	lastY      float32 // Last Y position during drag
+	Horizontal bool    // True for horizontal resize (left/right edge), false for vertical
+	MinSize    int     // Minimum size constraint
+	MaxSize    int     // Maximum size constraint (0 = no limit)
+	Inverted   bool    // True if dragging left/up should increase size
+}
+
+// ResizeHandleStyle defines the visual appearance of the resize handle
+type ResizeHandleStyle struct {
+	Width      unit.Dp     // Width/height of the handle area
+	Color      color.NRGBA // Color of the visible handle indicator
+	HoverColor color.NRGBA // Color when hovered
+}
+
+// DefaultResizeHandleStyle returns the default style for resize handles
+func DefaultResizeHandleStyle() ResizeHandleStyle {
+	return ResizeHandleStyle{
+		Width:      unit.Dp(6),
+		Color:      color.NRGBA{R: 200, G: 200, B: 200, A: 255},
+		HoverColor: color.NRGBA{R: 150, G: 150, B: 150, A: 255},
+	}
+}
+
+// Layout renders the resize handle and processes drag events.
+// Returns the new size value (or current value if not changed).
+// The caller should use this returned value to update their container size.
+func (h *ResizeHandle) Layout(gtx layout.Context, style ResizeHandleStyle, currentSize int) (layout.Dimensions, int) {
+	newSize := currentSize
+
+	// Determine handle dimensions based on orientation
+	var handleWidth, handleHeight int
+	if h.Horizontal {
+		handleWidth = gtx.Dp(style.Width)
+		handleHeight = gtx.Constraints.Max.Y
+	} else {
+		handleWidth = gtx.Constraints.Max.X
+		handleHeight = gtx.Dp(style.Width)
+	}
+
+	// Create the handle area
+	handleRect := image.Rect(0, 0, handleWidth, handleHeight)
+
+	// Process pointer events for dragging
+	// Use incremental deltas to avoid jitter from coordinate space changes
+	for {
+		ev, ok := gtx.Event(pointer.Filter{
+			Target: h,
+			Kinds:  pointer.Press | pointer.Drag | pointer.Release | pointer.Cancel,
+		})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(pointer.Event); ok {
+			switch e.Kind {
+			case pointer.Press:
+				if e.Buttons.Contain(pointer.ButtonPrimary) {
+					h.dragging = true
+					h.lastX = e.Position.X
+					h.lastY = e.Position.Y
+				}
+			case pointer.Drag:
+				if h.dragging {
+					// Calculate incremental delta since last event
+					var delta int
+					if h.Horizontal {
+						delta = int(e.Position.X - h.lastX)
+						h.lastX = e.Position.X
+					} else {
+						delta = int(e.Position.Y - h.lastY)
+						h.lastY = e.Position.Y
+					}
+					if h.Inverted {
+						delta = -delta
+					}
+					newSize = currentSize + delta
+
+					// Apply constraints
+					if h.MinSize > 0 && newSize < h.MinSize {
+						newSize = h.MinSize
+					}
+					if h.MaxSize > 0 && newSize > h.MaxSize {
+						newSize = h.MaxSize
+					}
+				}
+			case pointer.Release, pointer.Cancel:
+				h.dragging = false
+			}
+		}
+	}
+
+	// Register for pointer events
+	defer clip.Rect(handleRect).Push(gtx.Ops).Pop()
+	event.Op(gtx.Ops, h)
+
+	// Set cursor to resize cursor when hovering
+	if h.Horizontal {
+		pointer.CursorColResize.Add(gtx.Ops)
+	} else {
+		pointer.CursorRowResize.Add(gtx.Ops)
+	}
+
+	// Draw the handle indicator (a thin line in the center)
+	handleColor := style.Color
+	if h.dragging {
+		handleColor = style.HoverColor
+	}
+
+	// Draw a subtle line indicator
+	var indicatorRect image.Rectangle
+	if h.Horizontal {
+		// Vertical line in the center
+		lineWidth := 2
+		centerX := handleWidth / 2
+		indicatorRect = image.Rect(centerX-lineWidth/2, handleHeight/4, centerX+lineWidth/2, handleHeight*3/4)
+	} else {
+		// Horizontal line in the center
+		lineHeight := 2
+		centerY := handleHeight / 2
+		indicatorRect = image.Rect(handleWidth/4, centerY-lineHeight/2, handleWidth*3/4, centerY+lineHeight/2)
+	}
+
+	paint.FillShape(gtx.Ops, handleColor, clip.Rect(indicatorRect).Op())
+
+	return layout.Dimensions{Size: image.Pt(handleWidth, handleHeight)}, newSize
+}
+
 type SortColumn int
 
 const (
@@ -363,11 +494,13 @@ type Renderer struct {
 	previewIsImage    bool           // Whether previewing an image
 	previewImage      paint.ImageOp  // Image data for image preview
 	previewImageSize  image.Point    // Original image dimensions
-	previewScroll     layout.List    // Scrollable list for preview content
-	previewExtensions []string       // Extensions that trigger text preview
-	previewImageExts  []string       // Extensions that trigger image preview
-	previewMaxSize    int64          // Max file size to preview
-	previewWidthPct   int            // Width percentage for preview pane
+	previewScroll       layout.List    // Scrollable list for preview content
+	previewExtensions   []string       // Extensions that trigger text preview
+	previewImageExts    []string       // Extensions that trigger image preview
+	previewMaxSize      int64          // Max file size to preview
+	previewWidthPct     int            // Width percentage for preview pane (initial)
+	previewWidth        int            // Current preview pane width in pixels (after resize)
+	previewResizeHandle ResizeHandle   // Resize handle for preview pane
 
 	// Recent files state
 	recentFilesBtn    widget.Clickable // Button to show recent files
@@ -427,6 +560,15 @@ func NewRenderer() *Renderer {
 	r.previewExtensions = []string{".txt", ".json", ".csv", ".md", ".log"}
 	r.previewMaxSize = 1024 * 1024 // 1MB
 	r.previewWidthPct = 33
+	r.previewWidth = 0 // Will be initialized from percentage on first layout
+
+	// Configure preview resize handle (left edge of preview pane)
+	r.previewResizeHandle = ResizeHandle{
+		Horizontal: true,
+		MinSize:    150, // Minimum 150px width
+		MaxSize:    800, // Maximum 800px width
+		Inverted:   true, // Dragging left increases size (since handle is on left edge)
+	}
 
 	return r
 }
@@ -553,7 +695,8 @@ func (r *Renderer) ShowPreview(path string) error {
 		r.HidePreview()
 		return nil
 	}
-	if r.previewMaxSize > 0 && info.Size() > r.previewMaxSize {
+	// For text files, check file size limit (images are scaled so no limit needed)
+	if !isImage && r.previewMaxSize > 0 && info.Size() > r.previewMaxSize {
 		r.previewError = fmt.Sprintf("File too large (%s)", formatSize(info.Size()))
 		r.previewVisible = true
 		r.previewPath = path
@@ -566,7 +709,7 @@ func (r *Renderer) ShowPreview(path string) error {
 	r.previewError = ""
 
 	if isImage {
-		// Load image
+		// Load image (will be scaled to fit preview pane)
 		return r.loadImagePreview(path)
 	}
 
