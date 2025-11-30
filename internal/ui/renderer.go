@@ -28,8 +28,11 @@ import (
 	"gioui.org/widget/material"
 
 	// Additional image format support
+	"github.com/jdeng/goheif"
 	_ "golang.org/x/image/bmp"
 	_ "golang.org/x/image/webp"
+
+	"github.com/justyntemme/razor/internal/debug"
 )
 
 type UIAction int
@@ -504,8 +507,11 @@ func (r *Renderer) SetPreviewConfig(textExtensions, imageExtensions []string, ma
 
 // ShowPreview loads and displays the preview pane for the given file
 func (r *Renderer) ShowPreview(path string) error {
+	debug.Log(debug.UI, "ShowPreview called for: %s", path)
+
 	// Check file extension
 	ext := strings.ToLower(filepath.Ext(path))
+	debug.Log(debug.UI, "ShowPreview: ext=%s, textExts=%v, imageExts=%v", ext, r.previewExtensions, r.previewImageExts)
 
 	// Check if it's a text file
 	isText := false
@@ -525,7 +531,10 @@ func (r *Renderer) ShowPreview(path string) error {
 		}
 	}
 
+	debug.Log(debug.UI, "ShowPreview: isText=%v, isImage=%v", isText, isImage)
+
 	if !isText && !isImage {
+		debug.Log(debug.UI, "ShowPreview: hiding preview (not text or image)")
 		r.HidePreview()
 		return nil
 	}
@@ -567,8 +576,11 @@ func (r *Renderer) ShowPreview(path string) error {
 
 // loadImagePreview loads an image file for preview
 func (r *Renderer) loadImagePreview(path string) error {
+	debug.Log(debug.UI, "loadImagePreview: loading %s", path)
+
 	file, err := os.Open(path)
 	if err != nil {
+		debug.Log(debug.UI, "loadImagePreview: cannot open file: %v", err)
 		r.previewError = fmt.Sprintf("Cannot open file: %v", err)
 		r.previewVisible = true
 		r.previewIsImage = false
@@ -576,20 +588,41 @@ func (r *Renderer) loadImagePreview(path string) error {
 	}
 	defer file.Close()
 
-	img, _, err := image.Decode(file)
-	if err != nil {
-		r.previewError = fmt.Sprintf("Cannot decode image: %v", err)
-		r.previewVisible = true
-		r.previewIsImage = false
-		return err
+	var img image.Image
+
+	// Check if it's a HEIC/HEIF file (goheif doesn't register with image.Decode)
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == ".heic" || ext == ".heif" {
+		debug.Log(debug.UI, "loadImagePreview: decoding HEIC/HEIF")
+		img, err = goheif.Decode(file)
+		if err != nil {
+			debug.Log(debug.UI, "loadImagePreview: HEIC decode error: %v", err)
+			r.previewError = fmt.Sprintf("Cannot decode HEIC: %v", err)
+			r.previewVisible = true
+			r.previewIsImage = false
+			return err
+		}
+	} else {
+		debug.Log(debug.UI, "loadImagePreview: decoding standard image format")
+		img, _, err = image.Decode(file)
+		if err != nil {
+			debug.Log(debug.UI, "loadImagePreview: decode error: %v", err)
+			r.previewError = fmt.Sprintf("Cannot decode image: %v", err)
+			r.previewVisible = true
+			r.previewIsImage = false
+			return err
+		}
 	}
 
+	debug.Log(debug.UI, "loadImagePreview: decoded successfully, size=%v", img.Bounds().Size())
 	r.previewImage = paint.NewImageOp(img)
 	r.previewImageSize = img.Bounds().Size()
 	r.previewIsImage = true
 	r.previewIsJSON = false
 	r.previewContent = ""
 	r.previewVisible = true
+	debug.Log(debug.UI, "loadImagePreview: previewVisible=%v, previewIsImage=%v, previewImageSize=%v",
+		r.previewVisible, r.previewIsImage, r.previewImageSize)
 	return nil
 }
 
@@ -676,12 +709,25 @@ func (r *Renderer) ShowCreateDialog(isDir bool) {
 	r.createDialogEditor.SetText("")
 }
 
-func (r *Renderer) StartRename(index int, path, name string) {
+func (r *Renderer) StartRename(index int, path, name string, isDir bool) {
 	r.renameIndex = index
 	r.renamePath = path
 	r.renameEditor.SetText(name)
-	// Select all text for easy replacement
-	r.renameEditor.SetCaret(0, len(name))
+
+	// For files, select only the name part (not the extension) so users can
+	// easily type a new name while keeping the extension
+	if !isDir {
+		ext := filepath.Ext(name)
+		nameWithoutExt := len(name) - len(ext)
+		if nameWithoutExt > 0 {
+			r.renameEditor.SetCaret(0, nameWithoutExt)
+		} else {
+			r.renameEditor.SetCaret(0, len(name))
+		}
+	} else {
+		// For directories, select all text
+		r.renameEditor.SetCaret(0, len(name))
+	}
 }
 
 func (r *Renderer) CancelRename() {

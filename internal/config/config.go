@@ -203,7 +203,7 @@ func DefaultConfig() *Config {
 			Position:        "right",
 			WidthPercent:    33, // 1/3 of screen width
 			TextExtensions:  []string{".txt", ".json", ".csv", ".md", ".log", ".xml", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg"},
-			ImageExtensions: []string{".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"},
+			ImageExtensions: []string{".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".heic", ".heif"},
 			MaxFileSize:     1024 * 1024, // 1MB default limit
 		},
 		Favorites: []FavoriteEntry{

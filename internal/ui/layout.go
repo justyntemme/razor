@@ -21,6 +21,8 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
+
+	"github.com/justyntemme/razor/internal/debug"
 )
 
 func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
@@ -1393,7 +1395,7 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, state *State, eventOut 
 		// Start rename for the selected item
 		if state.SelectedIndex >= 0 && state.SelectedIndex < len(state.Entries) {
 			item := &state.Entries[state.SelectedIndex]
-			r.StartRename(state.SelectedIndex, item.Path, item.Name)
+			r.StartRename(state.SelectedIndex, item.Path, item.Name, item.IsDir)
 		}
 	}
 	if r.favBtn.Clicked(gtx) {
@@ -1909,6 +1911,7 @@ func (r *Renderer) layoutPreviewPane(gtx layout.Context, state *State) layout.Di
 		}),
 		// Content area
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			debug.Log(debug.UI, "layoutPreviewPane content: previewIsImage=%v, previewVisible=%v", r.previewIsImage, r.previewVisible)
 			if r.previewIsImage {
 				return r.layoutImagePreview(gtx)
 			}
@@ -1919,7 +1922,9 @@ func (r *Renderer) layoutPreviewPane(gtx layout.Context, state *State) layout.Di
 
 // layoutImagePreview renders an image in the preview pane
 func (r *Renderer) layoutImagePreview(gtx layout.Context) layout.Dimensions {
+	debug.Log(debug.UI, "layoutImagePreview: previewImageSize=%v", r.previewImageSize)
 	if r.previewImageSize.X == 0 || r.previewImageSize.Y == 0 {
+		debug.Log(debug.UI, "layoutImagePreview: returning empty (zero size)")
 		return layout.Dimensions{}
 	}
 
@@ -1930,6 +1935,7 @@ func (r *Renderer) layoutImagePreview(gtx layout.Context) layout.Dimensions {
 			availHeight := float32(gtx.Constraints.Max.Y)
 			imgWidth := float32(r.previewImageSize.X)
 			imgHeight := float32(r.previewImageSize.Y)
+			debug.Log(debug.UI, "layoutImagePreview: avail=(%v,%v) img=(%v,%v)", availWidth, availHeight, imgWidth, imgHeight)
 
 			// Calculate scale factor to fit
 			scaleX := availWidth / imgWidth
