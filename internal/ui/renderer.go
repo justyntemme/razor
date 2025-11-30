@@ -5,6 +5,10 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	// Image format decoders
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,6 +26,10 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
+
+	// Additional image format support
+	_ "golang.org/x/image/bmp"
+	_ "golang.org/x/image/webp"
 )
 
 type UIAction int
@@ -346,11 +354,15 @@ type Renderer struct {
 	// Preview pane state
 	previewVisible    bool           // Whether preview pane is shown
 	previewPath       string         // Path of file being previewed
-	previewContent    string         // Content loaded for preview
+	previewContent    string         // Content loaded for preview (for text)
 	previewError      string         // Error message if load failed
 	previewIsJSON     bool           // Whether content is JSON (for formatting)
+	previewIsImage    bool           // Whether previewing an image
+	previewImage      paint.ImageOp  // Image data for image preview
+	previewImageSize  image.Point    // Original image dimensions
 	previewScroll     layout.List    // Scrollable list for preview content
-	previewExtensions []string       // Extensions that trigger preview
+	previewExtensions []string       // Extensions that trigger text preview
+	previewImageExts  []string       // Extensions that trigger image preview
 	previewMaxSize    int64          // Max file size to preview
 	previewWidthPct   int            // Width percentage for preview pane
 
@@ -483,8 +495,9 @@ func (r *Renderer) SetSidebarLayout(layout string) {
 }
 
 // SetPreviewConfig sets the preview pane configuration
-func (r *Renderer) SetPreviewConfig(extensions []string, maxSize int64, widthPct int) {
-	r.previewExtensions = extensions
+func (r *Renderer) SetPreviewConfig(textExtensions, imageExtensions []string, maxSize int64, widthPct int) {
+	r.previewExtensions = textExtensions
+	r.previewImageExts = imageExtensions
 	r.previewMaxSize = maxSize
 	r.previewWidthPct = widthPct
 }
@@ -493,14 +506,26 @@ func (r *Renderer) SetPreviewConfig(extensions []string, maxSize int64, widthPct
 func (r *Renderer) ShowPreview(path string) error {
 	// Check file extension
 	ext := strings.ToLower(filepath.Ext(path))
-	supported := false
+
+	// Check if it's a text file
+	isText := false
 	for _, e := range r.previewExtensions {
 		if strings.ToLower(e) == ext {
-			supported = true
+			isText = true
 			break
 		}
 	}
-	if !supported {
+
+	// Check if it's an image file
+	isImage := false
+	for _, e := range r.previewImageExts {
+		if strings.ToLower(e) == ext {
+			isImage = true
+			break
+		}
+	}
+
+	if !isText && !isImage {
 		r.HidePreview()
 		return nil
 	}
@@ -512,6 +537,7 @@ func (r *Renderer) ShowPreview(path string) error {
 		r.previewVisible = true
 		r.previewPath = path
 		r.previewContent = ""
+		r.previewIsImage = false
 		return err
 	}
 	if info.IsDir() {
@@ -523,21 +549,62 @@ func (r *Renderer) ShowPreview(path string) error {
 		r.previewVisible = true
 		r.previewPath = path
 		r.previewContent = ""
+		r.previewIsImage = false
 		return nil
-	}
-
-	// Read file content
-	data, err := os.ReadFile(path)
-	if err != nil {
-		r.previewError = fmt.Sprintf("Cannot read file: %v", err)
-		r.previewVisible = true
-		r.previewPath = path
-		r.previewContent = ""
-		return err
 	}
 
 	r.previewPath = path
 	r.previewError = ""
+
+	if isImage {
+		// Load image
+		return r.loadImagePreview(path)
+	}
+
+	// Load text content
+	return r.loadTextPreview(path, ext)
+}
+
+// loadImagePreview loads an image file for preview
+func (r *Renderer) loadImagePreview(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		r.previewError = fmt.Sprintf("Cannot open file: %v", err)
+		r.previewVisible = true
+		r.previewIsImage = false
+		return err
+	}
+	defer file.Close()
+
+	img, _, err := image.Decode(file)
+	if err != nil {
+		r.previewError = fmt.Sprintf("Cannot decode image: %v", err)
+		r.previewVisible = true
+		r.previewIsImage = false
+		return err
+	}
+
+	r.previewImage = paint.NewImageOp(img)
+	r.previewImageSize = img.Bounds().Size()
+	r.previewIsImage = true
+	r.previewIsJSON = false
+	r.previewContent = ""
+	r.previewVisible = true
+	return nil
+}
+
+// loadTextPreview loads a text file for preview
+func (r *Renderer) loadTextPreview(path, ext string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		r.previewError = fmt.Sprintf("Cannot read file: %v", err)
+		r.previewVisible = true
+		r.previewIsImage = false
+		r.previewContent = ""
+		return err
+	}
+
+	r.previewIsImage = false
 	r.previewIsJSON = ext == ".json"
 
 	// Format JSON with indentation
@@ -567,6 +634,9 @@ func (r *Renderer) HidePreview() {
 	r.previewPath = ""
 	r.previewContent = ""
 	r.previewError = ""
+	r.previewIsImage = false
+	r.previewImage = paint.ImageOp{}
+	r.previewImageSize = image.Point{}
 }
 
 // IsPreviewVisible returns whether the preview pane is currently shown

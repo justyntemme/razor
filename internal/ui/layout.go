@@ -1907,41 +1907,104 @@ func (r *Renderer) layoutPreviewPane(gtx layout.Context, state *State) layout.Di
 					return lbl.Layout(gtx)
 				})
 		}),
-		// Content area (scrollable)
+		// Content area
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			if r.previewContent == "" {
-				return layout.Dimensions{}
+			if r.previewIsImage {
+				return r.layoutImagePreview(gtx)
 			}
-
-			// Split content into lines for scrollable rendering
-			lines := strings.Split(r.previewContent, "\n")
-
-			return layout.Inset{Top: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12), Bottom: unit.Dp(8)}.Layout(gtx,
-				func(gtx layout.Context) layout.Dimensions {
-					return r.previewScroll.Layout(gtx, len(lines), func(gtx layout.Context, i int) layout.Dimensions {
-						line := lines[i]
-						if line == "" {
-							line = " " // Preserve empty lines
-						}
-
-						lbl := material.Body2(r.Theme, line)
-						lbl.Font.Typeface = "monospace"
-						lbl.TextSize = unit.Sp(12)
-
-						// Syntax coloring for JSON
-						if r.previewIsJSON {
-							// Color keys vs values (simple heuristic)
-							trimmed := strings.TrimSpace(line)
-							if strings.HasPrefix(trimmed, "\"") && strings.Contains(line, ":") {
-								lbl.Color = colAccent // Keys in blue
-							}
-						}
-
-						return lbl.Layout(gtx)
-					})
-				})
+			return r.layoutTextPreview(gtx)
 		}),
 	)
+}
+
+// layoutImagePreview renders an image in the preview pane
+func (r *Renderer) layoutImagePreview(gtx layout.Context) layout.Dimensions {
+	if r.previewImageSize.X == 0 || r.previewImageSize.Y == 0 {
+		return layout.Dimensions{}
+	}
+
+	return layout.Inset{Top: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12), Bottom: unit.Dp(8)}.Layout(gtx,
+		func(gtx layout.Context) layout.Dimensions {
+			// Calculate scale to fit image within available space while maintaining aspect ratio
+			availWidth := float32(gtx.Constraints.Max.X)
+			availHeight := float32(gtx.Constraints.Max.Y)
+			imgWidth := float32(r.previewImageSize.X)
+			imgHeight := float32(r.previewImageSize.Y)
+
+			// Calculate scale factor to fit
+			scaleX := availWidth / imgWidth
+			scaleY := availHeight / imgHeight
+			scale := scaleX
+			if scaleY < scaleX {
+				scale = scaleY
+			}
+			// Don't scale up, only down
+			if scale > 1 {
+				scale = 1
+			}
+
+			// Calculate final dimensions
+			finalWidth := int(imgWidth * scale)
+			finalHeight := int(imgHeight * scale)
+
+			// Center the image
+			offsetX := (int(availWidth) - finalWidth) / 2
+			offsetY := (int(availHeight) - finalHeight) / 2
+			if offsetX < 0 {
+				offsetX = 0
+			}
+			if offsetY < 0 {
+				offsetY = 0
+			}
+
+			// Use widget.Image for proper scaling
+			img := widget.Image{
+				Src:   r.previewImage,
+				Fit:   widget.Contain,
+				Scale: 1.0 / scale, // Inverse because Scale is pixels per dp
+			}
+
+			// Constrain to calculated size and center
+			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints = layout.Exact(image.Pt(finalWidth, finalHeight))
+				return img.Layout(gtx)
+			})
+		})
+}
+
+// layoutTextPreview renders text content in the preview pane
+func (r *Renderer) layoutTextPreview(gtx layout.Context) layout.Dimensions {
+	if r.previewContent == "" {
+		return layout.Dimensions{}
+	}
+
+	// Split content into lines for scrollable rendering
+	lines := strings.Split(r.previewContent, "\n")
+
+	return layout.Inset{Top: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12), Bottom: unit.Dp(8)}.Layout(gtx,
+		func(gtx layout.Context) layout.Dimensions {
+			return r.previewScroll.Layout(gtx, len(lines), func(gtx layout.Context, i int) layout.Dimensions {
+				line := lines[i]
+				if line == "" {
+					line = " " // Preserve empty lines
+				}
+
+				lbl := material.Body2(r.Theme, line)
+				lbl.Font.Typeface = "monospace"
+				lbl.TextSize = unit.Sp(12)
+
+				// Syntax coloring for JSON
+				if r.previewIsJSON {
+					// Color keys vs values (simple heuristic)
+					trimmed := strings.TrimSpace(line)
+					if strings.HasPrefix(trimmed, "\"") && strings.Contains(line, ":") {
+						lbl.Color = colAccent // Keys in blue
+					}
+				}
+
+				return lbl.Layout(gtx)
+			})
+		})
 }
 
 func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) layout.Dimensions {

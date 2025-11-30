@@ -113,7 +113,7 @@ func NewOrchestrator() *Orchestrator {
 	o.ui.SetSidebarTabStyle(cfg.UI.Sidebar.TabStyle)
 
 	// Set preview pane config
-	o.ui.SetPreviewConfig(cfg.Preview.TextExtensions, cfg.Preview.MaxFileSize, cfg.Preview.WidthPercent)
+	o.ui.SetPreviewConfig(cfg.Preview.TextExtensions, cfg.Preview.ImageExtensions, cfg.Preview.MaxFileSize, cfg.Preview.WidthPercent)
 
 	// Set search engine from config
 	o.handleSearchEngineChange(cfg.Search.Engine)

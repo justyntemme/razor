@@ -1,11 +1,12 @@
 module github.com/justyntemme/razor
 
-go 1.21
+go 1.24.0
 
 require (
 	gioui.org v0.9.0
 	github.com/charlievieth/fastwalk v1.0.14
-	github.com/justyntemme/fast-text-search v0.0.1
+	golang.org/x/image v0.26.0
+	modernc.org/sqlite v1.40.1
 )
 
 require (
@@ -18,11 +19,9 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/exp/shiny v0.0.0-20250408133849-7e4ce0ab07d0 // indirect
-	golang.org/x/image v0.26.0 // indirect
 	golang.org/x/sys v0.36.0 // indirect
 	golang.org/x/text v0.24.0 // indirect
 	modernc.org/libc v1.66.10 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.40.1 // indirect
 )
