@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"gioui.org/f32"
 	"gioui.org/font"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
@@ -17,7 +18,6 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
-	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -174,11 +174,11 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout.List, eventOut *UIEvent) layout.Dimensions {
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return r.navButton(gtx, &r.backBtn, "◀", state.CanBack, func() { *eventOut = UIEvent{Action: ActionBack} }, keyTag)
+			return r.navButton(gtx, &r.backBtn, "back", state.CanBack, func() { *eventOut = UIEvent{Action: ActionBack} }, keyTag)
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return r.navButton(gtx, &r.fwdBtn, "▶", state.CanForward, func() { *eventOut = UIEvent{Action: ActionForward} }, keyTag)
+			return r.navButton(gtx, &r.fwdBtn, "forward", state.CanForward, func() { *eventOut = UIEvent{Action: ActionForward} }, keyTag)
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -186,7 +186,7 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 				*eventOut = UIEvent{Action: ActionHome}
 				gtx.Execute(key.FocusCmd{Tag: keyTag})
 			}
-			return r.circleButton(gtx, &r.homeBtn, "⌂", colHomeBtnBg, colWhite)
+			return r.iconButton(gtx, &r.homeBtn, "home", colAccent)
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
 
@@ -387,48 +387,75 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 	)
 }
 
-// circleButton renders a circular button with centered icon text
-func (r *Renderer) circleButton(gtx layout.Context, btn *widget.Clickable, label string, bgColor, textColor color.NRGBA) layout.Dimensions {
-	size := gtx.Dp(32)
-
-	// Set fixed size for the entire button
-	gtx.Constraints.Min = image.Pt(size, size)
-	gtx.Constraints.Max = image.Pt(size, size)
+// iconButton renders a clickable icon without background
+// iconType: "back", "forward", "home" - draws appropriate icon shape
+func (r *Renderer) iconButton(gtx layout.Context, btn *widget.Clickable, iconType string, iconColor color.NRGBA) layout.Dimensions {
+	size := gtx.Dp(24)
 
 	return material.Clickable(gtx, btn, func(gtx layout.Context) layout.Dimensions {
-		// Use Stack to layer background and centered text
-		return layout.Stack{Alignment: layout.Center}.Layout(gtx,
-			// Background circle
-			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-				circle := clip.Ellipse{Min: image.Pt(0, 0), Max: image.Pt(size, size)}.Op(gtx.Ops)
-				paint.FillShape(gtx.Ops, bgColor, circle)
-				return layout.Dimensions{Size: image.Pt(size, size)}
-			}),
-			// Centered icon text
-			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body1(r.Theme, label)
-				lbl.Color = textColor
-				lbl.Alignment = text.Middle
-				return lbl.Layout(gtx)
-			}),
-		)
+		// Draw the icon
+		r.drawIcon(gtx.Ops, iconType, size, iconColor)
+		return layout.Dimensions{Size: image.Pt(size, size)}
 	})
 }
 
-func (r *Renderer) navButton(gtx layout.Context, btn *widget.Clickable, label string, enabled bool, action func(), keyTag *layout.List) layout.Dimensions {
+// drawIcon draws an icon shape at the given size
+func (r *Renderer) drawIcon(ops *op.Ops, iconType string, size int, iconColor color.NRGBA) {
+	s := float32(size)
+
+	var path clip.Path
+	path.Begin(ops)
+
+	switch iconType {
+	case "back":
+		// Left-pointing chevron/arrow
+		path.MoveTo(f32.Pt(s*0.7, s*0.15))
+		path.LineTo(f32.Pt(s*0.25, s*0.5))
+		path.LineTo(f32.Pt(s*0.7, s*0.85))
+		path.LineTo(f32.Pt(s*0.55, s*0.5))
+		path.Close()
+
+	case "forward":
+		// Right-pointing chevron/arrow
+		path.MoveTo(f32.Pt(s*0.3, s*0.15))
+		path.LineTo(f32.Pt(s*0.75, s*0.5))
+		path.LineTo(f32.Pt(s*0.3, s*0.85))
+		path.LineTo(f32.Pt(s*0.45, s*0.5))
+		path.Close()
+
+	case "home":
+		// House shape: roof + base (scaled down to fit within bounds)
+		// Roof (triangle)
+		path.MoveTo(f32.Pt(s*0.5, s*0.18))  // Top peak
+		path.LineTo(f32.Pt(s*0.15, s*0.48)) // Bottom left
+		path.LineTo(f32.Pt(s*0.85, s*0.48)) // Bottom right
+		path.Close()
+		paint.FillShape(ops, iconColor, clip.Outline{Path: path.End()}.Op())
+
+		// Base (rectangle)
+		path.Begin(ops)
+		path.MoveTo(f32.Pt(s*0.25, s*0.48))
+		path.LineTo(f32.Pt(s*0.25, s*0.82))
+		path.LineTo(f32.Pt(s*0.75, s*0.82))
+		path.LineTo(f32.Pt(s*0.75, s*0.48))
+		path.Close()
+	}
+
+	paint.FillShape(ops, iconColor, clip.Outline{Path: path.End()}.Op())
+}
+
+func (r *Renderer) navButton(gtx layout.Context, btn *widget.Clickable, iconType string, enabled bool, action func(), keyTag *layout.List) layout.Dimensions {
 	if enabled && btn.Clicked(gtx) {
 		action()
 		gtx.Execute(key.FocusCmd{Tag: keyTag})
 	}
 
-	bgColor := colAccent
-	textColor := colWhite
+	iconColor := colAccent
 	if !enabled {
-		bgColor = colLightGray
-		textColor = colDisabled
+		iconColor = colDisabled
 	}
 
-	return r.circleButton(gtx, btn, label, bgColor, textColor)
+	return r.iconButton(gtx, btn, iconType, iconColor)
 }
 
 // layoutSearchWithHistory renders the search box (dropdown is rendered as overlay in main Layout)
@@ -893,35 +920,95 @@ func (r *Renderer) layoutDrivesList(gtx layout.Context, state *State, eventOut *
 	})
 }
 
-// layoutRecentFilesEntry renders the "Recent Files" clickable entry
+// layoutRecentFilesEntry renders the "Recent Files" as a styled navigation button
 func (r *Renderer) layoutRecentFilesEntry(gtx layout.Context, eventOut *UIEvent) layout.Dimensions {
 	// Check for click BEFORE layout
 	if r.recentFilesBtn.Clicked(gtx) {
 		*eventOut = UIEvent{Action: ActionShowRecentFiles}
 	}
 
-	// Determine colors based on whether we're in recent view
-	bgColor := color.NRGBA{A: 0} // Transparent by default
-	textColor := colDirBlue
+	// Style as a pill button
+	bgColor := color.NRGBA{R: 240, G: 240, B: 245, A: 255} // Light gray background
+	textColor := colAccent
 	if r.isRecentView {
-		bgColor = colSelected // Highlight when viewing recent files
+		bgColor = colAccent
+		textColor = colWhite
 	}
 
-	return material.Clickable(gtx, &r.recentFilesBtn, func(gtx layout.Context) layout.Dimensions {
-		// Draw selection background if viewing recent
-		if r.isRecentView {
-			paint.FillShape(gtx.Ops, bgColor, clip.Rect{Max: gtx.Constraints.Max}.Op())
-		}
+	return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx,
+		func(gtx layout.Context) layout.Dimensions {
+			// First measure the content to know the size
+			macro := op.Record(gtx.Ops)
+			contentDims := layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(6), Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx,
+				func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						// Clock icon (drawn)
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							size := gtx.Dp(12)
+							// Offset slightly to align with text baseline
+							return layout.Inset{Top: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								r.drawClockIcon(gtx.Ops, size, textColor)
+								return layout.Dimensions{Size: image.Pt(size, size)}
+							})
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+						// Label
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Body2(r.Theme, "Recent")
+							lbl.Color = textColor
+							lbl.Font.Weight = font.Medium
+							return lbl.Layout(gtx)
+						}),
+					)
+				})
+			contentCall := macro.Stop()
 
-		return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
-			func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body1(r.Theme, "Recent Files")
-				lbl.Color = textColor
-				lbl.Font.Weight = font.Medium
-				lbl.MaxLines = 1
-				return lbl.Layout(gtx)
+			// Now draw with proper clickable area matching the pill
+			return material.Clickable(gtx, &r.recentFilesBtn, func(gtx layout.Context) layout.Dimensions {
+				// Draw pill background at content size
+				rr := gtx.Dp(unit.Dp(6))
+				rect := clip.RRect{
+					Rect: image.Rectangle{Max: contentDims.Size},
+					NE:   rr, NW: rr, SE: rr, SW: rr,
+				}
+				paint.FillShape(gtx.Ops, bgColor, rect.Op(gtx.Ops))
+
+				// Replay the content
+				contentCall.Add(gtx.Ops)
+				return contentDims
 			})
-	})
+		})
+}
+
+// drawClockIcon draws a simple clock icon
+func (r *Renderer) drawClockIcon(ops *op.Ops, size int, iconColor color.NRGBA) {
+	s := float32(size)
+	center := s / 2
+
+	// Clock circle (outline)
+	circle := clip.Ellipse{
+		Min: image.Pt(1, 1),
+		Max: image.Pt(size-1, size-1),
+	}
+	paint.FillShape(ops, iconColor, clip.Stroke{
+		Path:  circle.Path(ops),
+		Width: float32(size) * 0.12,
+	}.Op())
+
+	// Clock hands
+	var path clip.Path
+	path.Begin(ops)
+	// Hour hand (short, pointing to ~10 o'clock)
+	path.MoveTo(f32.Pt(center, center))
+	path.LineTo(f32.Pt(center-s*0.15, center-s*0.2))
+	// Minute hand (long, pointing to 12)
+	path.MoveTo(f32.Pt(center, center))
+	path.LineTo(f32.Pt(center, center-s*0.3))
+
+	paint.FillShape(ops, iconColor, clip.Stroke{
+		Path:  path.End(),
+		Width: float32(size) * 0.1,
+	}.Op())
 }
 
 func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layout.List, eventOut *UIEvent) layout.Dimensions {
