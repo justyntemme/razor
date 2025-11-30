@@ -130,7 +130,7 @@ func DefaultConfig() *Config {
 		UI: UIConfig{
 			Theme: "light",
 			Sidebar: SidebarConfig{
-				Layout:        "tabbed",
+				Layout:        "stacked",
 				TabStyle:      "manila",  // "manila" | "underline" | "pill"
 				Width:         200,
 				Position:      "left",

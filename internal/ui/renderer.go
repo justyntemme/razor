@@ -372,7 +372,7 @@ func NewRenderer() *Renderer {
 	)
 	r.sidebarTabs.Style = TabStyleManila
 	r.sidebarTabs.Distribute = false
-	r.sidebarLayout = "tabbed" // Default layout
+	r.sidebarLayout = "stacked" // Default layout
 	r.pathEditor.SingleLine, r.pathEditor.Submit = true, true
 	r.searchEditor.SingleLine, r.searchEditor.Submit = true, true
 	r.createDialogEditor.SingleLine, r.createDialogEditor.Submit = true, true
@@ -441,10 +441,10 @@ func (r *Renderer) SetSidebarTabStyle(style string) {
 // Valid values: "tabbed", "stacked", "favorites_only", "drives_only"
 func (r *Renderer) SetSidebarLayout(layout string) {
 	switch layout {
-	case "stacked", "favorites_only", "drives_only":
+	case "tabbed", "favorites_only", "drives_only":
 		r.sidebarLayout = layout
 	default:
-		r.sidebarLayout = "tabbed"
+		r.sidebarLayout = "stacked"
 	}
 }
 

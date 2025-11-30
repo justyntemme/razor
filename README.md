@@ -137,7 +137,7 @@ Configuration is stored in `~/.config/razor/config.json` on all platforms. The f
   "ui": {
     "theme": "light",
     "sidebar": {
-      "layout": "tabbed",
+      "layout": "stacked",
       "tabStyle": "manila",
       "width": 200,
       "position": "left",
@@ -174,8 +174,8 @@ Configuration is stored in `~/.config/razor/config.json` on all platforms. The f
 ### Sidebar Options
 
 **Layout** (`ui.sidebar.layout`):
-- `"tabbed"` - Tabs to switch between Favorites and Drives (default)
-- `"stacked"` - Show both Favorites and Drives stacked vertically
+- `"stacked"` - Show both Favorites and Drives stacked vertically (default)
+- `"tabbed"` - Tabs to switch between Favorites and Drives
 - `"favorites_only"` - Only show Favorites
 - `"drives_only"` - Only show Drives
 

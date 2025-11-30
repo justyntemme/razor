@@ -17,6 +17,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
+	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -155,11 +156,24 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 				*eventOut = UIEvent{Action: ActionHome}
 				gtx.Execute(key.FocusCmd{Tag: keyTag})
 			}
-			btn := material.Button(r.Theme, &r.homeBtn, "⌂")
-			btn.Background = colHomeBtnBg
-			btn.Color = colWhite
-			btn.Inset = layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(6), Left: unit.Dp(10), Right: unit.Dp(10)}
-			return btn.Layout(gtx)
+			// Circular home button
+			size := gtx.Dp(32)
+			return material.Clickable(gtx, &r.homeBtn, func(gtx layout.Context) layout.Dimensions {
+				// Draw circular background
+				circle := clip.Ellipse{Min: image.Pt(0, 0), Max: image.Pt(size, size)}.Op(gtx.Ops)
+				paint.FillShape(gtx.Ops, colHomeBtnBg, circle)
+
+				// Center the icon
+				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Min = image.Pt(size, size)
+					gtx.Constraints.Max = image.Pt(size, size)
+					lbl := material.Body1(r.Theme, "⌂")
+					lbl.Color = colWhite
+					lbl.Alignment = text.Middle
+					// Offset slightly for visual centering
+					return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, lbl.Layout)
+				})
+			})
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
 
