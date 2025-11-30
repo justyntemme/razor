@@ -3,13 +3,13 @@ package fs
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/justyntemme/razor/internal/debug"
 	"github.com/justyntemme/razor/internal/search"
 )
 
@@ -78,38 +78,40 @@ func NewSystem() *System {
 
 func (s *System) Start() {
 	for req := range s.RequestChan {
-		log.Printf("[FS] Received request: op=%d path=%q query=%q gen=%d", req.Op, req.Path, req.Query, req.Gen)
-		
+		debug.Log(debug.FS, "Request: op=%d path=%q query=%q gen=%d", req.Op, req.Path, req.Query, req.Gen)
+
 		switch req.Op {
 		case CancelSearch:
 			s.cancelMu.Lock()
 			if s.cancelFunc != nil {
-				log.Printf("[FS] Cancelling current search (gen %d)", s.currentGen)
+				debug.Log(debug.FS, "Cancelling current search (gen %d)", s.currentGen)
 				s.cancelFunc()
 				s.cancelFunc = nil
 			}
 			s.cancelMu.Unlock()
 			// Don't send a response for cancel - the search goroutine will handle it
-			
+
 		case FetchDir:
 			// Cancel any running search before fetching directory
 			s.cancelMu.Lock()
 			if s.cancelFunc != nil {
+				debug.Log(debug.FS, "Cancelling search before FetchDir")
 				s.cancelFunc()
 				s.cancelFunc = nil
 			}
 			s.cancelMu.Unlock()
-			
+
 			resp := s.fetchDir(req.Path)
 			resp.Gen = req.Gen
-			log.Printf("[FS] Sending response: op=%d path=%q entries=%d gen=%d", resp.Op, resp.Path, len(resp.Entries), resp.Gen)
+			debug.Log(debug.FS, "FetchDir response: path=%q entries=%d gen=%d err=%v",
+				resp.Path, len(resp.Entries), resp.Gen, resp.Err)
 			s.ResponseChan <- resp
-			
+
 		case SearchDir:
 			// Cancel any existing search
 			s.cancelMu.Lock()
 			if s.cancelFunc != nil {
-				log.Printf("[FS] Cancelling previous search before starting new one")
+				debug.Log(debug.FS, "Cancelling previous search before new one")
 				s.cancelFunc()
 			}
 			ctx, cancel := context.WithCancel(context.Background())
@@ -117,7 +119,7 @@ func (s *System) Start() {
 			s.currentGen = req.Gen
 			s.searchActive = true
 			s.cancelMu.Unlock()
-			
+
 			// Run search in goroutine so we can process cancel requests
 			go func(ctx context.Context, req Request) {
 				defaultDepth := req.DefaultDepth
@@ -126,19 +128,19 @@ func (s *System) Start() {
 				}
 				resp := s.searchDir(ctx, req.Path, req.Query, req.Gen, search.SearchEngine(req.SearchEngine), req.EngineCmd, defaultDepth)
 				resp.Gen = req.Gen
-				
+
 				// Check if cancelled
 				if ctx.Err() != nil {
 					resp.Cancelled = true
-					log.Printf("[FS] Search cancelled (gen %d)", req.Gen)
+					debug.Log(debug.FS, "Search cancelled (gen %d)", req.Gen)
 				}
-				
+
 				s.cancelMu.Lock()
 				s.searchActive = false
 				s.cancelMu.Unlock()
-				
-				log.Printf("[FS] Sending response: op=%d path=%q entries=%d gen=%d cancelled=%v", 
-					resp.Op, resp.Path, len(resp.Entries), resp.Gen, resp.Cancelled)
+
+				debug.Log(debug.FS, "SearchDir response: path=%q entries=%d gen=%d cancelled=%v",
+					resp.Path, len(resp.Entries), resp.Gen, resp.Cancelled)
 				s.ResponseChan <- resp
 			}(ctx, req)
 		}
@@ -172,40 +174,66 @@ func shouldSkipPath(path string) bool {
 }
 
 func (s *System) fetchDir(path string) Response {
+	debug.Log(debug.FS, "fetchDir: reading %q", path)
+
 	entries, err := os.ReadDir(path)
 	if err != nil {
+		debug.Log(debug.FS, "fetchDir: ReadDir error: %v", err)
 		return Response{Op: FetchDir, Path: path, Err: err}
 	}
 
+	debug.Log(debug.FS, "fetchDir: found %d raw entries", len(entries))
+
 	result := make([]Entry, 0, len(entries))
 	for _, e := range entries {
-		info, err := e.Info()
+		fullPath := filepath.Join(path, e.Name())
+
+		// Use os.Stat (not Lstat) to follow symlinks and get the target's info
+		// This is critical for directories like /home, /tmp, /var on macOS
+		// which are often symlinks to /System/Volumes/Data/*
+		info, err := os.Stat(fullPath)
 		if err != nil {
-			continue
+			// If stat fails (broken symlink, permission denied), try lstat
+			info, err = os.Lstat(fullPath)
+			if err != nil {
+				debug.Log(debug.FS_ENTRY, "fetchDir: skipping %q: stat error: %v", e.Name(), err)
+				continue
+			}
+			debug.Log(debug.FS_ENTRY, "fetchDir: %q: using lstat (symlink target inaccessible)", e.Name())
 		}
+
+		isDir := info.IsDir()
+
+		// Log entry details at verbose level
+		debug.Log(debug.FS_ENTRY, "fetchDir: %q isDir=%v size=%d mode=%s",
+			e.Name(), isDir, info.Size(), info.Mode())
+
 		result = append(result, Entry{
 			Name:    e.Name(),
-			Path:    filepath.Join(path, e.Name()),
-			IsDir:   e.IsDir(),
+			Path:    fullPath,
+			IsDir:   isDir,
 			Size:    info.Size(),
 			ModTime: info.ModTime(),
 		})
 	}
 
+	debug.Log(debug.FS, "fetchDir: returning %d entries", len(result))
 	return Response{Op: FetchDir, Path: path, Entries: result}
 }
 
 func (s *System) searchDir(ctx context.Context, basePath, queryStr string, gen int64, engine search.SearchEngine, engineCmd string, defaultDepth int) Response {
-	log.Printf("[FS_SEARCH] searchDir called: basePath=%q queryStr=%q engine=%d cmd=%q defaultDepth=%d", basePath, queryStr, engine, engineCmd, defaultDepth)
+	debug.Log(debug.SEARCH, "searchDir: basePath=%q query=%q engine=%d defaultDepth=%d",
+		basePath, queryStr, engine, defaultDepth)
+
 	query := search.Parse(queryStr)
 	if query.IsEmpty() {
-		log.Printf("[FS_SEARCH] Query is empty, falling back to fetchDir")
+		debug.Log(debug.SEARCH, "searchDir: empty query, falling back to fetchDir")
 		return s.fetchDir(basePath)
 	}
 
-	log.Printf("[FS_SEARCH] Query parsed: HasContentSearch=%v, HasRecursive=%v, directives=%d", 
+	debug.Log(debug.SEARCH, "searchDir: parsed query: contentSearch=%v recursive=%v directives=%d",
 		query.HasContentSearch(), query.HasRecursive(), len(query.Directives))
-	
+
 	var results []Entry
 
 	// Default depth is 1 (current directory only)
@@ -217,15 +245,15 @@ func (s *System) searchDir(ctx context.Context, basePath, queryStr string, gen i
 			maxDepth = defaultDepth // Fallback to configured default
 		}
 	}
-	
-	log.Printf("[FS_SEARCH] maxDepth=%d", maxDepth)
+
+	debug.Log(debug.SEARCH, "searchDir: maxDepth=%d", maxDepth)
 
 	// Check if we should use an external search engine for content searches
 	if query.HasContentSearch() && engine != search.EngineBuiltin && engineCmd != "" {
 		// Use external search engine (ripgrep or ugrep)
 		contentPattern := query.GetContentPattern()
 		if contentPattern != "" {
-			log.Printf("[FS_SEARCH] Using external engine %d for content search: %q", engine, contentPattern)
+			debug.Log(debug.SEARCH, "searchDir: using external engine %s for pattern=%q", engine.String(), contentPattern)
 			
 			// Show initial indeterminate progress
 			s.ProgressChan <- Progress{
@@ -251,31 +279,33 @@ func (s *System) searchDir(ctx context.Context, basePath, queryStr string, gen i
 			matchingPaths, err := search.SearchWithEngine(ctx, engine, engineCmd, contentPattern, basePath, maxDepth, progressFn)
 			if err != nil {
 				if ctx.Err() != nil {
+					debug.Log(debug.SEARCH, "searchDir: external search cancelled")
 					return Response{Op: SearchDir, Path: basePath, Cancelled: true}
 				}
-				log.Printf("[FS_SEARCH] External search error: %v", err)
+				debug.Log(debug.SEARCH, "searchDir: external search error: %v, falling back to builtin", err)
 				// Fall back to builtin on error
 			} else {
-				log.Printf("[FS_SEARCH] External search found %d matching files", len(matchingPaths))
-				
+				debug.Log(debug.SEARCH, "searchDir: external search found %d paths", len(matchingPaths))
+
 				// Process results directly instead of walking entire directory
 				results, err := s.processExternalResults(ctx, gen, matchingPaths, query)
 				if err != nil {
 					if ctx.Err() != nil {
+						debug.Log(debug.SEARCH, "searchDir: result processing cancelled")
 						return Response{Op: SearchDir, Path: basePath, Cancelled: true}
 					}
-					log.Printf("[FS_SEARCH] processExternalResults error: %v", err)
+					debug.Log(debug.SEARCH, "searchDir: processExternalResults error: %v", err)
 					return Response{Op: SearchDir, Path: basePath, Err: err}
 				}
-				
-				log.Printf("[FS_SEARCH] External search complete: %d results found", len(results))
+
+				debug.Log(debug.SEARCH, "searchDir: external search complete, %d results", len(results))
 				return Response{Op: SearchDir, Path: basePath, Entries: results}
 			}
 		}
 	}
 	
 	// Use builtin search
-	// Use context-aware matcher for cancellable content searches
+	debug.Log(debug.SEARCH, "searchDir: using builtin search")
 	matcher := search.NewMatcherWithContext(ctx, query)
 
 	// First pass: count total files/bytes for progress (skip if cancelled)
@@ -284,9 +314,10 @@ func (s *System) searchDir(ctx context.Context, basePath, queryStr string, gen i
 	if query.HasContentSearch() {
 		s.countFiles(ctx, basePath, 0, maxDepth, &totalFiles, &totalBytes)
 		if ctx.Err() != nil {
+			debug.Log(debug.SEARCH, "searchDir: file counting cancelled")
 			return Response{Op: SearchDir, Path: basePath, Cancelled: true}
 		}
-		log.Printf("[FS_SEARCH] Total files to search: %d, total bytes: %d", totalFiles, totalBytes)
+		debug.Log(debug.SEARCH, "searchDir: counted %d files, %d bytes to search", totalFiles, totalBytes)
 	}
 
 	// Create progress tracker
@@ -299,11 +330,11 @@ func (s *System) searchDir(ctx context.Context, basePath, queryStr string, gen i
 
 	err := s.walkDirWithProgress(ctx, basePath, 0, maxDepth, matcher, &results, progress)
 	if err != nil {
-		log.Printf("[FS_SEARCH] walkDir error: %v", err)
+		debug.Log(debug.SEARCH, "searchDir: walkDir error: %v", err)
 		return Response{Op: SearchDir, Path: basePath, Err: err}
 	}
 
-	log.Printf("[FS_SEARCH] Search complete: %d results found", len(results))
+	debug.Log(debug.SEARCH, "searchDir: complete, %d results", len(results))
 	return Response{Op: SearchDir, Path: basePath, Entries: results}
 }
 
@@ -506,45 +537,53 @@ func (s *System) walkDirWithProgress(ctx context.Context, path string, depth, ma
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	
+
 	if depth > maxDepth {
 		return nil
 	}
-	
+
 	// Skip system directories
 	if shouldSkipPath(path) {
-		log.Printf("[FS_WALK] Skipping system directory: %s", path)
+		debug.Log(debug.FS_WALK, "walkDir: skipping system directory: %s", path)
 		return nil
 	}
 
 	entries, err := os.ReadDir(path)
 	if err != nil {
 		// Don't fail on permission errors, just skip
-		log.Printf("[FS_WALK] Cannot read %q: %v", path, err)
+		debug.Log(debug.FS_WALK, "walkDir: cannot read %q: %v", path, err)
 		return nil
 	}
 
-	log.Printf("[FS_WALK] Walking %q (depth %d): %d entries", path, depth, len(entries))
-	
+	debug.Log(debug.FS_WALK, "walkDir: %q depth=%d entries=%d", path, depth, len(entries))
+
 	for _, e := range entries {
 		// Check for cancellation periodically
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		
+
 		fullPath := filepath.Join(path, e.Name())
-		info, err := e.Info()
+
+		// Use os.Stat to follow symlinks (consistent with fetchDir)
+		info, err := os.Stat(fullPath)
 		if err != nil {
-			continue
+			info, err = os.Lstat(fullPath)
+			if err != nil {
+				debug.Log(debug.FS_WALK, "walkDir: skipping %q: stat error: %v", e.Name(), err)
+				continue
+			}
 		}
-		
+
+		isDir := info.IsDir()
+
 		// Skip non-regular files (devices, sockets, etc.)
-		if !e.IsDir() && !info.Mode().IsRegular() {
+		if !isDir && !info.Mode().IsRegular() {
 			continue
 		}
 
 		// Update progress before checking file
-		if !e.IsDir() && info.Mode().IsRegular() && info.Size() <= 10*1024*1024 {
+		if !isDir && info.Mode().IsRegular() && info.Size() <= 10*1024*1024 {
 			progress.currentFiles++
 			progress.currentBytes += info.Size()
 			progress.report("Searching file contents...")
@@ -552,18 +591,18 @@ func (s *System) walkDirWithProgress(ctx context.Context, path string, depth, ma
 
 		// Check if this entry matches
 		if matcher.Match(fullPath, info) {
-			log.Printf("[FS_WALK] MATCH: %s", fullPath)
+			debug.Log(debug.FS_WALK, "walkDir: MATCH %s", fullPath)
 			*results = append(*results, Entry{
 				Name:    e.Name(),
 				Path:    fullPath,
-				IsDir:   e.IsDir(),
+				IsDir:   isDir,
 				Size:    info.Size(),
 				ModTime: info.ModTime(),
 			})
 		}
 
 		// Recurse into directories
-		if e.IsDir() && depth < maxDepth {
+		if isDir && depth < maxDepth {
 			s.walkDirWithProgress(ctx, fullPath, depth+1, maxDepth, matcher, results, progress)
 		}
 	}

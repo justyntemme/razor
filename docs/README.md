@@ -14,6 +14,7 @@ Welcome to the Razor developer documentation. This guide provides comprehensive 
 - [Filesystem Package](./packages/fs.md) - Directory operations, searching, and async I/O
 - [Search Package](./packages/search.md) - Query parsing, directives, and external engine integration
 - [Store Package](./packages/store.md) - SQLite persistence for favorites and settings
+- [Debug Package](./packages/debug.md) - Categorized debug logging system
 
 ### Guides
 - [Contributing Guide](./contributing.md) - How to set up, build, and contribute
@@ -39,7 +40,8 @@ razor/
 │   ├── ui/              # Gio UI components
 │   ├── fs/              # Filesystem operations
 │   ├── search/          # Search engine
-│   └── store/           # SQLite persistence
+│   ├── store/           # SQLite persistence
+│   └── debug/           # Debug logging system
 ├── docs/                # This documentation
 └── TODO.org             # Project roadmap
 ```

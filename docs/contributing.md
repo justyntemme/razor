@@ -337,31 +337,92 @@ Key rules:
 
 ## Debugging
 
+Razor uses a centralized debug logging system in `internal/debug/` with categorized output.
+
 ### Enable Debug Logging
 
 ```bash
+# Build with debug enabled
 go build -tags debug -o razor_bin ./cmd/razor
-./razor_bin 2>&1 | grep DEBUG
+
+# Run and view all debug output
+./razor_bin 2>&1
+
+# Filter by category
+./razor_bin 2>&1 | grep '\[FS\]'
+./razor_bin 2>&1 | grep '\[SEARCH\]'
+```
+
+### Debug Categories
+
+| Category | Description |
+|----------|-------------|
+| `APP` | Application orchestration, navigation, state |
+| `FS` | Filesystem operations (fetch, walk) |
+| `SEARCH` | Search engine, query parsing, matching |
+| `STORE` | Database operations, settings, favorites |
+| `UI` | UI events, layout, rendering |
+| `FS_ENTRY` | Individual entry processing (verbose) |
+| `FS_WALK` | Directory walking during search (verbose) |
+| `UI_EVENT` | UI event handling (verbose) |
+| `UI_LAYOUT` | Layout calculations (extremely verbose) |
+
+### Environment Variable Control
+
+Use `RAZOR_DEBUG` to control which categories are enabled:
+
+```bash
+# Enable only specific categories
+RAZOR_DEBUG=FS,SEARCH ./razor_bin
+
+# Enable all categories (including verbose)
+RAZOR_DEBUG=all ./razor_bin
+
+# Disable all categories
+RAZOR_DEBUG=none ./razor_bin
 ```
 
 ### Add Debug Logs
 
 ```go
-// In internal/app/orchestrator.go or other app package files
-debugLog("My message: %v", value)
+import "github.com/justyntemme/razor/internal/debug"
+
+// Log with a category
+debug.Log(debug.FS, "fetchDir: reading %q", path)
+debug.Log(debug.SEARCH, "query=%q engine=%d", query, engine)
+debug.Log(debug.APP, "Settings: dark_mode=%v", darkMode)
+
+// Use verbose categories for detailed tracing
+debug.Log(debug.FS_ENTRY, "entry %q isDir=%v size=%d", name, isDir, size)
 ```
 
-### Common Debug Tags
+### Debug Package API
 
+```go
+// Check if debug is enabled (compile-time constant)
+if debug.Enabled {
+    // expensive debug-only operations
+}
+
+// Enable/disable categories at runtime
+debug.Enable(debug.FS_ENTRY)   // Enable verbose entry logging
+debug.Disable(debug.UI_LAYOUT) // Disable layout spam
+
+// Check category state
+if debug.IsEnabled(debug.SEARCH) {
+    // conditional logging
+}
+
+// List enabled categories
+cats := debug.ListEnabled()
 ```
-[DEBUG]           - General debug
-[FS]              - Filesystem operations
-[FS_SEARCH]       - Search operations
-[FS_RESP]         - Response handling
-[SEARCH]          - Search engine selection
-[SETTINGS]        - Settings changes
-[CLEAR]           - Search clearing
-```
+
+### Release Builds
+
+In release builds (without `-tags debug`), all debug logging is compiled out:
+- `debug.Log()` becomes a no-op
+- `debug.Enabled` is `false`
+- No runtime overhead
 
 ## Documentation
 

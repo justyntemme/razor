@@ -2,6 +2,7 @@
 
 package app
 
-const debugEnabled = false
+import "github.com/justyntemme/razor/internal/debug"
 
-func debugLog(format string, args ...interface{}) {}
+// debugEnabled is false when not built with -tags debug
+var debugEnabled = debug.Enabled

@@ -2,10 +2,8 @@
 
 package app
 
-import "log"
+import "github.com/justyntemme/razor/internal/debug"
 
-const debugEnabled = true
-
-func debugLog(format string, args ...interface{}) {
-	log.Printf("[DEBUG] "+format, args...)
-}
+// debugEnabled is true when built with -tags debug
+// Use debug.Enabled from the debug package for checking if debug is enabled
+var debugEnabled = debug.Enabled

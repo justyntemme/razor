@@ -129,53 +129,618 @@
    - [ ] Split window view (stretch goal)
    - [ ] Vertical/horizontal split options
 
-*** Implementation Plan
-**** Phase 1: Core Tab Data Structures
-     - Create TabState struct to hold per-tab state:
-       - CurrentPath, Entries, SelectedIndex, CanBack, CanForward
-       - History stack ([]string) and historyIndex per tab
-       - rawEntries, dirEntries (for search state)
-       - IsSearchResult, SearchQuery
-     - Create TabManager to manage multiple tabs:
-       - tabs []TabState
-       - activeTabIndex int
-       - Methods: NewTab(), CloseTab(), SwitchTab(), GetActiveTab()
+*** Implementation Plan - Composable UI Architecture
 
-**** Phase 2: Refactor State Management
-     - Move per-directory state from Orchestrator to TabState
-     - Keep global state in Orchestrator (window, fs, store, ui, clipboard, etc.)
-     - Orchestrator.state becomes Orchestrator.tabs[activeTab]
-     - Update all state references to go through GetActiveTab()
+**** Design Principles
+     - All behaviors should be configurable via TabConfig
+     - Components should be reusable for future split-view panes
+     - Clean separation: TabState (data), TabManager (logic), TabBar (UI)
+     - Settings persisted to database, exposed in Settings dialog
+
+**** Phase 1: Configuration & Core Data Structures
+
+***** TabConfig (persisted settings)
+      #+BEGIN_SRC go
+      type TabConfig struct {
+          NewTabLocation    string // "current" | "home" | "custom"
+          CustomNewTabPath  string // used when NewTabLocation == "custom"
+          LastTabBehavior   string // "close_app" | "keep_empty" | "reopen_home"
+          MaxTabs           int    // 0 = unlimited, or specific limit
+          EnableTabReorder  bool   // drag to reorder tabs
+          RestoreTabsOnStart bool  // persist/restore tabs across sessions
+          TabBarPosition    string // "top" | "bottom" (future)
+      }
+      #+END_SRC
+
+***** TabState (per-tab data)
+      #+BEGIN_SRC go
+      type TabState struct {
+          ID           string   // unique tab identifier
+          CurrentPath  string
+          Entries      []UIEntry
+          SelectedIndex int
+          CanBack      bool
+          CanForward   bool
+          History      []string
+          HistoryIndex int
+          RawEntries   []UIEntry // for filtering
+          DirEntries   []UIEntry // canonical directory contents
+          IsSearchResult bool
+          SearchQuery  string
+          SearchGen    int64    // for stale search handling
+      }
+      #+END_SRC
+
+***** TabManager (logic layer)
+      #+BEGIN_SRC go
+      type TabManager struct {
+          tabs          []TabState
+          activeIndex   int
+          config        TabConfig
+          // Methods
+          NewTab(path string) *TabState
+          CloseTab(index int) bool  // returns false if blocked by config
+          SwitchTab(index int)
+          GetActiveTab() *TabState
+          MoveTab(from, to int)     // for reordering
+          GetTabCount() int
+      }
+      #+END_SRC
+
+**** Phase 2: Refactor Orchestrator
+     - Extract per-directory state from Orchestrator into TabState
+     - Orchestrator holds TabManager instead of single state
+     - Global state remains in Orchestrator:
+       - window, fs, store, ui (renderer)
+       - clipboard, favorites, drives
+       - conflict resolution state
+       - search engine settings
+     - All navigate/search/back/forward operations route through TabManager
+     - TabManager notifies Orchestrator of tab changes
 
 **** Phase 3: Tab Bar UI Component
-     - Add tab bar between File menu and nav bar in layout.go
-     - Each tab shows: folder name (or path), close button (X)
-     - Active tab visually highlighted
-     - "+" button to create new tab
-     - Tab clicks switch active tab
-     - Tab close button removes tab (minimum 1 tab required)
+     - New TabBar struct in ui package
+     - Renders horizontal scrollable tab list
+     - Each tab: folder name, close button (X), active indicator
+     - "+" button for new tab
+     - Tab click -> ActionSwitchTab
+     - Close click -> ActionCloseTab
+     - New UIActions: ActionNewTab, ActionCloseTab, ActionSwitchTab, ActionMoveTab
 
-**** Phase 4: Keyboard Shortcuts
-     - Ctrl+T: Create new tab (in current directory or home)
-     - Ctrl+W: Close current tab (if more than 1 tab)
-     - Ctrl+Tab / Ctrl+Shift+Tab: Cycle through tabs
+**** Phase 4: Settings UI Integration
+     - Add "Tabs" section to Settings dialog
+     - Dropdown: New tab opens in (Current directory / Home / Custom path)
+     - Dropdown: When closing last tab (Close app / Keep empty tab / Reopen home)
+     - Number input: Maximum tabs (0 = unlimited)
+     - Checkbox: Enable tab reordering
+     - Checkbox: Restore tabs on startup
+
+**** Phase 5: Keyboard Shortcuts
+     - Ctrl+T: New tab (respects NewTabLocation config)
+     - Ctrl+W: Close tab (respects LastTabBehavior config)
+     - Ctrl+Tab: Next tab
+     - Ctrl+Shift+Tab: Previous tab
      - Ctrl+1-9: Switch to tab by number
 
-**** Phase 5: Tab Persistence (Optional)
-     - Save open tabs to database on exit
-     - Restore tabs on startup
+**** Phase 6: Tab Persistence
+     - On app close: save tab paths to database (if RestoreTabsOnStart)
+     - On app start: restore tabs from database
+     - Store as JSON array in settings table
 
-**** Future: Split View Architecture Considerations
-     - TabManager could evolve to PaneManager
-     - Each Pane contains its own TabManager
-     - Split creates two Panes, each with their own tabs
-     - File operations between panes (drag from left to right)
+**** Future: Split View Extension
+     - Pane struct wraps TabManager + UI region
+     - PaneManager holds []Pane and split configuration
+     - Each Pane is independent (own tabs, own file list)
+     - Split actions: ActionSplitHorizontal, ActionSplitVertical
+     - Focus management between panes
+     - Drag files between panes for copy/move
 
-**** Questions to Resolve
-     - Q1: Should new tabs open in same directory as current tab, or home?
-     - Q2: Should closing last tab close the app, or keep one tab open?
-     - Q3: Tab limit? (browsers often have soft limits like 100+)
-     - Q4: Should tabs be reorderable via drag in Phase 1, or defer?
+*** Detailed Implementation Specification
+
+**** New File: internal/tabs/tabs.go
+
+***** TabConfig Struct
+      #+BEGIN_SRC go
+      package tabs
+
+      // TabConfig holds user-configurable tab behavior settings
+      type TabConfig struct {
+          NewTabLocation     string // "current" | "home" | "custom"
+          CustomNewTabPath   string // path when NewTabLocation == "custom"
+          LastTabBehavior    string // "close_app" | "keep_empty" | "reopen_home"
+          MaxTabs            int    // 0 = unlimited
+          EnableTabReorder   bool
+          RestoreTabsOnStart bool
+      }
+
+      // DefaultTabConfig returns sensible defaults
+      func DefaultTabConfig() TabConfig {
+          return TabConfig{
+              NewTabLocation:     "current",
+              LastTabBehavior:    "keep_empty",
+              MaxTabs:            0,
+              EnableTabReorder:   false,
+              RestoreTabsOnStart: false,
+          }
+      }
+      #+END_SRC
+
+***** TabState Struct
+      #+BEGIN_SRC go
+      // TabState holds all per-tab navigation state
+      // This is extracted from current Orchestrator fields
+      type TabState struct {
+          ID            string   // unique identifier (UUID or incremental)
+          CurrentPath   string
+          History       []string
+          HistoryIndex  int
+          SelectedIndex int
+          CanBack       bool
+          CanForward    bool
+          IsSearchResult bool
+          SearchQuery   string
+          SearchGen     int64
+      }
+
+      // NewTabState creates a new tab at the given path
+      func NewTabState(id, path string) *TabState {
+          return &TabState{
+              ID:            id,
+              CurrentPath:   path,
+              History:       []string{path},
+              HistoryIndex:  0,
+              SelectedIndex: -1,
+          }
+      }
+      #+END_SRC
+
+***** TabManager Struct
+      #+BEGIN_SRC go
+      // TabManager manages multiple tabs with configurable behavior
+      type TabManager struct {
+          tabs        []*TabState
+          activeIndex int
+          config      TabConfig
+          nextID      int // for generating unique IDs
+      }
+
+      func NewTabManager(config TabConfig, initialPath string) *TabManager {
+          tm := &TabManager{
+              config: config,
+              nextID: 1,
+          }
+          // Always start with one tab
+          tm.tabs = []*TabState{NewTabState("tab-0", initialPath)}
+          tm.activeIndex = 0
+          return tm
+      }
+
+      func (tm *TabManager) GetActiveTab() *TabState {
+          if tm.activeIndex >= 0 && tm.activeIndex < len(tm.tabs) {
+              return tm.tabs[tm.activeIndex]
+          }
+          return nil
+      }
+
+      func (tm *TabManager) GetTabs() []*TabState {
+          return tm.tabs
+      }
+
+      func (tm *TabManager) GetActiveIndex() int {
+          return tm.activeIndex
+      }
+
+      func (tm *TabManager) TabCount() int {
+          return len(tm.tabs)
+      }
+
+      // NewTab creates a new tab based on config settings
+      // Returns the new tab, or nil if max tabs reached
+      func (tm *TabManager) NewTab(currentPath, homePath string) *TabState {
+          if tm.config.MaxTabs > 0 && len(tm.tabs) >= tm.config.MaxTabs {
+              return nil // at limit
+          }
+
+          var path string
+          switch tm.config.NewTabLocation {
+          case "current":
+              path = currentPath
+          case "home":
+              path = homePath
+          case "custom":
+              path = tm.config.CustomNewTabPath
+          default:
+              path = currentPath
+          }
+
+          id := fmt.Sprintf("tab-%d", tm.nextID)
+          tm.nextID++
+          tab := NewTabState(id, path)
+          tm.tabs = append(tm.tabs, tab)
+          tm.activeIndex = len(tm.tabs) - 1
+          return tab
+      }
+
+      // CloseTab closes the tab at index
+      // Returns: shouldCloseApp bool, newActiveTab *TabState
+      func (tm *TabManager) CloseTab(index int) (bool, *TabState) {
+          if index < 0 || index >= len(tm.tabs) {
+              return false, tm.GetActiveTab()
+          }
+
+          // Last tab behavior
+          if len(tm.tabs) == 1 {
+              switch tm.config.LastTabBehavior {
+              case "close_app":
+                  return true, nil
+              case "keep_empty":
+                  return false, tm.tabs[0] // don't close, keep current
+              case "reopen_home":
+                  // Reset the tab to home instead of closing
+                  // (caller handles navigation)
+                  return false, tm.tabs[0]
+              }
+          }
+
+          // Remove the tab
+          tm.tabs = append(tm.tabs[:index], tm.tabs[index+1:]...)
+
+          // Adjust active index
+          if tm.activeIndex >= len(tm.tabs) {
+              tm.activeIndex = len(tm.tabs) - 1
+          } else if tm.activeIndex > index {
+              tm.activeIndex--
+          }
+
+          return false, tm.GetActiveTab()
+      }
+
+      func (tm *TabManager) SwitchTab(index int) *TabState {
+          if index >= 0 && index < len(tm.tabs) {
+              tm.activeIndex = index
+          }
+          return tm.GetActiveTab()
+      }
+
+      func (tm *TabManager) NextTab() *TabState {
+          next := (tm.activeIndex + 1) % len(tm.tabs)
+          return tm.SwitchTab(next)
+      }
+
+      func (tm *TabManager) PrevTab() *TabState {
+          prev := tm.activeIndex - 1
+          if prev < 0 {
+              prev = len(tm.tabs) - 1
+          }
+          return tm.SwitchTab(prev)
+      }
+
+      func (tm *TabManager) MoveTab(from, to int) {
+          if !tm.config.EnableTabReorder {
+              return
+          }
+          if from < 0 || from >= len(tm.tabs) || to < 0 || to >= len(tm.tabs) {
+              return
+          }
+          tab := tm.tabs[from]
+          tm.tabs = append(tm.tabs[:from], tm.tabs[from+1:]...)
+          tm.tabs = append(tm.tabs[:to], append([]*TabState{tab}, tm.tabs[to:]...)...)
+          // Adjust active index if needed
+          if tm.activeIndex == from {
+              tm.activeIndex = to
+          }
+      }
+
+      func (tm *TabManager) UpdateConfig(config TabConfig) {
+          tm.config = config
+      }
+      #+END_SRC
+
+**** New UI Types in internal/ui/renderer.go
+
+***** TabUIItem for rendering
+      #+BEGIN_SRC go
+      // TabUIItem holds per-tab widget state for rendering
+      type TabUIItem struct {
+          ID        string
+          Label     string           // folder name to display
+          Path      string           // full path (for tooltip)
+          TabClick  widget.Clickable // click to switch
+          CloseClick widget.Clickable // click to close
+      }
+      #+END_SRC
+
+***** New fields in Renderer struct
+      #+BEGIN_SRC go
+      // In Renderer struct, add:
+
+      // Tab bar state
+      tabBarList    layout.List      // horizontal list for tabs
+      tabItems      []TabUIItem      // clickable state per tab
+      newTabBtn     widget.Clickable // "+" button
+      activeTabIndex int             // which tab is active (for highlighting)
+      #+END_SRC
+
+***** Renderer initialization update
+      #+BEGIN_SRC go
+      // In NewRenderer(), add:
+      r.tabBarList.Axis = layout.Horizontal
+      #+END_SRC
+
+**** New UIActions in internal/ui/renderer.go
+
+      #+BEGIN_SRC go
+      // Add to UIAction const block:
+      ActionNewTab
+      ActionCloseTab
+      ActionSwitchTab
+      ActionNextTab
+      ActionPrevTab
+      #+END_SRC
+
+***** UIEvent updates
+      #+BEGIN_SRC go
+      // Add to UIEvent struct:
+      TabIndex int // for ActionSwitchTab, ActionCloseTab
+      #+END_SRC
+
+**** Tab Bar Layout in internal/ui/layout.go
+
+***** layoutTabBar function
+      #+BEGIN_SRC go
+      func (r *Renderer) layoutTabBar(gtx layout.Context, eventOut *UIEvent) layout.Dimensions {
+          return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+              // Scrollable tab list
+              layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+                  return r.tabBarList.Layout(gtx, len(r.tabItems), func(gtx layout.Context, i int) layout.Dimensions {
+                      return r.renderTab(gtx, i, eventOut)
+                  })
+              }),
+              // "+" new tab button
+              layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+                  if r.newTabBtn.Clicked(gtx) {
+                      *eventOut = UIEvent{Action: ActionNewTab}
+                  }
+                  btn := material.Button(r.Theme, &r.newTabBtn, "+")
+                  btn.Inset = layout.UniformInset(unit.Dp(4))
+                  btn.Background = colLightGray
+                  btn.Color = colBlack
+                  return btn.Layout(gtx)
+              }),
+          )
+      }
+      #+END_SRC
+
+***** renderTab function
+      #+BEGIN_SRC go
+      func (r *Renderer) renderTab(gtx layout.Context, index int, eventOut *UIEvent) layout.Dimensions {
+          tab := &r.tabItems[index]
+          isActive := index == r.activeTabIndex
+
+          // Check for tab click BEFORE layout
+          if tab.TabClick.Clicked(gtx) {
+              *eventOut = UIEvent{Action: ActionSwitchTab, TabIndex: index}
+          }
+
+          // Check for close button click
+          if tab.CloseClick.Clicked(gtx) {
+              *eventOut = UIEvent{Action: ActionCloseTab, TabIndex: index}
+          }
+
+          // Tab background color
+          bgColor := colLightGray
+          if isActive {
+              bgColor = colSelected
+          }
+
+          return material.Clickable(gtx, &tab.TabClick, func(gtx layout.Context) layout.Dimensions {
+              return layout.Background{}.Layout(gtx,
+                  func(gtx layout.Context) layout.Dimensions {
+                      paint.FillShape(gtx.Ops, bgColor, clip.Rect{Max: gtx.Constraints.Max}.Op())
+                      return layout.Dimensions{Size: gtx.Constraints.Max}
+                  },
+                  func(gtx layout.Context) layout.Dimensions {
+                      return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(8), Right: unit.Dp(4)}.Layout(gtx,
+                          func(gtx layout.Context) layout.Dimensions {
+                              return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+                                  // Tab label
+                                  layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+                                      lbl := material.Body2(r.Theme, tab.Label)
+                                      if isActive {
+                                          lbl.Font.Weight = font.Bold
+                                      }
+                                      lbl.MaxLines = 1
+                                      return lbl.Layout(gtx)
+                                  }),
+                                  layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
+                                  // Close button
+                                  layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+                                      return material.Clickable(gtx, &tab.CloseClick, func(gtx layout.Context) layout.Dimensions {
+                                          lbl := material.Body2(r.Theme, "×")
+                                          lbl.Color = colGray
+                                          return lbl.Layout(gtx)
+                                      })
+                                  }),
+                              )
+                          })
+                  },
+              )
+          })
+      }
+      #+END_SRC
+
+***** SetTabs method for Renderer
+      #+BEGIN_SRC go
+      // SetTabs updates the tab bar with current tabs from TabManager
+      func (r *Renderer) SetTabs(tabs []*tabs.TabState, activeIndex int) {
+          // Grow or shrink tabItems slice as needed
+          for len(r.tabItems) < len(tabs) {
+              r.tabItems = append(r.tabItems, TabUIItem{})
+          }
+          r.tabItems = r.tabItems[:len(tabs)]
+
+          // Update labels and IDs
+          for i, t := range tabs {
+              r.tabItems[i].ID = t.ID
+              r.tabItems[i].Label = filepath.Base(t.CurrentPath)
+              r.tabItems[i].Path = t.CurrentPath
+          }
+          r.activeTabIndex = activeIndex
+      }
+      #+END_SRC
+
+**** Layout.go Main Layout Changes
+
+***** Insert tab bar into main layout
+      #+BEGIN_SRC go
+      // In Layout() function, modify the vertical Flex to include tab bar:
+      layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+          return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+              // File menu button
+              layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+                  // ... existing file menu code
+              }),
+
+              // NEW: Tab bar (insert here, between File menu and nav bar)
+              layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+                  return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+                      return r.layoutTabBar(gtx, &eventOut)
+                  })
+              }),
+
+              // Nav bar (existing)
+              layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+                  return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx,
+                      func(gtx layout.Context) layout.Dimensions {
+                          return r.layoutNavBar(gtx, state, keyTag, &eventOut)
+                      })
+              }),
+
+              // ... rest of layout
+          )
+      }),
+      #+END_SRC
+
+**** Keyboard Shortcuts in processGlobalInput
+
+      #+BEGIN_SRC go
+      // Add to keyboard handling in processGlobalInput():
+      case "T":
+          if k.Modifiers.Contain(key.ModCtrl) {
+              return UIEvent{Action: ActionNewTab}
+          }
+      case "W":
+          if k.Modifiers.Contain(key.ModCtrl) {
+              return UIEvent{Action: ActionCloseTab, TabIndex: -1} // -1 means current
+          }
+      case "Tab":
+          if k.Modifiers.Contain(key.ModCtrl) {
+              if k.Modifiers.Contain(key.ModShift) {
+                  return UIEvent{Action: ActionPrevTab}
+              }
+              return UIEvent{Action: ActionNextTab}
+          }
+      case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+          if k.Modifiers.Contain(key.ModCtrl) {
+              idx := int(k.Name[0] - '1') // "1" -> 0, "2" -> 1, etc.
+              return UIEvent{Action: ActionSwitchTab, TabIndex: idx}
+          }
+      #+END_SRC
+
+**** Orchestrator Changes in internal/app/orchestrator.go
+
+***** Add TabManager field
+      #+BEGIN_SRC go
+      import "github.com/justyntemme/razor/internal/tabs"
+
+      type Orchestrator struct {
+          // ... existing fields ...
+          tabManager *tabs.TabManager  // NEW: replaces history/historyIndex
+
+          // These move to TabState, remove from Orchestrator:
+          // history        []string     // REMOVE
+          // historyIndex   int          // REMOVE
+          // rawEntries     []ui.UIEntry // MOVE to tab-specific storage
+          // dirEntries     []ui.UIEntry // MOVE to tab-specific storage
+      }
+      #+END_SRC
+
+***** Update NewOrchestrator
+      #+BEGIN_SRC go
+      func NewOrchestrator() *Orchestrator {
+          // ... existing code ...
+
+          // Load tab config from settings (or use defaults)
+          tabConfig := tabs.DefaultTabConfig()
+
+          o := &Orchestrator{
+              // ... existing fields ...
+              tabManager: tabs.NewTabManager(tabConfig, home),
+          }
+
+          return o
+      }
+      #+END_SRC
+
+***** Add tab action handlers
+      #+BEGIN_SRC go
+      // In handleUIEvent():
+      case ui.ActionNewTab:
+          currentPath := o.tabManager.GetActiveTab().CurrentPath
+          newTab := o.tabManager.NewTab(currentPath, o.homePath)
+          if newTab != nil {
+              o.syncUIWithTabs()
+              o.requestDir(newTab.CurrentPath)
+          }
+      case ui.ActionCloseTab:
+          index := evt.TabIndex
+          if index == -1 {
+              index = o.tabManager.GetActiveIndex()
+          }
+          shouldClose, activeTab := o.tabManager.CloseTab(index)
+          if shouldClose {
+              o.window.Perform(system.ActionClose)
+              return
+          }
+          o.syncUIWithTabs()
+          if activeTab != nil {
+              o.requestDir(activeTab.CurrentPath)
+          }
+      case ui.ActionSwitchTab:
+          tab := o.tabManager.SwitchTab(evt.TabIndex)
+          if tab != nil {
+              o.syncUIWithTabs()
+              o.requestDir(tab.CurrentPath)
+          }
+      case ui.ActionNextTab:
+          tab := o.tabManager.NextTab()
+          o.syncUIWithTabs()
+          o.requestDir(tab.CurrentPath)
+      case ui.ActionPrevTab:
+          tab := o.tabManager.PrevTab()
+          o.syncUIWithTabs()
+          o.requestDir(tab.CurrentPath)
+      #+END_SRC
+
+***** Helper to sync UI with tab state
+      #+BEGIN_SRC go
+      func (o *Orchestrator) syncUIWithTabs() {
+          o.ui.SetTabs(o.tabManager.GetTabs(), o.tabManager.GetActiveIndex())
+          o.window.Invalidate()
+      }
+      #+END_SRC
+
+**** Gio Library Calls Summary
+
+| Purpose | Gio Call |
+|---------|----------|
+| Horizontal tab list | layout.List with Axis: layout.Horizontal |
+| Tab click detection | widget.Clickable.Clicked(gtx) |
+| Close button click | Nested widget.Clickable inside tab |
+| Tab background | paint.FillShape with clip.Rect |
+| Active tab highlight | Different bgColor based on isActive |
+| Keyboard shortcuts | key.Filter in processGlobalInput |
+| App close action | window.Perform(system.ActionClose) |
 
 ** TODO Bookmarks Enhancement
    - [ ] Bookmark folders (not just favorites)

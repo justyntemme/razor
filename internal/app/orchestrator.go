@@ -15,6 +15,7 @@ import (
 	"gioui.org/app"
 	"gioui.org/op"
 
+	"github.com/justyntemme/razor/internal/debug"
 	"github.com/justyntemme/razor/internal/fs"
 	"github.com/justyntemme/razor/internal/search"
 	"github.com/justyntemme/razor/internal/store"
@@ -165,12 +166,15 @@ func (o *Orchestrator) validatePath(path string) (exists bool, isDir bool) {
 }
 
 func (o *Orchestrator) Run(startPath string) error {
-	if debugEnabled {
+	if debug.Enabled {
 		log.Println("Starting Razor in DEBUG mode")
+		debug.Log(debug.APP, "Debug categories enabled: %v", debug.ListEnabled())
 	}
 
 	configDir, _ := os.UserConfigDir()
-	if err := o.store.Open(filepath.Join(configDir, "razor", "razor.db")); err != nil {
+	dbPath := filepath.Join(configDir, "razor", "razor.db")
+	debug.Log(debug.APP, "Opening database: %s", dbPath)
+	if err := o.store.Open(dbPath); err != nil {
 		log.Printf("Failed to open DB: %v", err)
 	}
 	defer o.store.Close()
@@ -203,7 +207,7 @@ func (o *Orchestrator) Run(startPath string) error {
 			evt := o.ui.Layout(gtx, &o.state)
 
 			if evt.Action != ui.ActionNone {
-				debugLog("Action: %d, Path: %s, Index: %d", evt.Action, evt.Path, evt.NewIndex)
+				debug.Log(debug.UI_EVENT, "Action: %d Path: %s Index: %d", evt.Action, evt.Path, evt.NewIndex)
 			}
 
 			o.handleUIEvent(evt)
@@ -305,7 +309,7 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 	case ui.ActionRename:
 		go o.doRename(evt.OldPath, evt.Path)
 	case ui.ActionClearSearch:
-		log.Printf("[CLEAR] ActionClearSearch called")
+		debug.Log(debug.APP, "ClearSearch: cancelling search")
 		// Send cancel request to stop any ongoing search
 		o.fs.RequestChan <- fs.Request{Op: fs.CancelSearch}
 		// Clear all search state and restore original directory contents
@@ -318,7 +322,7 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		o.searchGen++
 		newGen := o.searchGen
 		o.searchGenMu.Unlock()
-		log.Printf("[CLEAR] Generation incremented to %d", newGen)
+		debug.Log(debug.APP, "ClearSearch: generation=%d", newGen)
 		// Restore from cached directory entries (no disk access needed)
 		if len(o.dirEntries) > 0 {
 			o.rawEntries = o.dirEntries
@@ -346,14 +350,14 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		o.ui.DefaultDepth = evt.DefaultDepth
 		// Save setting to database
 		o.store.RequestChan <- store.Request{Op: store.SaveSetting, Key: "default_depth", Value: itoa(evt.DefaultDepth)}
-		log.Printf("[SETTINGS] Changed default depth to: %d", evt.DefaultDepth)
+		debug.Log(debug.APP, "Settings: default_depth=%d", evt.DefaultDepth)
 	case ui.ActionChangeTheme:
 		val := "false"
 		if evt.DarkMode {
 			val = "true"
 		}
 		o.store.RequestChan <- store.Request{Op: store.SaveSetting, Key: "dark_mode", Value: val}
-		log.Printf("[SETTINGS] Changed theme to dark mode: %v", evt.DarkMode)
+		debug.Log(debug.APP, "Settings: dark_mode=%v", evt.DarkMode)
 	}
 }
 
@@ -361,17 +365,17 @@ func (o *Orchestrator) handleSearchEngineChange(engineID string) {
 	// Check if the engine is available before selecting it
 	engine := search.GetEngineByName(engineID)
 	engineCmd := search.GetEngineCommand(engine, o.searchEngines)
-	
+
 	// For non-builtin engines, verify it's actually available
 	if engine != search.EngineBuiltin && engineCmd == "" {
-		log.Printf("[SEARCH] Engine %s not available, staying with current engine", engineID)
+		debug.Log(debug.SEARCH, "Engine %s not available, staying with current", engineID)
 		return
 	}
-	
+
 	o.selectedEngine = engine
 	o.selectedEngineCmd = engineCmd
 	o.ui.SetSearchEngine(engineID)
-	log.Printf("[SEARCH] Changed search engine to: %s (cmd: %s)", engineID, o.selectedEngineCmd)
+	debug.Log(debug.SEARCH, "Changed engine to: %s (cmd: %s)", engineID, o.selectedEngineCmd)
 }
 
 func (o *Orchestrator) openNewWindow() {
@@ -424,12 +428,12 @@ func (o *Orchestrator) requestDir(path string) {
 }
 
 func (o *Orchestrator) doSearch(query string) {
-	log.Printf("[SEARCH] doSearch called with query: %q", query)
+	debug.Log(debug.SEARCH, "doSearch: query=%q", query)
 	o.state.SelectedIndex = -1
-	
+
 	// Empty query clears the search and restores directory
 	if query == "" {
-		log.Printf("[SEARCH] Empty query, restoring directory")
+		debug.Log(debug.SEARCH, "doSearch: empty query, restoring directory")
 		// Cancel any ongoing search
 		o.fs.RequestChan <- fs.Request{Op: fs.CancelSearch}
 		o.state.IsSearchResult = false
@@ -454,7 +458,7 @@ func (o *Orchestrator) doSearch(query string) {
 	// Check if query contains directive prefix but no value (e.g., "contents:" alone)
 	// These are incomplete and should not trigger a search
 	if isIncompleteDirective(query) {
-		log.Printf("[SEARCH] Incomplete directive, ignoring: %q", query)
+		debug.Log(debug.SEARCH, "doSearch: incomplete directive, waiting: %q", query)
 		// Don't search, just wait for user to complete the directive
 		// But also don't clear the current results
 		return
@@ -473,8 +477,8 @@ func (o *Orchestrator) doSearch(query string) {
 		hasCompleteDirective(query, "recursive:") ||
 		hasCompleteDirective(query, "depth:")
 	
-	log.Printf("[SEARCH] isDirectiveSearch=%v, hasContents=%v", isDirectiveSearch, hasCompleteDirective(query, "contents:"))
-	
+	debug.Log(debug.SEARCH, "doSearch: isDirective=%v hasContents=%v", isDirectiveSearch, hasCompleteDirective(query, "contents:"))
+
 	if isDirectiveSearch {
 		// Show progress for directive searches
 		label := "Searching..."
@@ -490,7 +494,8 @@ func (o *Orchestrator) doSearch(query string) {
 	gen := o.searchGen
 	o.searchGenMu.Unlock()
 	
-	log.Printf("[SEARCH] Sending search request: path=%q query=%q gen=%d engine=%d defaultDepth=%d", o.state.CurrentPath, query, gen, o.selectedEngine, o.defaultDepth)
+	debug.Log(debug.SEARCH, "doSearch: sending request path=%q gen=%d engine=%d depth=%d",
+		o.state.CurrentPath, gen, o.selectedEngine, o.defaultDepth)
 	o.fs.RequestChan <- fs.Request{
 		Op:           fs.SearchDir,
 		Path:         o.state.CurrentPath,
@@ -581,27 +586,26 @@ func (o *Orchestrator) handleProgress(p fs.Progress) {
 }
 
 func (o *Orchestrator) handleFSResponse(resp fs.Response) {
-	log.Printf("[FS_RESP] Received response: op=%d path=%q entries=%d gen=%d err=%v cancelled=%v", 
-		resp.Op, resp.Path, len(resp.Entries), resp.Gen, resp.Err, resp.Cancelled)
-	
+	debug.Log(debug.APP, "FSResponse: op=%d path=%q entries=%d gen=%d cancelled=%v err=%v",
+		resp.Op, resp.Path, len(resp.Entries), resp.Gen, resp.Cancelled, resp.Err)
+
 	// Clear any progress indicator
 	o.setProgress(false, "", 0, 0)
-	
+
 	// If cancelled, just ignore the response
 	if resp.Cancelled {
-		log.Printf("[FS_RESP] Response was cancelled, ignoring")
+		debug.Log(debug.APP, "FSResponse: cancelled, ignoring")
 		return
 	}
-	
+
 	// Check if this is a stale response (a newer request has been made)
 	o.searchGenMu.Lock()
 	currentGen := o.searchGen
 	o.searchGenMu.Unlock()
-	
+
 	if resp.Gen < currentGen {
 		// Stale response, ignore it
-		log.Printf("[FS_RESP] STALE response (gen %d < current %d), ignoring", resp.Gen, currentGen)
-		debugLog("Ignoring stale FS response (gen %d < current %d)", resp.Gen, currentGen)
+		debug.Log(debug.APP, "FSResponse: STALE (gen %d < current %d), ignoring", resp.Gen, currentGen)
 		return
 	}
 	
@@ -626,11 +630,11 @@ func (o *Orchestrator) handleFSResponse(resp fs.Response) {
 		o.state.IsSearchResult = false
 		o.state.SearchQuery = ""
 		o.state.CurrentPath = resp.Path
-		log.Printf("[FS_RESP] FetchDir completed, %d entries stored in dirEntries", len(entries))
+		debug.Log(debug.APP, "FSResponse: FetchDir complete, %d entries", len(entries))
 	} else {
 		// Search result: only update rawEntries, keep dirEntries intact
 		o.rawEntries = entries
-		log.Printf("[FS_RESP] SearchDir completed, %d results found", len(entries))
+		debug.Log(debug.APP, "FSResponse: SearchDir complete, %d results", len(entries))
 		// IsSearchResult and SearchQuery were already set in doSearch
 	}
 
@@ -678,14 +682,14 @@ func (o *Orchestrator) handleStoreResponse(resp store.Response) {
 			if depth, err := strconv.Atoi(val); err == nil && depth >= 1 && depth <= 20 {
 				o.defaultDepth = depth
 				o.ui.SetDefaultDepth(depth)
-				log.Printf("[SETTINGS] Loaded default depth: %d", depth)
+				debug.Log(debug.APP, "Settings: loaded default_depth=%d", depth)
 			}
 		}
 		// Load dark mode setting
 		if val, ok := resp.Settings["dark_mode"]; ok {
 			darkMode := val == "true"
 			o.ui.SetDarkMode(darkMode)
-			log.Printf("[SETTINGS] Loaded dark mode: %v", darkMode)
+			debug.Log(debug.APP, "Settings: loaded dark_mode=%v", darkMode)
 		}
 	}
 	o.window.Invalidate()
