@@ -1,0 +1,96 @@
+#+TITLE: Razor File Explorer - Code Review & Refactoring Plan
+#+AUTHOR: AI Assistant
+#+DATE: 2025-11-29
+#+STARTUP: overview
+
+* Executive Summary
+The project demonstrates a strong understanding of system-level programming and concurrency patterns. The Orchestrator pattern effectively isolates IO from the UI thread. However, there are critical race conditions regarding shared state access between the logic and render goroutines, and opportunities to optimize file system operations for standard directory views.
+
+* 1. Architecture & Concurrency Safety
+** CRITICAL: Fix Data Race in UI State
+   [cite_start]The `Orchestrator` runs `processEvents` in a background goroutine which modifies `o.state` (e.g., in `handleFSResponse` [cite: 90][cite_start]), while the main thread calls `o.ui.Layout` which reads `o.state`[cite: 74].
+   - *Problem*: Simultaneous read/write access to `o.state.Entries` will cause panic or data corruption.
+   - *Action*: Implement a `sync.RWMutex` on the `State` struct or within the `Orchestrator`.
+   #+BEGIN_SRC go
+   type Orchestrator struct {
+       stateMu sync.RWMutex // Add this
+       state   ui.State
+       // ...
+   }
+   
+   // In Run/Layout loop:
+   o.stateMu.RLock()
+   o.ui.Layout(gtx, &o.state)
+   o.stateMu.RUnlock()
+   
+   // In handleFSResponse:
+   o.stateMu.Lock()
+   o.rawEntries = entries
+   o.applyFilterAndSort()
+   o.stateMu.Unlock()
+   #+END_SRC
+
+* 2. Performance Optimizations
+** OPTIMIZATION: Refactor ~fetchDir~ implementation
+   [cite_start]Currently, `fetchDir` uses `fastwalk.Walk` even for single directory listings[cite: 164].
+   - *Problem*: `fastwalk` is optimized for deep recursion and incurs unnecessary overhead (statting, walking logic) for depth-1 fetches.
+   - *Action*: Switch to `os.ReadDir` for standard views.
+   #+BEGIN_SRC go
+   // internal/fs/system.go
+   func (s *System) fetchDir(path string) Response {
+       entries, err := os.ReadDir(path) // Standard Go 1.16+
+       if err != nil {
+           return Response{Op: FetchDir, Path: path, Err: err}
+       }
+       // Map os.DirEntry to fs.Entry...
+   }
+   #+END_SRC
+
+** OPTIMIZATION: Parallelize Builtin Content Search
+   [cite_start]For the `builtin` engine, content reading happens sequentially inside the walk callback[cite: 168, 230].
+   - *Problem*: I/O bound operations inside the walker slow down the directory traversal.
+   - *Action*: Use a worker pool (e.g., `errgroup`) to read and match file content asynchronously, decoupling traversal speed from read speed.
+
+* 3. Maintainability & Code Quality
+** REFACTOR: Remove UI Code Duplication
+   [cite_start]`menuItem` and `menuItemDanger` in `renderer.go` are nearly identical[cite: 281, 282].
+   - *Action*: Consolidate into a single helper function accepting a color parameter.
+   #+BEGIN_SRC go
+   func (r *Renderer) menuItem(gtx layout.Context, btn *widget.Clickable, label string, textColor color.NRGBA) layout.Dimensions
+   #+END_SRC
+
+** CLEANUP: Dead Code Removal
+   [cite_start]`platformGetApplications` is implemented for all platforms but never used in `orchestrator.go`[cite: 120, 131, 137].
+   - *Action*: Either wire this up to a "Open With..." submenu in the context menu or remove it to reduce maintenance debt.
+
+** REFACTOR: Decompose "God Struct" (Orchestrator)
+   [cite_start]The `Orchestrator` manages Navigation, Clipboard, Conflict Resolution, and Search[cite: 66, 67, 82, 103].
+   - *Action*: Extract distinct responsibilities into sub-controllers:
+     - `internal/app/clipboard.go`: Struct to handle copy/cut/paste state.
+     - `internal/app/history.go`: Struct to handle back/forward stacks.
+
+* 4. Idiomatic Go & Best Practices
+** IMPROVEMENT: Robust Exit Code Handling
+   [cite_start]In `internal/search/engine.go`, the code ignores exit codes from grep tools[cite: 205].
+   - *Context*: `grep`/`ripgrep` return exit code 1 if no matches are found, which is not an error.
+   - *Action*: Explicitly check `exec.ExitError` to distinguish between "no matches" (ignore) and "syntax/system error" (report).
+
+** IMPROVEMENT: User-Facing Error Handling
+   [cite_start]Errors are currently logged to stdout via `log.Printf`[cite: 90].
+   - *Problem*: End users running the GUI binary will not see permission denied errors or IO failures.
+   - *Action*: Implement a `Toast` or `Snackbar` mechanism in the UI `Renderer` to surface errors visually.
+
+** CONFIG: Git Ignore
+   [cite_start]The file `.DS_Store` (macOS metadata) was found in the repo content[cite: 2].
+   - *Action*: Add `.DS_Store` to `.gitignore`.
+
+* 5. Specific Logic Fixes
+** BUG FIX: History Slice Bounds
+   [cite_start]In `Maps`, the slice slicing logic does not cap the maximum history size[cite: 82].
+   - *Risk*: Infinite memory growth during long sessions.
+   - *Action*: Implement a circular buffer or a hard limit (e.g., 100 entries) for navigation history.
+
+** BUG FIX: Symlink Loops in Search
+   [cite_start]`walkDirWithProgress` sets `Follow: true` for `fastwalk`[cite: 175].
+   - *Risk*: `recursive:` searches might enter infinite loops or scan massive libraries multiple times if symlinks point to parents.
+   - *Action*: Set `Follow: false` by default for recursive searches, or expose it as a user setting.

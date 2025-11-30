@@ -810,6 +810,11 @@
    - Consider virtualized list
 
 * Technical Debt
+** TODO Refactor: Consolidate Path Handling Logic
+*** TODO File: razor/internal/app/orchestrator.go (isAbsolutePath)
+    - Status: Custom logic for checking absolute paths
+    - Action: Leverage standard library function filepath.IsAbs() to simplify the implementation of isAbsolutePath.
+
 ** TODO Code Organization
    - [ ] Split large files into smaller modules
    - [ ] Add comprehensive tests
