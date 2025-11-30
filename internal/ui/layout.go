@@ -698,24 +698,25 @@ func (r *Renderer) menuShell(gtx layout.Context, width unit.Dp, content layout.W
 		})
 }
 
-func (r *Renderer) menuItem(gtx layout.Context, btn *widget.Clickable, label string) layout.Dimensions {
+// menuItemWithColor renders a clickable menu item with the specified text color
+func (r *Renderer) menuItemWithColor(gtx layout.Context, btn *widget.Clickable, label string, textColor color.NRGBA) layout.Dimensions {
 	return material.Clickable(gtx, btn, func(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Body2(r.Theme, label)
-			lbl.Color = colBlack
+			lbl.Color = textColor
 			return lbl.Layout(gtx)
 		})
 	})
 }
 
+// menuItem renders a clickable menu item with default (black) text color
+func (r *Renderer) menuItem(gtx layout.Context, btn *widget.Clickable, label string) layout.Dimensions {
+	return r.menuItemWithColor(gtx, btn, label, colBlack)
+}
+
+// menuItemDanger renders a clickable menu item with danger (red) text color
 func (r *Renderer) menuItemDanger(gtx layout.Context, btn *widget.Clickable, label string) layout.Dimensions {
-	return material.Clickable(gtx, btn, func(gtx layout.Context) layout.Dimensions {
-		return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body2(r.Theme, label)
-			lbl.Color = colDanger
-			return lbl.Layout(gtx)
-		})
-	})
+	return r.menuItemWithColor(gtx, btn, label, colDanger)
 }
 
 func (r *Renderer) layoutFileMenu(gtx layout.Context, eventOut *UIEvent) layout.Dimensions {

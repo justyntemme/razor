@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // SearchEngine represents a content search engine
@@ -227,8 +228,27 @@ func runSearchCommand(ctx context.Context, cmd string, args []string, progressFn
 		progressFn(len(results))
 	}
 
-	// Wait for command to finish (ignore exit code - grep returns 1 for no matches)
-	c.Wait()
+	// Wait for command to finish and check exit code
+	err = c.Wait()
+	if err != nil {
+		// grep/ripgrep/ugrep return exit code 1 when no matches are found - this is not an error
+		// Exit code 2+ typically indicates a real error (syntax, I/O, etc.)
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
+				exitCode := status.ExitStatus()
+				if exitCode == 1 {
+					// Exit code 1 = no matches found, not an error
+					log.Printf("[EXTERNAL_SEARCH] Complete: no matches found")
+					return results, scanner.Err()
+				}
+				// Exit code 2+ = real error
+				log.Printf("[EXTERNAL_SEARCH] Error: exit code %d: %v", exitCode, err)
+				return results, err
+			}
+		}
+		log.Printf("[EXTERNAL_SEARCH] Error: %v", err)
+		return results, err
+	}
 
 	log.Printf("[EXTERNAL_SEARCH] Complete: found %d files", len(results))
 	return results, scanner.Err()

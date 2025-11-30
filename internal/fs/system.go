@@ -523,8 +523,10 @@ func (s *System) walkDirWithProgress(ctx context.Context, basePath string, maxDe
 	var results []Entry
 	var mu sync.Mutex
 
+	// Don't follow symlinks in recursive searches to avoid infinite loops
+	// (e.g., symlinks pointing to parent directories)
 	conf := &fastwalk.Config{
-		Follow: true, // Follow symlinks
+		Follow: false,
 	}
 
 	err := fastwalk.Walk(conf, basePath, func(fullPath string, d fs.DirEntry, err error) error {

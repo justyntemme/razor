@@ -26,11 +26,14 @@ import (
 	"github.com/justyntemme/razor/internal/ui"
 )
 
+const maxHistorySize = 100 // Limit history to prevent unbounded memory growth
+
 type Orchestrator struct {
 	window         *app.Window
 	fs             *fs.System
 	store          *store.DB
 	ui             *ui.Renderer
+	stateMu        sync.RWMutex // Protects state from concurrent read/write
 	state          ui.State
 	history        []string
 	historyIndex   int
@@ -211,7 +214,10 @@ func (o *Orchestrator) Run(startPath string) error {
 			return e.Err
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, e)
+			// Lock state for reading during UI layout
+			o.stateMu.RLock()
 			evt := o.ui.Layout(gtx, &o.state)
+			o.stateMu.RUnlock()
 
 			if evt.Action != ui.ActionNone {
 				debug.Log(debug.UI_EVENT, "Action: %d Path: %s Index: %d", evt.Action, evt.Path, evt.NewIndex)
@@ -398,6 +404,18 @@ func (o *Orchestrator) navigate(path string) {
 	}
 	o.history = append(o.history, path)
 	o.historyIndex = len(o.history) - 1
+
+	// Limit history size to prevent unbounded memory growth
+	if len(o.history) > maxHistorySize {
+		// Remove oldest entries
+		excess := len(o.history) - maxHistorySize
+		o.history = o.history[excess:]
+		o.historyIndex -= excess
+		if o.historyIndex < 0 {
+			o.historyIndex = 0
+		}
+	}
+
 	o.requestDir(path)
 }
 
@@ -624,6 +642,9 @@ func (o *Orchestrator) handleFSResponse(resp fs.Response) {
 		}
 	}
 
+	// Lock state for writing
+	o.stateMu.Lock()
+
 	// Track whether this is a search result or regular directory fetch
 	if resp.Op == fs.FetchDir {
 		// Directory fetch: store as the canonical directory listing
@@ -649,6 +670,8 @@ func (o *Orchestrator) handleFSResponse(resp fs.Response) {
 	if o.state.SelectedIndex >= len(o.state.Entries) {
 		o.state.SelectedIndex = -1
 	}
+
+	o.stateMu.Unlock()
 	o.window.Invalidate()
 }
 
