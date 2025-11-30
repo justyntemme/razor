@@ -113,7 +113,35 @@
    - [ ] Visual feedback during drag
    Note: Put on hold due to implementation challenges with Gio
 
+* Next Steps (Priority Order)
+** TODO PRIORITY: Refactor orchestrator.go into logical sub-files
+   Split the monolithic orchestrator.go into separate files within the same package.
+   This keeps all code in internal/app without import changes.
+
+*** Files to create:
+    - internal/app/clipboard.go - Copy/cut/paste state and operations
+    - internal/app/history.go - Navigation history (back/forward stacks)
+    - internal/app/navigation.go - Path expansion, validation, navigation logic
+    - internal/app/search.go - Search-related handlers and helpers
+    - internal/app/file_ops.go - File operations (create, delete, rename, paste)
+    - internal/app/conflict.go - Conflict resolution dialog handling
+
+*** Benefits:
+    - Easier to navigate and maintain
+    - Logical grouping of related functionality
+    - Smaller, focused files
+    - No import changes needed (same package)
+
 * Planned Features
+** TODO Favorites Folders (Dropdown Groups)
+   Allow organizing favorites into collapsible folder groups.
+   - [ ] Create "Favorites Group" data structure
+   - [ ] Add UI for creating/managing groups
+   - [ ] Collapsible group headers in sidebar
+   - [ ] Drag favorites into groups
+   - [ ] Persist groups in database
+
+
 ** TODO File Preview Panel
    - [ ] Image thumbnails
    - [ ] Text file preview

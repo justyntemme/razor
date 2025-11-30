@@ -410,79 +410,86 @@ func (r *Renderer) layoutSidebar(gtx layout.Context, state *State, eventOut *UIE
 	sidebarYOffset := gtx.Dp(92)
 	// FAVORITES label height ≈ 24dp
 	favLabelHeight := gtx.Dp(24)
-	
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(4), Left: unit.Dp(8)}.Layout(gtx,
-				func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body2(r.Theme, "FAVORITES")
-					lbl.Color = colGray
-					return lbl.Layout(gtx)
-				})
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints.Max.Y = gtx.Dp(150)
-			defer pointer.PassOp{}.Push(gtx.Ops).Pop()
-			return r.favState.Layout(gtx, len(state.FavList), func(gtx layout.Context, i int) layout.Dimensions {
-				fav := &state.FavList[i]
-				
-				// Render and get click states + position
-				rowDims, leftClicked, rightClicked, clickPos := r.renderFavoriteRow(gtx, fav)
-				
-				// Handle left-click
-				if leftClicked {
-					*eventOut = UIEvent{Action: ActionNavigate, Path: fav.Path}
-				}
-				
-				// Handle right-click - compute window coordinates
-				if rightClicked {
-					// Sidebar is at X=8 (inset), favorites list is after label
-					windowPos := image.Pt(
-						gtx.Dp(8) + clickPos.X,
-						sidebarYOffset + favLabelHeight + clickPos.Y,
-					)
-					r.menuVisible, r.menuPos, r.menuPath = true, windowPos, fav.Path
-					r.menuIsDir, r.menuIsFav = true, true
-					r.menuIsBackground = false
-				}
-				
-				return rowDims
-			})
-		}),
 
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				height := gtx.Dp(unit.Dp(1))
-				paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, height)}.Op())
-				return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, height)}
-			})
-		}),
+	// Wrap entire sidebar in a scrollable list to handle overflow
+	return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			// FAVORITES label
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(4), Left: unit.Dp(8)}.Layout(gtx,
+					func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(r.Theme, "FAVORITES")
+						lbl.Color = colGray
+						return lbl.Layout(gtx)
+					})
+			}),
+			// Favorites list - no max height constraint, shows all favorites
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+				return r.favState.Layout(gtx, len(state.FavList), func(gtx layout.Context, i int) layout.Dimensions {
+					fav := &state.FavList[i]
 
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Bottom: unit.Dp(4), Left: unit.Dp(8)}.Layout(gtx,
-				func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body2(r.Theme, "DRIVES")
-					lbl.Color = colGray
-					return lbl.Layout(gtx)
+					// Render and get click states + position
+					rowDims, leftClicked, rightClicked, clickPos := r.renderFavoriteRow(gtx, fav)
+
+					// Handle left-click
+					if leftClicked {
+						*eventOut = UIEvent{Action: ActionNavigate, Path: fav.Path}
+					}
+
+					// Handle right-click - compute window coordinates
+					if rightClicked {
+						// Sidebar is at X=8 (inset), favorites list is after label
+						windowPos := image.Pt(
+							gtx.Dp(8)+clickPos.X,
+							sidebarYOffset+favLabelHeight+clickPos.Y,
+						)
+						r.menuVisible, r.menuPos, r.menuPath = true, windowPos, fav.Path
+						r.menuIsDir, r.menuIsFav = true, true
+						r.menuIsBackground = false
+					}
+
+					return rowDims
 				})
-		}),
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			defer pointer.PassOp{}.Push(gtx.Ops).Pop()
-			return r.driveState.Layout(gtx, len(state.Drives), func(gtx layout.Context, i int) layout.Dimensions {
-				drive := &state.Drives[i]
-				
-				// Render and get click state
-				rowDims, clicked := r.renderDriveRow(gtx, drive)
-				
-				// Handle click
-				if clicked {
-					*eventOut = UIEvent{Action: ActionNavigate, Path: drive.Path}
-				}
-				
-				return rowDims
-			})
-		}),
-	)
+			}),
+
+			// Separator
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					height := gtx.Dp(unit.Dp(1))
+					paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, height)}.Op())
+					return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, height)}
+				})
+			}),
+
+			// DRIVES label
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Bottom: unit.Dp(4), Left: unit.Dp(8)}.Layout(gtx,
+					func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(r.Theme, "DRIVES")
+						lbl.Color = colGray
+						return lbl.Layout(gtx)
+					})
+			}),
+			// Drives list
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+				return r.driveState.Layout(gtx, len(state.Drives), func(gtx layout.Context, i int) layout.Dimensions {
+					drive := &state.Drives[i]
+
+					// Render and get click state
+					rowDims, clicked := r.renderDriveRow(gtx, drive)
+
+					// Handle click
+					if clicked {
+						*eventOut = UIEvent{Action: ActionNavigate, Path: drive.Path}
+					}
+
+					return rowDims
+				})
+			}),
+		)
+	})
 }
 
 func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layout.List, eventOut *UIEvent) layout.Dimensions {

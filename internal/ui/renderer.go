@@ -221,6 +221,7 @@ type Renderer struct {
 	Theme               *material.Theme
 	listState, favState layout.List
 	driveState          layout.List
+	sidebarScroll       layout.List // Scrollable container for entire sidebar
 	backBtn, fwdBtn     widget.Clickable
 	homeBtn             widget.Clickable
 	bgClick             widget.Clickable
@@ -334,6 +335,7 @@ func NewRenderer() *Renderer {
 	r.listState.Axis = layout.Vertical
 	r.favState.Axis = layout.Vertical
 	r.driveState.Axis = layout.Vertical
+	r.sidebarScroll.Axis = layout.Vertical
 	r.pathEditor.SingleLine, r.pathEditor.Submit = true, true
 	r.searchEditor.SingleLine, r.searchEditor.Submit = true, true
 	r.createDialogEditor.SingleLine, r.createDialogEditor.Submit = true, true

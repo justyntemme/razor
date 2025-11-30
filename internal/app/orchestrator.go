@@ -1,13 +1,10 @@
 package app
 
 import (
-	"io"
-	iofs "io/fs"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,7 +15,6 @@ import (
 	"gioui.org/app"
 	"gioui.org/op"
 
-	"github.com/charlievieth/fastwalk"
 	"github.com/justyntemme/razor/internal/debug"
 	"github.com/justyntemme/razor/internal/fs"
 	"github.com/justyntemme/razor/internal/search"
@@ -51,23 +47,23 @@ type Orchestrator struct {
 	progressThrottleMu sync.Mutex
 
 	// Conflict resolution state
-	conflictResolution ui.ConflictResolution          // Current resolution mode
-	conflictResponse   chan ui.ConflictResolution    // Channel for dialog response
-	conflictAbort      bool                          // True if user clicked Stop
+	conflictResolution ui.ConflictResolution       // Current resolution mode
+	conflictResponse   chan ui.ConflictResolution  // Channel for dialog response
+	conflictAbort      bool                        // True if user clicked Stop
 
 	// Search engine settings
-	searchEngines     []search.EngineInfo  // Detected search engines
-	selectedEngine    search.SearchEngine  // Currently selected engine
-	selectedEngineCmd string               // Command for the selected engine
-	defaultDepth      int                  // Default recursive search depth
+	searchEngines     []search.EngineInfo // Detected search engines
+	selectedEngine    search.SearchEngine // Currently selected engine
+	selectedEngineCmd string              // Command for the selected engine
+	defaultDepth      int                 // Default recursive search depth
 }
 
 func NewOrchestrator() *Orchestrator {
 	home, _ := os.UserHomeDir()
-	
+
 	// Detect available search engines
 	engines := search.DetectEngines()
-	
+
 	// Convert to UI format
 	uiEngines := make([]ui.SearchEngineInfo, len(engines))
 	for i, e := range engines {
@@ -79,7 +75,7 @@ func NewOrchestrator() *Orchestrator {
 			Version:   e.Version,
 		}
 	}
-	
+
 	o := &Orchestrator{
 		window:           new(app.Window),
 		fs:               fs.NewSystem(),
@@ -94,85 +90,13 @@ func NewOrchestrator() *Orchestrator {
 		selectedEngine:   search.EngineBuiltin,
 		defaultDepth:     2, // Default recursive depth
 	}
-	
+
 	// Set up UI with detected engines
 	o.ui.SearchEngines = uiEngines
 	o.ui.SetSearchEngine("builtin")
 	o.ui.SetDefaultDepth(2)
-	
+
 	return o
-}
-
-// expandPath expands and normalizes a path string, handling:
-// - ~ for home directory
-// - Relative paths (../, ./)
-// - Absolute paths
-// - Windows drive letters (C:, D:, etc.)
-// - Root path (/)
-func (o *Orchestrator) expandPath(input string) string {
-	input = strings.TrimSpace(input)
-	if input == "" {
-		return o.state.CurrentPath
-	}
-
-	// Handle home directory expansion
-	if strings.HasPrefix(input, "~") {
-		if input == "~" {
-			return o.homePath
-		}
-		if strings.HasPrefix(input, "~/") || strings.HasPrefix(input, "~\\") {
-			input = filepath.Join(o.homePath, input[2:])
-			return filepath.Clean(input)
-		}
-	}
-
-	// Check if it's an absolute path
-	if o.isAbsolutePath(input) {
-		return filepath.Clean(input)
-	}
-
-	// Handle relative paths - join with current directory
-	return filepath.Clean(filepath.Join(o.state.CurrentPath, input))
-}
-
-// isAbsolutePath checks if a path is absolute, handling both Unix and Windows paths
-func (o *Orchestrator) isAbsolutePath(path string) bool {
-	if len(path) == 0 {
-		return false
-	}
-
-	// Unix absolute path
-	if path[0] == '/' {
-		return true
-	}
-
-	// Windows absolute path checks
-	if runtime.GOOS == "windows" {
-		// Drive letter paths: C:\, D:\, C:/, etc.
-		if len(path) >= 2 && isLetter(path[0]) && path[1] == ':' {
-			return true
-		}
-		// UNC paths: \\server\share
-		if len(path) >= 2 && path[0] == '\\' && path[1] == '\\' {
-			return true
-		}
-	}
-
-	return false
-}
-
-// isLetter checks if a byte is an ASCII letter
-func isLetter(c byte) bool {
-	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
-}
-
-// validatePath checks if a path exists and returns info about it
-func (o *Orchestrator) validatePath(path string) (exists bool, isDir bool) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false, false
-	}
-	return true, info.IsDir()
 }
 
 func (o *Orchestrator) Run(startPath string) error {
@@ -371,23 +295,6 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 	}
 }
 
-func (o *Orchestrator) handleSearchEngineChange(engineID string) {
-	// Check if the engine is available before selecting it
-	engine := search.GetEngineByName(engineID)
-	engineCmd := search.GetEngineCommand(engine, o.searchEngines)
-
-	// For non-builtin engines, verify it's actually available
-	if engine != search.EngineBuiltin && engineCmd == "" {
-		debug.Log(debug.SEARCH, "Engine %s not available, staying with current", engineID)
-		return
-	}
-
-	o.selectedEngine = engine
-	o.selectedEngineCmd = engineCmd
-	o.ui.SetSearchEngine(engineID)
-	debug.Log(debug.SEARCH, "Changed engine to: %s (cmd: %s)", engineID, o.selectedEngineCmd)
-}
-
 func (o *Orchestrator) openNewWindow() {
 	exe, err := os.Executable()
 	if err != nil {
@@ -396,179 +303,6 @@ func (o *Orchestrator) openNewWindow() {
 	}
 	cmd := exec.Command(exe, "-path", o.state.CurrentPath)
 	cmd.Start()
-}
-
-func (o *Orchestrator) navigate(path string) {
-	if o.historyIndex >= 0 && o.historyIndex < len(o.history)-1 {
-		o.history = o.history[:o.historyIndex+1]
-	}
-	o.history = append(o.history, path)
-	o.historyIndex = len(o.history) - 1
-
-	// Limit history size to prevent unbounded memory growth
-	if len(o.history) > maxHistorySize {
-		// Remove oldest entries
-		excess := len(o.history) - maxHistorySize
-		o.history = o.history[excess:]
-		o.historyIndex -= excess
-		if o.historyIndex < 0 {
-			o.historyIndex = 0
-		}
-	}
-
-	o.requestDir(path)
-}
-
-func (o *Orchestrator) goBack() {
-	parent := filepath.Dir(o.state.CurrentPath)
-	if parent == o.state.CurrentPath {
-		return
-	}
-	if o.historyIndex > 0 && o.history[o.historyIndex-1] == parent {
-		o.historyIndex--
-	} else {
-		o.history = append(o.history[:o.historyIndex], append([]string{parent}, o.history[o.historyIndex:]...)...)
-	}
-	o.requestDir(parent)
-}
-
-func (o *Orchestrator) goForward() {
-	if o.historyIndex < len(o.history)-1 {
-		o.historyIndex++
-		o.requestDir(o.history[o.historyIndex])
-	}
-}
-
-func (o *Orchestrator) requestDir(path string) {
-	o.state.SelectedIndex = -1
-	// Increment generation to invalidate any pending search results (atomic)
-	gen := o.searchGen.Add(1)
-	o.fs.RequestChan <- fs.Request{Op: fs.FetchDir, Path: path, Gen: gen}
-}
-
-func (o *Orchestrator) doSearch(query string) {
-	debug.Log(debug.SEARCH, "doSearch: query=%q", query)
-	o.state.SelectedIndex = -1
-
-	// Empty query clears the search and restores directory
-	if query == "" {
-		debug.Log(debug.SEARCH, "doSearch: empty query, restoring directory")
-		// Cancel any ongoing search
-		o.fs.RequestChan <- fs.Request{Op: fs.CancelSearch}
-		o.state.IsSearchResult = false
-		o.state.SearchQuery = ""
-		// Clear progress bar
-		o.setProgress(false, "", 0, 0)
-		// Increment generation to invalidate any pending search results (atomic)
-		o.searchGen.Add(1)
-		// Restore from cached directory entries
-		if len(o.dirEntries) > 0 {
-			o.rawEntries = o.dirEntries
-			o.applyFilterAndSort()
-			o.window.Invalidate()
-		} else {
-			o.requestDir(o.state.CurrentPath)
-		}
-		return
-	}
-	
-	// Check if query contains directive prefix but no value (e.g., "contents:" alone)
-	// These are incomplete and should not trigger a search
-	if isIncompleteDirective(query) {
-		debug.Log(debug.SEARCH, "doSearch: incomplete directive, waiting: %q", query)
-		// Don't search, just wait for user to complete the directive
-		// But also don't clear the current results
-		return
-	}
-	
-	// Track search state
-	o.state.SearchQuery = query
-	o.state.IsSearchResult = true
-	
-	// Check if this is a directive search (slow operation)
-	isDirectiveSearch := hasCompleteDirective(query, "contents:") ||
-		hasCompleteDirective(query, "ext:") ||
-		hasCompleteDirective(query, "size:") ||
-		hasCompleteDirective(query, "modified:") ||
-		hasCompleteDirective(query, "filename:") ||
-		hasCompleteDirective(query, "recursive:") ||
-		hasCompleteDirective(query, "depth:")
-	
-	debug.Log(debug.SEARCH, "doSearch: isDirective=%v hasContents=%v", isDirectiveSearch, hasCompleteDirective(query, "contents:"))
-
-	if isDirectiveSearch {
-		// Show progress for directive searches
-		label := "Searching..."
-		if hasCompleteDirective(query, "contents:") {
-			label = "Searching file contents..."
-		}
-		o.setProgress(true, label, 0, 0)
-	}
-	
-	// Increment generation for this search (atomic)
-	gen := o.searchGen.Add(1)
-
-	debug.Log(debug.SEARCH, "doSearch: sending request path=%q gen=%d engine=%d depth=%d",
-		o.state.CurrentPath, gen, o.selectedEngine, o.defaultDepth)
-	o.fs.RequestChan <- fs.Request{
-		Op:           fs.SearchDir,
-		Path:         o.state.CurrentPath,
-		Query:        query,
-		Gen:          gen,
-		SearchEngine: int(o.selectedEngine),
-		EngineCmd:    o.selectedEngineCmd,
-		DefaultDepth: o.defaultDepth,
-	}
-}
-
-// hasCompleteDirective checks if query has a directive with an actual value
-// Note: recursive: and depth: are allowed to have empty values (defaults to 10)
-func hasCompleteDirective(query, prefix string) bool {
-	lowerQuery := strings.ToLower(query)
-	idx := strings.Index(lowerQuery, prefix)
-	if idx < 0 {
-		return false
-	}
-	// For recursive: and depth:, presence alone is enough
-	if prefix == "recursive:" || prefix == "depth:" {
-		return true
-	}
-	// Check there's something after the prefix
-	afterPrefix := query[idx+len(prefix):]
-	// Get the value (up to next space or end)
-	parts := strings.Fields(afterPrefix)
-	if len(parts) == 0 {
-		return false
-	}
-	return len(parts[0]) > 0
-}
-
-// isIncompleteDirective checks if query ends with a directive prefix but no value
-func isIncompleteDirective(query string) bool {
-	lowerQuery := strings.ToLower(strings.TrimSpace(query))
-	prefixes := []string{"contents:", "ext:", "size:", "modified:", "filename:", "recursive:", "depth:"}
-	
-	for _, prefix := range prefixes {
-		// Check if query ends with just the prefix (no value)
-		if strings.HasSuffix(lowerQuery, prefix) {
-			// For recursive:, empty value is allowed (defaults to depth 10)
-			if prefix == "recursive:" || prefix == "depth:" {
-				return false
-			}
-			return true
-		}
-		// Check if query contains prefix with no value (prefix at end of a word boundary)
-		if strings.Contains(lowerQuery, prefix) {
-			idx := strings.Index(lowerQuery, prefix)
-			afterPrefix := strings.TrimSpace(lowerQuery[idx+len(prefix):])
-			// If nothing after the prefix, or next char is another directive prefix, incomplete
-			// (except for recursive: which can be empty)
-			if afterPrefix == "" && prefix != "recursive:" && prefix != "depth:" {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func (o *Orchestrator) processEvents() {
@@ -628,7 +362,7 @@ func (o *Orchestrator) handleFSResponse(resp fs.Response) {
 		debug.Log(debug.APP, "FSResponse: STALE (gen %d < current %d), ignoring", resp.Gen, currentGen)
 		return
 	}
-	
+
 	if resp.Err != nil {
 		log.Printf("FS Error: %v", resp.Err)
 		return
@@ -769,413 +503,11 @@ func (o *Orchestrator) getComparator() func(a, b ui.UIEntry) bool {
 	}
 }
 
-// --- File Operations ---
-
 func (o *Orchestrator) setProgress(active bool, label string, current, total int64) {
 	o.progressMu.Lock()
 	o.state.Progress = ui.ProgressState{Active: active, Label: label, Current: current, Total: total}
 	o.progressMu.Unlock()
 	o.window.Invalidate()
-}
-
-func (o *Orchestrator) doCreateFile(name string) {
-	if name == "" {
-		return
-	}
-
-	path := filepath.Join(o.state.CurrentPath, name)
-
-	// Check if file already exists
-	if _, err := os.Stat(path); err == nil {
-		log.Printf("File already exists: %s", path)
-		return
-	}
-
-	// Create the file
-	file, err := os.Create(path)
-	if err != nil {
-		log.Printf("Error creating file: %v", err)
-		return
-	}
-	file.Close()
-
-	// Refresh the directory
-	o.requestDir(o.state.CurrentPath)
-}
-
-func (o *Orchestrator) doCreateFolder(name string) {
-	if name == "" {
-		return
-	}
-
-	path := filepath.Join(o.state.CurrentPath, name)
-
-	// Check if folder already exists
-	if _, err := os.Stat(path); err == nil {
-		log.Printf("Folder already exists: %s", path)
-		return
-	}
-
-	// Create the folder
-	if err := os.Mkdir(path, 0755); err != nil {
-		log.Printf("Error creating folder: %v", err)
-		return
-	}
-
-	// Refresh the directory
-	o.requestDir(o.state.CurrentPath)
-}
-
-func (o *Orchestrator) doRename(oldPath, newPath string) {
-	if oldPath == "" || newPath == "" || oldPath == newPath {
-		return
-	}
-
-	// Check if new path already exists
-	if _, err := os.Stat(newPath); err == nil {
-		log.Printf("Cannot rename: destination already exists: %s", newPath)
-		return
-	}
-
-	// Perform the rename
-	if err := os.Rename(oldPath, newPath); err != nil {
-		log.Printf("Error renaming %s to %s: %v", oldPath, newPath, err)
-		return
-	}
-
-	log.Printf("Renamed %s to %s", oldPath, newPath)
-
-	// Refresh the directory
-	o.requestDir(o.state.CurrentPath)
-}
-
-// handleConflictResolution is called when user responds to conflict dialog
-func (o *Orchestrator) handleConflictResolution(resolution ui.ConflictResolution) {
-	// If "Apply to All" was checked, update the resolution mode
-	if o.state.Conflict.ApplyToAll {
-		o.conflictResolution = resolution
-	}
-	// Send response to waiting paste operation
-	select {
-	case o.conflictResponse <- resolution:
-	default:
-	}
-}
-
-func (o *Orchestrator) doPaste() {
-	clip := o.state.Clipboard
-	if clip == nil {
-		return
-	}
-
-	// Reset conflict resolution state
-	o.conflictResolution = ui.ConflictAsk
-	o.conflictAbort = false
-
-	src := clip.Path
-	dstDir := o.state.CurrentPath
-	dstName := filepath.Base(src)
-	dst := filepath.Join(dstDir, dstName)
-
-	srcInfo, err := os.Stat(src)
-	if err != nil {
-		log.Printf("Paste error: %v", err)
-		return
-	}
-
-	// Check for conflict
-	dstInfo, err := os.Stat(dst)
-	if err == nil {
-		// Destination exists - need to resolve conflict
-		resolution := o.resolveConflict(src, dst, srcInfo, dstInfo)
-		
-		switch resolution {
-		case ui.ConflictReplaceAll:
-			// Replace - delete destination first
-			if dstInfo.IsDir() {
-				os.RemoveAll(dst)
-			} else {
-				os.Remove(dst)
-			}
-		case ui.ConflictKeepBothAll:
-			// Keep both - rename destination
-			ext := filepath.Ext(dstName)
-			base := strings.TrimSuffix(dstName, ext)
-			for i := 1; ; i++ {
-				dst = filepath.Join(dstDir, base+"_copy"+strconv.Itoa(i)+ext)
-				if _, err := os.Stat(dst); os.IsNotExist(err) {
-					break
-				}
-			}
-		case ui.ConflictSkipAll:
-			// Skip this file
-			o.requestDir(o.state.CurrentPath)
-			return
-		case ui.ConflictAsk:
-			// User clicked Stop or dialog was aborted
-			o.requestDir(o.state.CurrentPath)
-			return
-		}
-	}
-
-	label := "Copying"
-	if clip.Op == ui.ClipCut {
-		label = "Moving"
-	}
-
-	if srcInfo.IsDir() {
-		o.setProgress(true, label+" folder...", 0, 0)
-		err = o.copyDir(src, dst, clip.Op == ui.ClipCut)
-	} else {
-		o.setProgress(true, label+" "+filepath.Base(src), 0, srcInfo.Size())
-		err = o.copyFile(src, dst, clip.Op == ui.ClipCut)
-	}
-
-	o.setProgress(false, "", 0, 0)
-
-	if err != nil {
-		log.Printf("Paste error: %v", err)
-	} else if clip.Op == ui.ClipCut {
-		o.state.Clipboard = nil
-	}
-
-	o.requestDir(o.state.CurrentPath)
-}
-
-// resolveConflict shows the conflict dialog and waits for user response
-func (o *Orchestrator) resolveConflict(src, dst string, srcInfo, dstInfo os.FileInfo) ui.ConflictResolution {
-	// If we have a remembered resolution from "Apply to All", use it
-	if o.conflictResolution != ui.ConflictAsk {
-		return o.conflictResolution
-	}
-	
-	// If abort was requested, return immediately
-	if o.conflictAbort {
-		return ui.ConflictAsk
-	}
-
-	// Set up the conflict state and show dialog
-	o.state.Conflict = ui.ConflictState{
-		Active:     true,
-		SourcePath: src,
-		DestPath:   dst,
-		SourceSize: srcInfo.Size(),
-		DestSize:   dstInfo.Size(),
-		SourceTime: srcInfo.ModTime(),
-		DestTime:   dstInfo.ModTime(),
-		IsDir:      srcInfo.IsDir(),
-		ApplyToAll: false,
-	}
-	o.window.Invalidate()
-
-	// Wait for user response
-	resolution := <-o.conflictResponse
-	return resolution
-}
-
-func (o *Orchestrator) copyFile(src, dst string, move bool) error {
-	srcFile, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer srcFile.Close()
-
-	info, err := srcFile.Stat()
-	if err != nil {
-		return err
-	}
-
-	dstFile, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer dstFile.Close()
-
-	// Progress-tracking writer (uses atomic add to avoid races with UI thread)
-	pw := &progressWriter{
-		w: dstFile,
-		onWrite: func(n int64) {
-			atomic.AddInt64(&o.state.Progress.Current, n)
-			o.window.Invalidate()
-		},
-	}
-
-	if _, err := io.Copy(pw, srcFile); err != nil {
-		return err
-	}
-
-	if err := os.Chmod(dst, info.Mode()); err != nil {
-		return err
-	}
-
-	if move {
-		return os.Remove(src)
-	}
-	return nil
-}
-
-func (o *Orchestrator) copyDir(src, dst string, move bool) error {
-	// Single-pass copy using fastwalk: count total size while building file list
-	var totalSize atomic.Int64
-	type copyItem struct {
-		srcPath string
-		dstPath string
-		isDir   bool
-		mode    iofs.FileMode
-	}
-	var items []copyItem
-	var itemsMu sync.Mutex
-
-	conf := &fastwalk.Config{Follow: true}
-	srcLen := len(src)
-
-	err := fastwalk.Walk(conf, src, func(fullPath string, d iofs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return nil // Skip errors, continue walking
-		}
-
-		// Get relative path from source root
-		relPath := fullPath[srcLen:]
-		if len(relPath) > 0 && (relPath[0] == '/' || relPath[0] == '\\') {
-			relPath = relPath[1:]
-		}
-		if relPath == "" {
-			return nil // Skip source root itself
-		}
-
-		dstPath := filepath.Join(dst, relPath)
-		info, err := fastwalk.StatDirEntry(fullPath, d)
-		if err != nil {
-			return nil // Skip files we can't stat
-		}
-
-		if info.IsDir() {
-			itemsMu.Lock()
-			items = append(items, copyItem{srcPath: fullPath, dstPath: dstPath, isDir: true, mode: info.Mode()})
-			itemsMu.Unlock()
-		} else {
-			totalSize.Add(info.Size())
-			itemsMu.Lock()
-			items = append(items, copyItem{srcPath: fullPath, dstPath: dstPath, isDir: false, mode: info.Mode()})
-			itemsMu.Unlock()
-		}
-		return nil
-	})
-
-	if err != nil {
-		return err
-	}
-
-	// Set up progress with counted total
-	o.progressMu.Lock()
-	o.state.Progress.Total = totalSize.Load()
-	o.state.Progress.Current = 0
-	o.progressMu.Unlock()
-
-	// Create destination root
-	if err := os.MkdirAll(dst, 0755); err != nil {
-		return err
-	}
-
-	// Process items: directories first (sorted by path length to ensure parents exist)
-	// then files
-	sort.Slice(items, func(i, j int) bool {
-		// Directories before files
-		if items[i].isDir != items[j].isDir {
-			return items[i].isDir
-		}
-		// Shorter paths first (parents before children)
-		return len(items[i].dstPath) < len(items[j].dstPath)
-	})
-
-	for _, item := range items {
-		if item.isDir {
-			if err := os.MkdirAll(item.dstPath, item.mode); err != nil {
-				return err
-			}
-		} else {
-			if err := o.copyFileWithProgress(item.srcPath, item.dstPath); err != nil {
-				return err
-			}
-		}
-	}
-
-	if move {
-		return os.RemoveAll(src)
-	}
-	return nil
-}
-
-func (o *Orchestrator) copyFileWithProgress(src, dst string) error {
-	srcFile, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer srcFile.Close()
-
-	info, err := srcFile.Stat()
-	if err != nil {
-		return err
-	}
-
-	dstFile, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer dstFile.Close()
-
-	// Progress-tracking writer (uses atomic add to avoid races with UI thread)
-	pw := &progressWriter{
-		w: dstFile,
-		onWrite: func(n int64) {
-			atomic.AddInt64(&o.state.Progress.Current, n)
-			o.window.Invalidate()
-		},
-	}
-
-	if _, err := io.Copy(pw, srcFile); err != nil {
-		return err
-	}
-
-	return os.Chmod(dst, info.Mode())
-}
-
-func (o *Orchestrator) doDelete(path string) {
-	info, err := os.Stat(path)
-	if err != nil {
-		log.Printf("Delete error: %v", err)
-		return
-	}
-
-	o.setProgress(true, "Deleting "+filepath.Base(path), 0, 0)
-
-	if info.IsDir() {
-		err = os.RemoveAll(path)
-	} else {
-		err = os.Remove(path)
-	}
-
-	o.setProgress(false, "", 0, 0)
-
-	if err != nil {
-		log.Printf("Delete error: %v", err)
-	}
-
-	o.requestDir(o.state.CurrentPath)
-}
-
-// progressWriter wraps an io.Writer and calls onWrite after each write
-type progressWriter struct {
-	w       io.Writer
-	onWrite func(int64)
-}
-
-func (pw *progressWriter) Write(p []byte) (int, error) {
-	n, err := pw.w.Write(p)
-	if n > 0 && pw.onWrite != nil {
-		pw.onWrite(int64(n))
-	}
-	return n, err
 }
 
 func Main(startPath string) {
