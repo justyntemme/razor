@@ -284,6 +284,32 @@ Then create a Pull Request on GitHub.
 
 ## Code Style
 
+### REQUIRED: Use fastwalk for Directory Operations
+
+**All filesystem walking/reading code MUST use [fastwalk](https://github.com/charlievieth/fastwalk)** instead of `os.ReadDir()`, `os.ReadDirEntry()`, or `filepath.Walk()`.
+
+```go
+import "github.com/charlievieth/fastwalk"
+
+// Directory listing
+conf := &fastwalk.Config{Follow: true}
+fastwalk.Walk(conf, path, func(fullPath string, d fs.DirEntry, err error) error {
+    if err != nil {
+        return nil // Skip errors
+    }
+    // Use fastwalk.StatDirEntry for file info (follows symlinks)
+    info, err := fastwalk.StatDirEntry(fullPath, d)
+    // Use fastwalk.DirEntryDepth(d) for depth checking
+    return nil
+})
+```
+
+Fastwalk provides:
+- Parallel directory walking with worker pools
+- Efficient symlink handling via `StatDirEntry()`
+- Built-in depth tracking via `DirEntryDepth()`
+- Better performance for large directories
+
 ### Naming Conventions
 
 - **Exported**: `PascalCase` (e.g., `UIEvent`, `FetchDir`)

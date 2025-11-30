@@ -3,12 +3,15 @@ package fs
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/charlievieth/fastwalk"
 	"github.com/justyntemme/razor/internal/debug"
 	"github.com/justyntemme/razor/internal/search"
 )
@@ -176,45 +179,73 @@ func shouldSkipPath(path string) bool {
 func (s *System) fetchDir(path string) Response {
 	debug.Log(debug.FS, "fetchDir: reading %q", path)
 
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		debug.Log(debug.FS, "fetchDir: ReadDir error: %v", err)
-		return Response{Op: FetchDir, Path: path, Err: err}
+	var result []Entry
+	var mu sync.Mutex
+
+	// Configure fastwalk for single directory (depth 1)
+	conf := &fastwalk.Config{
+		Follow: true, // Follow symlinks to get target info
 	}
 
-	debug.Log(debug.FS, "fetchDir: found %d raw entries", len(entries))
-
-	result := make([]Entry, 0, len(entries))
-	for _, e := range entries {
-		fullPath := filepath.Join(path, e.Name())
-
-		// Use os.Stat (not Lstat) to follow symlinks and get the target's info
-		// This is critical for directories like /home, /tmp, /var on macOS
-		// which are often symlinks to /System/Volumes/Data/*
-		info, err := os.Stat(fullPath)
+	err := fastwalk.Walk(conf, path, func(fullPath string, d fs.DirEntry, err error) error {
 		if err != nil {
-			// If stat fails (broken symlink, permission denied), try lstat
+			debug.Log(debug.FS_ENTRY, "fetchDir: walk error at %q: %v", fullPath, err)
+			return nil // Skip errors, continue walking
+		}
+
+		// Skip the root directory itself
+		if fullPath == path {
+			return nil
+		}
+
+		// Only process direct children (depth 1)
+		// fastwalk walks recursively, so we need to skip deeper entries
+		rel, err := filepath.Rel(path, fullPath)
+		if err != nil || strings.Contains(rel, string(filepath.Separator)) {
+			// This is a nested entry, skip it but don't recurse into directories
+			if d.IsDir() {
+				return fastwalk.SkipDir
+			}
+			return nil
+		}
+
+		// Get full file info (fastwalk.StatDirEntry follows symlinks when Follow=true)
+		info, err := fastwalk.StatDirEntry(fullPath, d)
+		if err != nil {
+			// Try lstat as fallback for broken symlinks
 			info, err = os.Lstat(fullPath)
 			if err != nil {
-				debug.Log(debug.FS_ENTRY, "fetchDir: skipping %q: stat error: %v", e.Name(), err)
-				continue
+				debug.Log(debug.FS_ENTRY, "fetchDir: skipping %q: stat error: %v", d.Name(), err)
+				return nil
 			}
-			debug.Log(debug.FS_ENTRY, "fetchDir: %q: using lstat (symlink target inaccessible)", e.Name())
+			debug.Log(debug.FS_ENTRY, "fetchDir: %q: using lstat (symlink target inaccessible)", d.Name())
 		}
 
 		isDir := info.IsDir()
 
-		// Log entry details at verbose level
 		debug.Log(debug.FS_ENTRY, "fetchDir: %q isDir=%v size=%d mode=%s",
-			e.Name(), isDir, info.Size(), info.Mode())
+			d.Name(), isDir, info.Size(), info.Mode())
 
+		mu.Lock()
 		result = append(result, Entry{
-			Name:    e.Name(),
+			Name:    d.Name(),
 			Path:    fullPath,
 			IsDir:   isDir,
 			Size:    info.Size(),
 			ModTime: info.ModTime(),
 		})
+		mu.Unlock()
+
+		// Don't recurse into subdirectories for fetchDir (single level only)
+		if d.IsDir() {
+			return fastwalk.SkipDir
+		}
+		return nil
+	})
+
+	if err != nil {
+		debug.Log(debug.FS, "fetchDir: walk error: %v", err)
+		return Response{Op: FetchDir, Path: path, Err: err}
 	}
 
 	debug.Log(debug.FS, "fetchDir: returning %d entries", len(result))
@@ -312,7 +343,7 @@ func (s *System) searchDir(ctx context.Context, basePath, queryStr string, gen i
 	var totalFiles int
 	var totalBytes int64
 	if query.HasContentSearch() {
-		s.countFiles(ctx, basePath, 0, maxDepth, &totalFiles, &totalBytes)
+		totalFiles, totalBytes = s.countFiles(ctx, basePath, maxDepth)
 		if ctx.Err() != nil {
 			debug.Log(debug.SEARCH, "searchDir: file counting cancelled")
 			return Response{Op: SearchDir, Path: basePath, Cancelled: true}
@@ -328,7 +359,7 @@ func (s *System) searchDir(ctx context.Context, basePath, queryStr string, gen i
 		progressCh: s.ProgressChan,
 	}
 
-	err := s.walkDirWithProgress(ctx, basePath, 0, maxDepth, matcher, &results, progress)
+	results, err := s.walkDirWithProgress(ctx, basePath, maxDepth, matcher, progress)
 	if err != nil {
 		debug.Log(debug.SEARCH, "searchDir: walkDir error: %v", err)
 		return Response{Op: SearchDir, Path: basePath, Err: err}
@@ -486,92 +517,122 @@ func (p *searchProgress) report(label string) {
 	}
 }
 
-func (s *System) countFiles(ctx context.Context, path string, depth, maxDepth int, fileCount *int, byteCount *int64) {
-	// Check for cancellation
-	if ctx.Err() != nil {
-		return
-	}
-	
-	if depth > maxDepth {
-		return
-	}
-	
-	// Skip system directories
-	if shouldSkipPath(path) {
-		return
+func (s *System) countFiles(ctx context.Context, path string, maxDepth int) (fileCount int, byteCount int64) {
+	debug.Log(debug.FS, "countFiles: path=%q maxDepth=%d", path, maxDepth)
+
+	var files int64
+	var bytes int64
+
+	conf := &fastwalk.Config{
+		Follow: true,
 	}
 
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		return
-	}
-
-	for _, e := range entries {
-		// Check for cancellation periodically
-		if ctx.Err() != nil {
-			return
-		}
-		
-		fullPath := filepath.Join(path, e.Name())
-		
-		if e.IsDir() {
-			if depth < maxDepth {
-				s.countFiles(ctx, fullPath, depth+1, maxDepth, fileCount, byteCount)
-			}
-		} else {
-			info, err := e.Info()
-			if err != nil {
-				continue
-			}
-			// Only count regular files that would be searched (skip large files and special files)
-			if info.Mode().IsRegular() && info.Size() <= 10*1024*1024 {
-				*fileCount++
-				*byteCount += info.Size()
-			}
-		}
-	}
-}
-
-func (s *System) walkDirWithProgress(ctx context.Context, path string, depth, maxDepth int, matcher *search.Matcher, results *[]Entry, progress *searchProgress) error {
-	// Check for cancellation
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-
-	if depth > maxDepth {
-		return nil
-	}
-
-	// Skip system directories
-	if shouldSkipPath(path) {
-		debug.Log(debug.FS_WALK, "walkDir: skipping system directory: %s", path)
-		return nil
-	}
-
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		// Don't fail on permission errors, just skip
-		debug.Log(debug.FS_WALK, "walkDir: cannot read %q: %v", path, err)
-		return nil
-	}
-
-	debug.Log(debug.FS_WALK, "walkDir: %q depth=%d entries=%d", path, depth, len(entries))
-
-	for _, e := range entries {
-		// Check for cancellation periodically
+	fastwalk.Walk(conf, path, func(fullPath string, d fs.DirEntry, err error) error {
+		// Check for cancellation
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 
-		fullPath := filepath.Join(path, e.Name())
-
-		// Use os.Stat to follow symlinks (consistent with fetchDir)
-		info, err := os.Stat(fullPath)
 		if err != nil {
+			return nil // Skip errors
+		}
+
+		// Skip the root itself
+		if fullPath == path {
+			return nil
+		}
+
+		// Skip system directories
+		if shouldSkipPath(fullPath) {
+			if d.IsDir() {
+				return fastwalk.SkipDir
+			}
+			return nil
+		}
+
+		// Check depth limit
+		depth := fastwalk.DirEntryDepth(d)
+		if depth > maxDepth {
+			if d.IsDir() {
+				return fastwalk.SkipDir
+			}
+			return nil
+		}
+
+		// Only count regular files
+		if !d.IsDir() {
+			info, err := fastwalk.StatDirEntry(fullPath, d)
+			if err != nil {
+				return nil
+			}
+			// Only count regular files that would be searched (skip large files)
+			if info.Mode().IsRegular() && info.Size() <= 10*1024*1024 {
+				atomic.AddInt64(&files, 1)
+				atomic.AddInt64(&bytes, info.Size())
+			}
+		}
+
+		return nil
+	})
+
+	fileCount = int(atomic.LoadInt64(&files))
+	byteCount = atomic.LoadInt64(&bytes)
+	debug.Log(debug.FS, "countFiles: found %d files, %d bytes", fileCount, byteCount)
+	return fileCount, byteCount
+}
+
+func (s *System) walkDirWithProgress(ctx context.Context, basePath string, maxDepth int, matcher *search.Matcher, progress *searchProgress) ([]Entry, error) {
+	debug.Log(debug.FS_WALK, "walkDir: starting path=%q maxDepth=%d", basePath, maxDepth)
+
+	var results []Entry
+	var mu sync.Mutex
+
+	conf := &fastwalk.Config{
+		Follow: true, // Follow symlinks
+	}
+
+	err := fastwalk.Walk(conf, basePath, func(fullPath string, d fs.DirEntry, err error) error {
+		// Check for cancellation
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		if err != nil {
+			debug.Log(debug.FS_WALK, "walkDir: error at %q: %v", fullPath, err)
+			return nil // Skip errors, continue walking
+		}
+
+		// Skip the root itself
+		if fullPath == basePath {
+			return nil
+		}
+
+		// Skip system directories
+		if shouldSkipPath(fullPath) {
+			debug.Log(debug.FS_WALK, "walkDir: skipping system directory: %s", fullPath)
+			if d.IsDir() {
+				return fastwalk.SkipDir
+			}
+			return nil
+		}
+
+		// Check depth limit using fastwalk's depth tracking
+		depth := fastwalk.DirEntryDepth(d)
+		if depth > maxDepth {
+			if d.IsDir() {
+				return fastwalk.SkipDir
+			}
+			return nil
+		}
+
+		// Get full file info (follows symlinks)
+		info, err := fastwalk.StatDirEntry(fullPath, d)
+		if err != nil {
+			// Try lstat as fallback
 			info, err = os.Lstat(fullPath)
 			if err != nil {
-				debug.Log(debug.FS_WALK, "walkDir: skipping %q: stat error: %v", e.Name(), err)
-				continue
+				debug.Log(debug.FS_WALK, "walkDir: skipping %q: stat error: %v", d.Name(), err)
+				return nil
 			}
 		}
 
@@ -579,7 +640,7 @@ func (s *System) walkDirWithProgress(ctx context.Context, path string, depth, ma
 
 		// Skip non-regular files (devices, sockets, etc.)
 		if !isDir && !info.Mode().IsRegular() {
-			continue
+			return nil
 		}
 
 		// Update progress before checking file
@@ -592,20 +653,25 @@ func (s *System) walkDirWithProgress(ctx context.Context, path string, depth, ma
 		// Check if this entry matches
 		if matcher.Match(fullPath, info) {
 			debug.Log(debug.FS_WALK, "walkDir: MATCH %s", fullPath)
-			*results = append(*results, Entry{
-				Name:    e.Name(),
+			mu.Lock()
+			results = append(results, Entry{
+				Name:    d.Name(),
 				Path:    fullPath,
 				IsDir:   isDir,
 				Size:    info.Size(),
 				ModTime: info.ModTime(),
 			})
+			mu.Unlock()
 		}
 
-		// Recurse into directories
-		if isDir && depth < maxDepth {
-			s.walkDirWithProgress(ctx, fullPath, depth+1, maxDepth, matcher, results, progress)
-		}
+		return nil
+	})
+
+	if err != nil && ctx.Err() == nil {
+		debug.Log(debug.FS_WALK, "walkDir: walk error: %v", err)
+		return results, err
 	}
 
-	return nil
+	debug.Log(debug.FS_WALK, "walkDir: complete, %d results", len(results))
+	return results, nil
 }

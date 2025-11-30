@@ -820,6 +820,58 @@
    - [ ] Error notification system
    - [ ] Logging improvements
 
+* Development Guidelines
+
+** MUST Use fastwalk over os.ReadDir/filepath.Walk
+   The project includes github.com/charlievieth/fastwalk for high-performance
+   directory traversal. ALL filesystem walking/reading code MUST use fastwalk
+   instead of os.ReadDir(), os.ReadDirEntry(), or filepath.Walk().
+
+   Fastwalk provides:
+   - Parallel directory walking with configurable worker pools
+   - Efficient symlink handling via StatDirEntry()
+   - Built-in depth limiting
+   - Better memory efficiency for large directories
+
+   Example usage:
+   #+BEGIN_SRC go
+   import "github.com/charlievieth/fastwalk"
+
+   // Single directory listing
+   conf := &fastwalk.Config{Follow: true}  // Follow symlinks
+   fastwalk.Walk(conf, path, func(path string, d fs.DirEntry, err error) error {
+       if err != nil {
+           return nil  // Skip errors
+       }
+       // Process entry...
+       return nil
+   })
+
+   // Use StatDirEntry for file info (follows symlinks properly)
+   info, err := fastwalk.StatDirEntry(path, d)
+   #+END_SRC
+
+   External search engines (ripgrep, ugrep) are still used when:
+   - User has explicitly selected them in settings
+   - Query includes contents: directive (content search)
+
+   The builtin fastwalk-based search is the DEFAULT for all operations.
+
+** Debug Logging
+   Use the internal/debug package for all debug output:
+   #+BEGIN_SRC go
+   import "github.com/justyntemme/razor/internal/debug"
+
+   debug.Log(debug.FS, "message: %v", value)      // Filesystem ops
+   debug.Log(debug.SEARCH, "query: %q", query)    // Search operations
+   debug.Log(debug.APP, "action: %d", action)     // App orchestration
+   debug.Log(debug.STORE, "setting: %s", key)     // Database ops
+   debug.Log(debug.UI, "event: %v", evt)          // UI operations
+   #+END_SRC
+
+   Build with -tags debug to enable logging.
+   Use RAZOR_DEBUG=FS,SEARCH to filter categories.
+
 * Notes
 - Using Gio UI framework (gioui.org)
 - SQLite for favorites/settings persistence

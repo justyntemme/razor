@@ -2,11 +2,13 @@
 
 The fs package handles all filesystem operations asynchronously, including directory listing, searching, and drive enumeration.
 
+**IMPORTANT**: This package uses [fastwalk](https://github.com/charlievieth/fastwalk) for all directory traversal operations. Do NOT use `os.ReadDir()`, `os.ReadDirEntry()`, or `filepath.Walk()` - always use fastwalk for performance.
+
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `system.go` | Core filesystem operations (~600 lines) |
+| `system.go` | Core filesystem operations (~700 lines) |
 | `drives_darwin.go` | macOS drive listing |
 | `drives_linux.go` | Linux drive listing |
 | `drives_windows.go` | Windows drive listing |
@@ -123,14 +125,29 @@ for req := range s.RequestChan {
 ## Directory Listing
 
 ```go
-func (s *System) fetchDir(req Request)
+func (s *System) fetchDir(path string) Response
 ```
 
+Uses fastwalk for efficient directory listing:
+
 1. Cancel any running search
-2. Read directory with `os.ReadDir()`
-3. Stat each entry for size/modtime
-4. Convert to `[]Entry`
-5. Send response
+2. Walk directory with `fastwalk.Walk()` (depth=1, single level)
+3. Use `fastwalk.StatDirEntry()` to follow symlinks and get file info
+4. Convert to `[]Entry` (thread-safe with mutex)
+5. Return response
+
+```go
+conf := &fastwalk.Config{Follow: true}
+fastwalk.Walk(conf, path, func(fullPath string, d fs.DirEntry, err error) error {
+    // Skip root, check depth, get info via StatDirEntry
+    info, _ := fastwalk.StatDirEntry(fullPath, d)
+    // Add to results...
+    if d.IsDir() {
+        return fastwalk.SkipDir // Don't recurse for fetchDir
+    }
+    return nil
+})
+```
 
 ## Search Implementation
 
@@ -163,29 +180,44 @@ func (s *System) searchDir(req Request)
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Builtin Search
+### Builtin Search (fastwalk-based)
+
+The builtin search uses fastwalk for parallel directory traversal:
 
 ```go
-func (s *System) builtinSearch(ctx context.Context, req Request, query *search.Query, maxDepth int) []Entry
+func (s *System) walkDirWithProgress(ctx context.Context, basePath string, maxDepth int,
+    matcher *search.Matcher, progress *searchProgress) ([]Entry, error)
 ```
 
 1. **Count Phase** (for progress bar):
    ```go
-   total := countFiles(ctx, req.Path, maxDepth)
+   totalFiles, totalBytes := s.countFiles(ctx, basePath, maxDepth)
    ```
 
-2. **Search Phase**:
+2. **Search Phase** (parallel with fastwalk):
    ```go
-   walkDirWithProgress(ctx, req.Path, 0, maxDepth, func(path, name, isDir) bool {
-       // Apply filters
-       entry := Entry{Name: name, Path: path, ...}
-       if matcher.Matches(entry, path) {
+   conf := &fastwalk.Config{Follow: true}
+   fastwalk.Walk(conf, basePath, func(fullPath string, d fs.DirEntry, err error) error {
+       // Check cancellation
+       if ctx.Err() != nil {
+           return ctx.Err()
+       }
+       // Check depth via fastwalk.DirEntryDepth(d)
+       // Skip system directories
+       // Get info via fastwalk.StatDirEntry()
+       // Match against query
+       if matcher.Match(fullPath, info) {
            results = append(results, entry)
        }
-       // Report progress
-       s.ProgressChan <- Progress{Current: current, Total: total}
+       return nil
    })
    ```
+
+Key benefits of fastwalk:
+- **Parallel walking**: Multiple goroutines process directories concurrently
+- **Efficient symlink handling**: `StatDirEntry()` follows symlinks properly
+- **Depth tracking**: `DirEntryDepth(d)` provides depth without path parsing
+- **Cancellation**: Context errors propagate correctly
 
 ### External Search (ripgrep/ugrep)
 
