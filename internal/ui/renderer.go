@@ -222,6 +222,7 @@ type Renderer struct {
 	listState, favState layout.List
 	driveState          layout.List
 	sidebarScroll       layout.List // Scrollable container for entire sidebar
+	sidebarTabs         *TabBar     // Tab bar for Favorites/Drives switching
 	backBtn, fwdBtn     widget.Clickable
 	homeBtn             widget.Clickable
 	bgClick             widget.Clickable
@@ -336,6 +337,14 @@ func NewRenderer() *Renderer {
 	r.favState.Axis = layout.Vertical
 	r.driveState.Axis = layout.Vertical
 	r.sidebarScroll.Axis = layout.Vertical
+
+	// Initialize sidebar tabs
+	r.sidebarTabs = NewTabBar(
+		Tab{Label: "Favorites", ID: "favorites"},
+		Tab{Label: "Drives", ID: "drives"},
+	)
+	r.sidebarTabs.Style = TabStyleUnderline
+	r.sidebarTabs.Distribute = true
 	r.pathEditor.SingleLine, r.pathEditor.Submit = true, true
 	r.searchEditor.SingleLine, r.searchEditor.Submit = true, true
 	r.createDialogEditor.SingleLine, r.createDialogEditor.Submit = true, true
