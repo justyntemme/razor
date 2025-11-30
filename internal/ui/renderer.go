@@ -836,3 +836,35 @@ func formatSize(bytes int64) string {
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
+
+// truncatePathMiddle truncates a path to maxLen characters, showing start.../end
+// The end portion (current directory) is prioritized to always be visible
+func truncatePathMiddle(path string, maxLen int) string {
+	if len(path) <= maxLen {
+		return path
+	}
+
+	// Find the last path separator to get the current directory
+	lastSep := strings.LastIndex(path, string(filepath.Separator))
+	if lastSep <= 0 || lastSep >= len(path)-1 {
+		// No separator or at start/end, just truncate end
+		return path[:maxLen-3] + "..."
+	}
+
+	// Get the end part (current directory with separator)
+	endPart := path[lastSep:]
+
+	// Calculate space for start
+	// Reserve: 3 for "...", endPart length
+	startLen := maxLen - 3 - len(endPart)
+
+	if startLen < 5 {
+		// Not enough room for meaningful start, just show end
+		if len(endPart) > maxLen-3 {
+			return "..." + endPart[len(endPart)-(maxLen-3):]
+		}
+		return "..." + endPart
+	}
+
+	return path[:startLen] + "..." + endPart
+}

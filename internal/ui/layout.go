@@ -25,6 +25,26 @@ import (
 func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 	defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
 
+	// ===== TRACK GLOBAL MOUSE POSITION =====
+	// Register for all pointer events at root level to track mouse position
+	// Use PassOp so events pass through to elements underneath
+	areaStack := clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops)
+	passOp := pointer.PassOp{}.Push(gtx.Ops)
+	event.Op(gtx.Ops, &r.mouseTag)
+	passOp.Pop()
+	areaStack.Pop()
+
+	// Process mouse position events
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: &r.mouseTag, Kinds: pointer.Move | pointer.Press})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(pointer.Event); ok {
+			r.mousePos = image.Pt(int(e.Position.X), int(e.Position.Y))
+		}
+	}
+
 	// ===== KEYBOARD FOCUS =====
 	keyTag := &r.listState
 	event.Op(gtx.Ops, keyTag)
@@ -144,6 +164,9 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 		layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
 
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			// Clip the entire path area to prevent overflow into search box
+			defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
+
 			if r.isEditing {
 				for {
 					evt, ok := r.pathEditor.Update(gtx)
@@ -163,29 +186,47 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 				r.pathEditor.SetText(state.CurrentPath)
 				gtx.Execute(key.FocusCmd{Tag: &r.pathEditor})
 			}
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return material.Clickable(gtx, &r.pathClick, func(gtx layout.Context) layout.Dimensions {
-						return material.H6(r.Theme, state.CurrentPath).Layout(gtx)
-					})
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					if !state.IsSearchResult {
-						return layout.Dimensions{}
-					}
-					return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						return widget.Border{Color: colAccent, Width: unit.Dp(1), CornerRadius: unit.Dp(4)}.Layout(gtx,
-							func(gtx layout.Context) layout.Dimensions {
-								return layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2), Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx,
+			return material.Clickable(gtx, &r.pathClick, func(gtx layout.Context) layout.Dimensions {
+				// Truncate path to show start.../end (current directory)
+				displayPath := truncatePathMiddle(state.CurrentPath, 50)
+
+				// Scale font size based on display path length
+				displayLen := len(displayPath)
+				var fontSize unit.Sp
+				switch {
+				case displayLen <= 30:
+					fontSize = unit.Sp(16)
+				case displayLen <= 40:
+					fontSize = unit.Sp(14)
+				default:
+					fontSize = unit.Sp(12)
+				}
+
+				lbl := material.Body1(r.Theme, displayPath)
+				lbl.TextSize = fontSize
+				lbl.MaxLines = 1
+
+				// Layout with optional "Search Results" badge
+				if state.IsSearchResult {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Flexed(1, lbl.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								return widget.Border{Color: colAccent, Width: unit.Dp(1), CornerRadius: unit.Dp(4)}.Layout(gtx,
 									func(gtx layout.Context) layout.Dimensions {
-										lbl := material.Caption(r.Theme, "Search Results")
-										lbl.Color = colAccent
-										return lbl.Layout(gtx)
+										return layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2), Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx,
+											func(gtx layout.Context) layout.Dimensions {
+												badge := material.Caption(r.Theme, "Search Results")
+												badge.Color = colAccent
+												return badge.Layout(gtx)
+											})
 									})
 							})
-					})
-				}),
-			)
+						}),
+					)
+				}
+				return lbl.Layout(gtx)
+			})
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
 
@@ -702,21 +743,17 @@ func (r *Renderer) layoutFavoritesList(gtx layout.Context, state *State, eventOu
 		return r.favState.Layout(gtx, len(state.FavList), func(gtx layout.Context, i int) layout.Dimensions {
 			fav := &state.FavList[i]
 
-			// Render and get click states + position
-			rowDims, leftClicked, rightClicked, clickPos := r.renderFavoriteRow(gtx, fav)
+			// Render and get click states (position unused, we use global mousePos)
+			rowDims, leftClicked, rightClicked, _ := r.renderFavoriteRow(gtx, fav)
 
 			// Handle left-click
 			if leftClicked {
 				*eventOut = UIEvent{Action: ActionNavigate, Path: fav.Path}
 			}
 
-			// Handle right-click - compute window coordinates
+			// Handle right-click - use global mouse position for menu
 			if rightClicked {
-				windowPos := image.Pt(
-					gtx.Dp(8)+clickPos.X,
-					yOffset+clickPos.Y,
-				)
-				r.menuVisible, r.menuPos, r.menuPath = true, windowPos, fav.Path
+				r.menuVisible, r.menuPos, r.menuPath = true, r.mousePos, fav.Path
 				r.menuIsDir, r.menuIsFav = true, true
 				r.menuIsBackground = false
 			}
@@ -757,9 +794,6 @@ func (r *Renderer) layoutDrivesList(gtx layout.Context, state *State, eventOut *
 }
 
 func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layout.List, eventOut *UIEvent) layout.Dimensions {
-	// Track offset within this function for the list area (column headers + border ≈ 36dp)
-	listAreaOffset := gtx.Dp(36)
-	
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
@@ -797,8 +831,8 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 				item := &state.Entries[i]
 				isRenaming := r.renameIndex == i
 				
-				// Render row and get click states + position + rename event
-				rowDims, leftClicked, rightClicked, clickPos, renameEvt := r.renderRow(gtx, item, i, i == state.SelectedIndex, isRenaming)
+				// Render row and get click states (position unused, we use global mousePos) + rename event
+				rowDims, leftClicked, rightClicked, _, renameEvt := r.renderRow(gtx, item, i, i == state.SelectedIndex, isRenaming)
 				
 				// Handle rename event
 				if renameEvt != nil {
@@ -822,17 +856,12 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 					item.LastClick = time.Now()
 				}
 				
-				// Handle right-click on file - compute window coordinates
+				// Handle right-click on file - use global mouse position for menu
 				if rightClicked && !isRenaming {
 					// Cancel any active rename
 					r.CancelRename()
 					fileRightClicked = true
-					// Convert local position to window coordinates
-					windowPos := image.Pt(
-						r.fileListOffset.X + clickPos.X,
-						r.fileListOffset.Y + listAreaOffset + clickPos.Y,
-					)
-					r.menuVisible, r.menuPos, r.menuPath = true, windowPos, item.Path
+					r.menuVisible, r.menuPos, r.menuPath = true, r.mousePos, item.Path
 					r.menuIsDir = item.IsDir
 					_, r.menuIsFav = state.Favorites[item.Path]
 					r.menuIsBackground = false
@@ -851,14 +880,9 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 						break
 					}
 					if e, ok := ev.(pointer.Event); ok && e.Buttons.Contain(pointer.ButtonSecondary) {
-						// Convert local position to window coordinates
-						clickPos := image.Pt(int(e.Position.X), int(e.Position.Y))
-						windowPos := image.Pt(
-							r.fileListOffset.X + clickPos.X,
-							r.fileListOffset.Y + listAreaOffset + clickPos.Y,
-						)
+						// Use global mouse position for menu
 						r.menuVisible = true
-						r.menuPos = windowPos
+						r.menuPos = r.mousePos
 						r.menuPath = state.CurrentPath
 						r.menuIsDir = true
 						r.menuIsFav = false
@@ -1048,7 +1072,38 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, state *State, eventOut 
 	if !r.menuVisible {
 		return layout.Dimensions{}
 	}
-	defer op.Offset(r.menuPos).Push(gtx.Ops).Pop()
+
+	// Calculate menu dimensions to determine flip direction
+	// Menu width is 180dp, estimate height based on menu type
+	menuWidth := gtx.Dp(180)
+	menuHeight := gtx.Dp(280) // Full menu approximate height
+	if r.menuIsBackground {
+		menuHeight = gtx.Dp(100) // Background menu is shorter
+	}
+
+	// Determine final position with flip logic
+	posX := r.menuPos.X
+	posY := r.menuPos.Y
+
+	// Flip horizontally if menu would go off right edge
+	if posX+menuWidth > gtx.Constraints.Max.X {
+		posX = r.menuPos.X - menuWidth
+	}
+
+	// Flip vertically if menu would go off bottom edge
+	if posY+menuHeight > gtx.Constraints.Max.Y {
+		posY = r.menuPos.Y - menuHeight
+	}
+
+	// Ensure menu stays within bounds (clamp to edges as fallback)
+	if posX < 0 {
+		posX = 0
+	}
+	if posY < 0 {
+		posY = 0
+	}
+
+	defer op.Offset(image.Pt(posX, posY)).Push(gtx.Ops).Pop()
 
 	if r.openBtn.Clicked(gtx) {
 		r.menuVisible = false

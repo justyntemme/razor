@@ -282,8 +282,8 @@ func (tb *TabBar) tabFlexChildrenPill(gtx layout.Context, theme *material.Theme,
 // layoutManilaStyle renders vertical folder tabs on the left side
 // Tabs are stacked vertically with no overlap, with vertical text
 func (tb *TabBar) layoutManilaStyle(gtx layout.Context, theme *material.Theme) layout.Dimensions {
-	tabWidth := gtx.Dp(28)    // Width of the tab (narrow since text is vertical)
-	tabHeight := gtx.Dp(80)   // Height of each tab (tall for vertical text)
+	tabWidth := gtx.Dp(32)    // Width of the tab (enough for rotated text height)
+	tabHeight := gtx.Dp(100)  // Height of each tab (tall enough for "Favorites" text when rotated)
 	gap := gtx.Dp(4)          // Gap between tabs
 	cornerRadius := gtx.Dp(4)
 
@@ -355,22 +355,14 @@ func (tb *TabBar) manilaTabChildren(gtx layout.Context, theme *material.Theme, t
 					paint.FillShape(gtx.Ops, accentColor, leftHighlight.Op())
 				}
 
-				// Draw rotated text - clip to tab bounds to prevent overflow
-				clipArea := clip.Rect{Max: image.Pt(tabWidth, tabHeight)}.Push(gtx.Ops)
-
 				// Create the label
 				labelText := tab.Label
 				lbl := material.Body2(theme, labelText)
 				lbl.Color = textColor
-				lbl.TextSize = unit.Sp(11)
+				lbl.TextSize = unit.Sp(14)
 				if isSelected {
 					lbl.Font.Weight = 600
 				}
-
-				// Measure the text dimensions (approximate)
-				// We'll position based on tab dimensions
-				// Rotate -90 degrees (counter-clockwise) so text reads bottom-to-top
-				// when looking at vertical tab from left side
 
 				// Position: move to center of tab, rotate, then offset to center text
 				centerX := float32(tabWidth) / 2
@@ -387,18 +379,19 @@ func (tb *TabBar) manilaTabChildren(gtx layout.Context, theme *material.Theme, t
 
 					// Offset to center the text (text will be horizontal after rotation)
 					// After -90° rotation: +X moves down (toward bottom of tab), +Y moves right (toward right edge)
-					// Move left (in rotated space) to center text horizontally in tab
-					// Move slightly toward right edge (positive Y after rotation)
-					textOffset := op.Offset(image.Pt(-int(centerY)+gtx.Dp(6), gtx.Dp(2))).Push(gtx.Ops)
+					// Center text horizontally (in rotated space) and vertically within tab width
+					textOffset := op.Offset(image.Pt(-int(centerY)+gtx.Dp(10), -gtx.Dp(6))).Push(gtx.Ops)
 
-					lbl.Layout(gtx)
+					// Give the label unconstrained space so text isn't clipped
+					unconstrainedGtx := gtx
+					unconstrainedGtx.Constraints.Min = image.Point{}
+					unconstrainedGtx.Constraints.Max = image.Pt(tabHeight*2, tabWidth*2)
+					lbl.Layout(unconstrainedGtx)
 
 					textOffset.Pop()
 					rotation.Pop()
 					offset1.Pop()
 				}()
-
-				clipArea.Pop()
 
 				return layout.Dimensions{Size: image.Pt(tabWidth, tabHeight)}
 			})
