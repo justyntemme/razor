@@ -237,7 +237,8 @@ type Renderer struct {
 	Theme               *material.Theme
 	listState, favState layout.List
 	driveState          layout.List
-	sidebarScroll       layout.List // Scrollable container for entire sidebar
+	sidebarScroll       layout.List      // Scrollable container for entire sidebar
+	sidebarClick        widget.Clickable // For dismissing menus when clicking sidebar empty space
 	sidebarTabs         *TabBar     // Tab bar for Favorites/Drives switching
 	sidebarLayout       string      // "tabbed" | "stacked" | "favorites_only" | "drives_only"
 	backBtn, fwdBtn     widget.Clickable
@@ -249,6 +250,7 @@ type Renderer struct {
 	isEditing           bool
 	searchEditor        widget.Editor
 	searchClearBtn      widget.Clickable
+	searchBoxClick      widget.Clickable // For dismissing menus when clicking search area
 	searchActive        bool
 	lastSearchQuery     string
 	detectedDirectives     []DetectedDirective // Parsed directives for visual display
@@ -623,6 +625,13 @@ func (r *Renderer) CancelRename() {
 	r.renamePath = ""
 }
 
+// onLeftClick should be called at the start of any left-click handler.
+// It dismisses context menus and performs other common click cleanup.
+func (r *Renderer) onLeftClick() {
+	r.menuVisible = false
+	r.fileMenuOpen = false
+}
+
 func (r *Renderer) detectRightClick(gtx layout.Context, tag event.Tag) bool {
 	for {
 		ev, ok := gtx.Event(pointer.Filter{Target: tag, Kinds: pointer.Press | pointer.Release})
@@ -741,6 +750,7 @@ func (r *Renderer) renderColumns(gtx layout.Context) (layout.Dimensions, UIEvent
 	for i, c := range cols {
 		i, c := i, c
 		if r.headerBtns[i].Clicked(gtx) {
+			r.onLeftClick()
 			if r.SortColumn == c.col {
 				r.SortAscending = !r.SortAscending
 			} else {

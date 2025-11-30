@@ -80,6 +80,7 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						if r.fileMenuBtn.Clicked(gtx) {
+							r.onLeftClick()
 							r.fileMenuOpen = !r.fileMenuOpen
 						}
 						btn := material.Button(r.Theme, &r.fileMenuBtn, "File")
@@ -183,6 +184,7 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 		layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if r.homeBtn.Clicked(gtx) {
+				r.onLeftClick()
 				*eventOut = UIEvent{Action: ActionHome}
 				gtx.Execute(key.FocusCmd{Tag: keyTag})
 			}
@@ -209,6 +211,7 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 				return material.Editor(r.Theme, &r.pathEditor, "Path").Layout(gtx)
 			}
 			if r.pathClick.Clicked(gtx) {
+				r.onLeftClick()
 				r.isEditing = true
 				r.pathEditor.SetText(state.CurrentPath)
 				gtx.Execute(key.FocusCmd{Tag: &r.pathEditor})
@@ -336,6 +339,7 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 
 			// Handle clear button
 			if r.searchClearBtn.Clicked(gtx) {
+				r.onLeftClick()
 				r.searchEditor.SetText("")
 				r.lastSearchQuery = ""
 				r.searchActive = false
@@ -367,6 +371,7 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 			// Handle search history item clicks
 			for i := range r.searchHistoryBtns {
 				if r.searchHistoryBtns[i].Clicked(gtx) && i < len(r.searchHistoryItems) {
+					r.onLeftClick()
 					query := r.searchHistoryItems[i].Query
 					r.searchEditor.SetText(query)
 					r.lastSearchQuery = query
@@ -446,6 +451,7 @@ func (r *Renderer) drawIcon(ops *op.Ops, iconType string, size int, iconColor co
 
 func (r *Renderer) navButton(gtx layout.Context, btn *widget.Clickable, iconType string, enabled bool, action func(), keyTag *layout.List) layout.Dimensions {
 	if enabled && btn.Clicked(gtx) {
+		r.onLeftClick()
 		action()
 		gtx.Execute(key.FocusCmd{Tag: keyTag})
 	}
@@ -460,11 +466,17 @@ func (r *Renderer) navButton(gtx layout.Context, btn *widget.Clickable, iconType
 
 // layoutSearchWithHistory renders the search box (dropdown is rendered as overlay in main Layout)
 func (r *Renderer) layoutSearchWithHistory(gtx layout.Context, hasDirectivePrefix, showClearBtn bool) layout.Dimensions {
-	return widget.Border{Color: colLightGray, Width: unit.Dp(1), CornerRadius: unit.Dp(4)}.Layout(gtx,
-		func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(6), Right: unit.Dp(4)}.Layout(gtx,
-				func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+	// Check for clicks on search box area to dismiss menus
+	if r.searchBoxClick.Clicked(gtx) {
+		r.onLeftClick()
+	}
+
+	return material.Clickable(gtx, &r.searchBoxClick, func(gtx layout.Context) layout.Dimensions {
+		return widget.Border{Color: colLightGray, Width: unit.Dp(1), CornerRadius: unit.Dp(4)}.Layout(gtx,
+			func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(6), Right: unit.Dp(4)}.Layout(gtx,
+					func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						// Directive pills
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							if len(r.detectedDirectives) == 0 {
@@ -498,7 +510,8 @@ func (r *Renderer) layoutSearchWithHistory(gtx layout.Context, hasDirectivePrefi
 						}),
 					)
 				})
-		})
+			})
+	})
 }
 
 // layoutSearchHistoryOverlay renders the search history dropdown as a root-level overlay
@@ -684,17 +697,26 @@ func (r *Renderer) layoutSidebar(gtx layout.Context, state *State, eventOut *UIE
 	// Track sidebar vertical offset for context menus
 	sidebarYOffset := gtx.Dp(92)
 
+	// Check for clicks on sidebar area to dismiss menus (for non-tabbed layouts)
+	if r.sidebarClick.Clicked(gtx) {
+		r.onLeftClick()
+	}
+
 	// Handle different sidebar layouts
 	switch r.sidebarLayout {
 	case "stacked":
 		return r.layoutSidebarStacked(gtx, state, eventOut, sidebarYOffset)
 	case "favorites_only":
-		return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
-			return r.layoutFavoritesList(gtx, state, eventOut, sidebarYOffset)
+		return material.Clickable(gtx, &r.sidebarClick, func(gtx layout.Context) layout.Dimensions {
+			return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+				return r.layoutFavoritesList(gtx, state, eventOut, sidebarYOffset)
+			})
 		})
 	case "drives_only":
-		return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
-			return r.layoutDrivesList(gtx, state, eventOut)
+		return material.Clickable(gtx, &r.sidebarClick, func(gtx layout.Context) layout.Dimensions {
+			return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+				return r.layoutDrivesList(gtx, state, eventOut)
+			})
 		})
 	default: // "tabbed"
 		return r.layoutSidebarTabbed(gtx, state, eventOut, sidebarYOffset)
@@ -709,7 +731,10 @@ func (r *Renderer) layoutSidebarTabbed(gtx layout.Context, state *State, eventOu
 		return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 			// Manila folder tabs on the left side
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				dims, _ := r.sidebarTabs.LayoutVertical(gtx, r.Theme)
+				dims, changed := r.sidebarTabs.LayoutVertical(gtx, r.Theme)
+				if changed {
+					r.onLeftClick()
+				}
 				return dims
 			}),
 
@@ -722,15 +747,21 @@ func (r *Renderer) layoutSidebarTabbed(gtx layout.Context, state *State, eventOu
 
 			// Content area - scrollable list based on selected tab
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
-					switch r.sidebarTabs.SelectedID() {
-					case "favorites":
-						return r.layoutFavoritesList(gtx, state, eventOut, sidebarYOffset)
-					case "drives":
-						return r.layoutDrivesList(gtx, state, eventOut)
-					default:
-						return r.layoutFavoritesList(gtx, state, eventOut, sidebarYOffset)
-					}
+				// Check for clicks on sidebar area to dismiss menus
+				if r.sidebarClick.Clicked(gtx) {
+					r.onLeftClick()
+				}
+				return material.Clickable(gtx, &r.sidebarClick, func(gtx layout.Context) layout.Dimensions {
+					return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+						switch r.sidebarTabs.SelectedID() {
+						case "favorites":
+							return r.layoutFavoritesList(gtx, state, eventOut, sidebarYOffset)
+						case "drives":
+							return r.layoutDrivesList(gtx, state, eventOut)
+						default:
+							return r.layoutFavoritesList(gtx, state, eventOut, sidebarYOffset)
+						}
+					})
 				})
 			}),
 		)
@@ -740,7 +771,10 @@ func (r *Renderer) layoutSidebarTabbed(gtx layout.Context, state *State, eventOu
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		// Tabs at top
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			dims, _ := r.sidebarTabs.Layout(gtx, r.Theme)
+			dims, changed := r.sidebarTabs.Layout(gtx, r.Theme)
+			if changed {
+				r.onLeftClick()
+			}
 			return dims
 		}),
 
@@ -753,15 +787,21 @@ func (r *Renderer) layoutSidebarTabbed(gtx layout.Context, state *State, eventOu
 
 		// Content area
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
-				switch r.sidebarTabs.SelectedID() {
-				case "favorites":
-					return r.layoutFavoritesList(gtx, state, eventOut, sidebarYOffset)
-				case "drives":
-					return r.layoutDrivesList(gtx, state, eventOut)
-				default:
-					return r.layoutFavoritesList(gtx, state, eventOut, sidebarYOffset)
-				}
+			// Check for clicks on sidebar area to dismiss menus
+			if r.sidebarClick.Clicked(gtx) {
+				r.onLeftClick()
+			}
+			return material.Clickable(gtx, &r.sidebarClick, func(gtx layout.Context) layout.Dimensions {
+				return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+					switch r.sidebarTabs.SelectedID() {
+					case "favorites":
+						return r.layoutFavoritesList(gtx, state, eventOut, sidebarYOffset)
+					case "drives":
+						return r.layoutDrivesList(gtx, state, eventOut)
+					default:
+						return r.layoutFavoritesList(gtx, state, eventOut, sidebarYOffset)
+					}
+				})
 			})
 		}),
 	)
@@ -769,8 +809,9 @@ func (r *Renderer) layoutSidebarTabbed(gtx layout.Context, state *State, eventOu
 
 // layoutSidebarStacked renders both Favorites and Drives stacked vertically
 func (r *Renderer) layoutSidebarStacked(gtx layout.Context, state *State, eventOut *UIEvent, sidebarYOffset int) layout.Dimensions {
-	return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+	return material.Clickable(gtx, &r.sidebarClick, func(gtx layout.Context) layout.Dimensions {
+		return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			// Recent Files entry (above Favorites)
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return r.layoutRecentFilesEntry(gtx, eventOut)
@@ -822,6 +863,7 @@ func (r *Renderer) layoutSidebarStacked(gtx layout.Context, state *State, eventO
 				return r.layoutDrivesList(gtx, state, eventOut)
 			}),
 		)
+		})
 	})
 }
 
@@ -889,7 +931,7 @@ func (r *Renderer) layoutFavoritesListContent(gtx layout.Context, state *State, 
 
 			// Handle left-click
 			if leftClicked {
-				r.menuVisible = false // Dismiss menu on left-click
+				r.onLeftClick()
 				*eventOut = UIEvent{Action: ActionNavigate, Path: fav.Path}
 			}
 
@@ -919,6 +961,7 @@ func (r *Renderer) layoutDrivesList(gtx layout.Context, state *State, eventOut *
 
 			// Handle click
 			if clicked {
+				r.onLeftClick()
 				*eventOut = UIEvent{Action: ActionNavigate, Path: drive.Path}
 			}
 
@@ -931,6 +974,7 @@ func (r *Renderer) layoutDrivesList(gtx layout.Context, state *State, eventOut *
 func (r *Renderer) layoutRecentFilesEntry(gtx layout.Context, eventOut *UIEvent) layout.Dimensions {
 	// Check for click BEFORE layout
 	if r.recentFilesBtn.Clicked(gtx) {
+		r.onLeftClick()
 		*eventOut = UIEvent{Action: ActionShowRecentFiles}
 	}
 
@@ -1072,9 +1116,9 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 
 				// Handle left-click (but not if renaming)
 				if leftClicked && !isRenaming {
+					r.onLeftClick()
 					r.CancelRename()
-					r.isEditing, r.fileMenuOpen = false, false
-					r.menuVisible = false // Dismiss menu on left-click
+					r.isEditing = false
 					*eventOut = UIEvent{Action: ActionSelect, NewIndex: i}
 					gtx.Execute(key.FocusCmd{Tag: keyTag})
 					if now := time.Now(); !item.LastClick.IsZero() && now.Sub(item.LastClick) < 500*time.Millisecond {
@@ -1245,7 +1289,7 @@ func (r *Renderer) layoutFileMenu(gtx layout.Context, eventOut *UIEvent) layout.
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				if r.newWindowBtn.Clicked(gtx) {
-					r.fileMenuOpen = false
+					r.onLeftClick()
 					*eventOut = UIEvent{Action: ActionNewWindow}
 				}
 				return r.menuItem(gtx, &r.newWindowBtn, "New Window")
@@ -1259,7 +1303,8 @@ func (r *Renderer) layoutFileMenu(gtx layout.Context, eventOut *UIEvent) layout.
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				if r.settingsBtn.Clicked(gtx) {
-					r.fileMenuOpen, r.settingsOpen = false, true
+					r.onLeftClick()
+					r.settingsOpen = true
 				}
 				return r.menuItem(gtx, &r.settingsBtn, "Settings")
 			}),
@@ -1469,11 +1514,13 @@ func (r *Renderer) layoutDeleteConfirm(gtx layout.Context, state *State, eventOu
 	}
 
 	if r.deleteConfirmYes.Clicked(gtx) {
+		r.onLeftClick()
 		r.deleteConfirmOpen = false
 		*eventOut = UIEvent{Action: ActionConfirmDelete, Path: state.DeleteTarget}
 		state.DeleteTarget = ""
 	}
 	if r.deleteConfirmNo.Clicked(gtx) {
+		r.onLeftClick()
 		r.deleteConfirmOpen = false
 		state.DeleteTarget = ""
 	}
@@ -1555,6 +1602,7 @@ func (r *Renderer) layoutCreateDialog(gtx layout.Context, state *State, eventOut
 	}
 
 	if r.createDialogOK.Clicked(gtx) {
+		r.onLeftClick()
 		name := strings.TrimSpace(r.createDialogEditor.Text())
 		if name != "" {
 			r.createDialogOpen = false
@@ -1566,6 +1614,7 @@ func (r *Renderer) layoutCreateDialog(gtx layout.Context, state *State, eventOut
 		}
 	}
 	if r.createDialogCancel.Clicked(gtx) {
+		r.onLeftClick()
 		r.createDialogOpen = false
 	}
 
@@ -1642,23 +1691,27 @@ func (r *Renderer) layoutConflictDialog(gtx layout.Context, state *State, eventO
 
 	// Handle button clicks
 	applyToAll := r.conflictApplyToAll.Value
-	
+
 	if r.conflictReplaceBtn.Clicked(gtx) {
+		r.onLeftClick()
 		state.Conflict.Active = false
 		state.Conflict.ApplyToAll = applyToAll
 		*eventOut = UIEvent{Action: ActionConflictReplace}
 	}
 	if r.conflictKeepBothBtn.Clicked(gtx) {
+		r.onLeftClick()
 		state.Conflict.Active = false
 		state.Conflict.ApplyToAll = applyToAll
 		*eventOut = UIEvent{Action: ActionConflictKeepBoth}
 	}
 	if r.conflictSkipBtn.Clicked(gtx) {
+		r.onLeftClick()
 		state.Conflict.Active = false
 		state.Conflict.ApplyToAll = applyToAll
 		*eventOut = UIEvent{Action: ActionConflictSkip}
 	}
 	if r.conflictStopBtn.Clicked(gtx) {
+		r.onLeftClick()
 		state.Conflict.Active = false
 		*eventOut = UIEvent{Action: ActionConflictStop}
 	}
@@ -1801,6 +1854,7 @@ func (r *Renderer) layoutPreviewPane(gtx layout.Context, state *State) layout.Di
 
 	// Handle close button click
 	if r.previewCloseBtn.Clicked(gtx) {
+		r.onLeftClick()
 		r.HidePreview()
 	}
 
@@ -1893,6 +1947,7 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) la
 		return layout.Dimensions{}
 	}
 	if r.settingsCloseBtn.Clicked(gtx) {
+		r.onLeftClick()
 		r.settingsOpen = false
 	}
 	if r.showDotfilesCheck.Update(gtx) {
@@ -1926,10 +1981,12 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) la
 	
 	// Check for depth changes
 	if r.depthDecBtn.Clicked(gtx) && r.DefaultDepth > 1 {
+		r.onLeftClick()
 		r.DefaultDepth--
 		*eventOut = UIEvent{Action: ActionChangeDefaultDepth, DefaultDepth: r.DefaultDepth}
 	}
 	if r.depthIncBtn.Clicked(gtx) && r.DefaultDepth < 20 {
+		r.onLeftClick()
 		r.DefaultDepth++
 		*eventOut = UIEvent{Action: ActionChangeDefaultDepth, DefaultDepth: r.DefaultDepth}
 	}
