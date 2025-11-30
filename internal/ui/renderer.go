@@ -234,6 +234,7 @@ type Renderer struct {
 	driveState          layout.List
 	sidebarScroll       layout.List // Scrollable container for entire sidebar
 	sidebarTabs         *TabBar     // Tab bar for Favorites/Drives switching
+	sidebarLayout       string      // "tabbed" | "stacked" | "favorites_only" | "drives_only"
 	backBtn, fwdBtn     widget.Clickable
 	homeBtn             widget.Clickable
 	bgClick             widget.Clickable
@@ -331,6 +332,8 @@ type Renderer struct {
 	searchHistoryBtns     [3]widget.Clickable // Up to 3 items
 	searchBoxClicked      bool                // Track if search box was clicked
 	lastHistoryQuery      string              // Track last query we fetched history for
+	searchBoxPos          image.Point         // Position of search box for overlay dropdown
+	searchEditorFocused   bool                // Track if search editor has focus
 }
 
 var (
@@ -369,6 +372,7 @@ func NewRenderer() *Renderer {
 	)
 	r.sidebarTabs.Style = TabStyleManila
 	r.sidebarTabs.Distribute = false
+	r.sidebarLayout = "tabbed" // Default layout
 	r.pathEditor.SingleLine, r.pathEditor.Submit = true, true
 	r.searchEditor.SingleLine, r.searchEditor.Submit = true, true
 	r.createDialogEditor.SingleLine, r.createDialogEditor.Submit = true, true
@@ -430,6 +434,17 @@ func (r *Renderer) SetSidebarTabStyle(style string) {
 	default:
 		r.sidebarTabs.Style = TabStyleManila
 		r.sidebarTabs.Distribute = false
+	}
+}
+
+// SetSidebarLayout sets the sidebar layout mode
+// Valid values: "tabbed", "stacked", "favorites_only", "drives_only"
+func (r *Renderer) SetSidebarLayout(layout string) {
+	switch layout {
+	case "stacked", "favorites_only", "drives_only":
+		r.sidebarLayout = layout
+	default:
+		r.sidebarLayout = "tabbed"
 	}
 }
 

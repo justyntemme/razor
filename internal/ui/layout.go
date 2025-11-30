@@ -41,6 +41,8 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			if r.bgClick.Clicked(gtx) {
 				r.menuVisible, r.fileMenuOpen = false, false
+				r.searchEditorFocused = false // Dismiss search dropdown on background click
+				r.searchHistoryVisible = false
 				r.CancelRename() // Cancel any active rename
 				if !r.settingsOpen && !r.deleteConfirmOpen && !r.createDialogOpen && !state.Conflict.Active {
 					eventOut = UIEvent{Action: ActionSelect, NewIndex: -1}
@@ -108,6 +110,7 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutFileMenu(gtx, &eventOut) }),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutContextMenu(gtx, state, &eventOut) }),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutSearchHistoryOverlay(gtx) }),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutSettingsModal(gtx, &eventOut) }),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutDeleteConfirm(gtx, state, &eventOut) }),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutCreateDialog(gtx, state, &eventOut) }),
@@ -187,7 +190,8 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 		layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
 
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints.Min.X, gtx.Constraints.Max.X = gtx.Dp(280), gtx.Dp(280)
+			searchBoxWidth := gtx.Dp(280)
+			gtx.Constraints.Min.X, gtx.Constraints.Max.X = searchBoxWidth, searchBoxWidth
 
 			// Sync UI state with application state
 			if !state.IsSearchResult && r.searchActive {
@@ -211,15 +215,23 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 				if !ok {
 					break
 				}
-				if _, ok := evt.(widget.SubmitEvent); ok {
+				switch evt.(type) {
+				case widget.SubmitEvent:
 					submitPressed = true
 					query := strings.TrimSpace(r.searchEditor.Text())
 					r.lastSearchQuery = query
 					r.searchActive = query != ""
 					r.searchHistoryVisible = false
+					r.searchEditorFocused = false // Lose focus on submit
 					// Mark as submitted so history is saved
 					*eventOut = UIEvent{Action: ActionSearch, Path: query, SearchSubmitted: true}
 					gtx.Execute(key.FocusCmd{Tag: keyTag})
+				case widget.ChangeEvent:
+					// Editor has focus when it receives change events
+					r.searchEditorFocused = true
+				case widget.SelectEvent:
+					// Editor has focus when selection changes
+					r.searchEditorFocused = true
 				}
 			}
 
@@ -264,18 +276,24 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 				r.searchHistoryVisible = false
 				r.searchHistoryItems = nil
 				r.lastHistoryQuery = ""
+				r.searchEditorFocused = false
 				*eventOut = UIEvent{Action: ActionClearSearch}
 				gtx.Execute(key.FocusCmd{Tag: keyTag})
 			}
 
-			// Request search history when text changes OR when we haven't fetched yet
-			// This ensures history shows on initial click into empty search box
-			needsHistoryFetch := currentText != r.lastHistoryQuery ||
-				(currentText == "" && !r.searchHistoryVisible && len(r.searchHistoryItems) == 0)
-			if needsHistoryFetch {
-				r.lastHistoryQuery = currentText
-				r.searchHistoryVisible = true
-				*eventOut = UIEvent{Action: ActionRequestSearchHistory, SearchHistoryQuery: currentText}
+			// Only show/fetch history when search box is focused
+			if r.searchEditorFocused {
+				// Request search history when text changes OR when we haven't fetched yet
+				needsHistoryFetch := currentText != r.lastHistoryQuery ||
+					(currentText == "" && len(r.searchHistoryItems) == 0)
+				if needsHistoryFetch {
+					r.lastHistoryQuery = currentText
+					r.searchHistoryVisible = true
+					*eventOut = UIEvent{Action: ActionRequestSearchHistory, SearchHistoryQuery: currentText}
+				}
+			} else {
+				// Hide history when search box loses focus
+				r.searchHistoryVisible = false
 			}
 
 			// Handle search history item clicks
@@ -313,68 +331,73 @@ func (r *Renderer) navButton(gtx layout.Context, btn *widget.Clickable, label st
 	return b.Layout(gtx)
 }
 
-// layoutSearchWithHistory renders the search box with a dropdown history
+// layoutSearchWithHistory renders the search box (dropdown is rendered as overlay in main Layout)
 func (r *Renderer) layoutSearchWithHistory(gtx layout.Context, hasDirectivePrefix, showClearBtn bool) layout.Dimensions {
-	// Use a Stack to overlay the dropdown below the search box
-	return layout.Stack{Alignment: layout.NW}.Layout(gtx,
-		// Search box (main content)
-		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-			return widget.Border{Color: colLightGray, Width: unit.Dp(1), CornerRadius: unit.Dp(4)}.Layout(gtx,
+	return widget.Border{Color: colLightGray, Width: unit.Dp(1), CornerRadius: unit.Dp(4)}.Layout(gtx,
+		func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(6), Right: unit.Dp(4)}.Layout(gtx,
 				func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(6), Right: unit.Dp(4)}.Layout(gtx,
-						func(gtx layout.Context) layout.Dimensions {
-							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-								// Directive pills
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									if len(r.detectedDirectives) == 0 {
-										return layout.Dimensions{}
-									}
-									return r.layoutDirectivePills(gtx)
-								}),
-								// Text editor
-								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-									placeholder := "Search..."
-									if hasDirectivePrefix {
-										placeholder = "press Enter to search"
-									}
-									ed := material.Editor(r.Theme, &r.searchEditor, placeholder)
-									ed.TextSize = unit.Sp(13)
-									return ed.Layout(gtx)
-								}),
-								// Clear button
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									if !showClearBtn {
-										return layout.Dimensions{}
-									}
-									return material.Clickable(gtx, &r.searchClearBtn, func(gtx layout.Context) layout.Dimensions {
-										return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4)}.Layout(gtx,
-											func(gtx layout.Context) layout.Dimensions {
-												lbl := material.Body2(r.Theme, "✕")
-												lbl.Color = colGray
-												return lbl.Layout(gtx)
-											})
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						// Directive pills
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							if len(r.detectedDirectives) == 0 {
+								return layout.Dimensions{}
+							}
+							return r.layoutDirectivePills(gtx)
+						}),
+						// Text editor
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							placeholder := "Search..."
+							if hasDirectivePrefix {
+								placeholder = "press Enter to search"
+							}
+							ed := material.Editor(r.Theme, &r.searchEditor, placeholder)
+							ed.TextSize = unit.Sp(13)
+							return ed.Layout(gtx)
+						}),
+						// Clear button
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							if !showClearBtn {
+								return layout.Dimensions{}
+							}
+							return material.Clickable(gtx, &r.searchClearBtn, func(gtx layout.Context) layout.Dimensions {
+								return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4)}.Layout(gtx,
+									func(gtx layout.Context) layout.Dimensions {
+										lbl := material.Body2(r.Theme, "✕")
+										lbl.Color = colGray
+										return lbl.Layout(gtx)
 									})
-								}),
-							)
-						})
+							})
+						}),
+					)
 				})
-		}),
-		// Search history dropdown (overlaid below)
-		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-			if !r.searchHistoryVisible || len(r.searchHistoryItems) == 0 {
-				return layout.Dimensions{}
-			}
-
-			// Offset dropdown below the search box
-			dropdownOffset := gtx.Dp(36)
-			defer op.Offset(image.Pt(0, dropdownOffset)).Push(gtx.Ops).Pop()
-
-			return r.layoutSearchHistoryDropdown(gtx)
-		}),
-	)
+		})
 }
 
-// layoutSearchHistoryDropdown renders the search history dropdown
+// layoutSearchHistoryOverlay renders the search history dropdown as a root-level overlay
+// This ensures proper z-index ordering so clicks work correctly
+func (r *Renderer) layoutSearchHistoryOverlay(gtx layout.Context) layout.Dimensions {
+	if !r.searchHistoryVisible || len(r.searchHistoryItems) == 0 {
+		return layout.Dimensions{}
+	}
+
+	// Calculate position: search box is 280dp wide at right side of navbar
+	// Navbar is inset 8dp on each side, search box Y is ~46dp from top
+	searchBoxWidth := gtx.Dp(280)
+	rightMargin := gtx.Dp(8)
+	topOffset := gtx.Dp(46) // File button + navbar + spacing
+	dropdownOffset := gtx.Dp(36) // Height of search box
+
+	// Position dropdown below search box, aligned with its left edge
+	xPos := gtx.Constraints.Max.X - searchBoxWidth - rightMargin
+	yPos := topOffset + dropdownOffset
+
+	defer op.Offset(image.Pt(xPos, yPos)).Push(gtx.Ops).Pop()
+
+	return r.layoutSearchHistoryDropdown(gtx)
+}
+
+// layoutSearchHistoryDropdown renders the search history dropdown content
 func (r *Renderer) layoutSearchHistoryDropdown(gtx layout.Context) layout.Dimensions {
 	// Semi-transparent background color
 	dropdownBg := color.NRGBA{R: 255, G: 255, B: 255, A: 240} // White with 94% opacity
@@ -534,22 +557,74 @@ func (r *Renderer) layoutSidebar(gtx layout.Context, state *State, eventOut *UIE
 	// Track sidebar vertical offset for context menus
 	sidebarYOffset := gtx.Dp(92)
 
-	// Horizontal layout: manila tabs on left, content on right
-	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-		// Manila folder tabs on the left side
+	// Handle different sidebar layouts
+	switch r.sidebarLayout {
+	case "stacked":
+		return r.layoutSidebarStacked(gtx, state, eventOut, sidebarYOffset)
+	case "favorites_only":
+		return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+			return r.layoutFavoritesList(gtx, state, eventOut, sidebarYOffset)
+		})
+	case "drives_only":
+		return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+			return r.layoutDrivesList(gtx, state, eventOut)
+		})
+	default: // "tabbed"
+		return r.layoutSidebarTabbed(gtx, state, eventOut, sidebarYOffset)
+	}
+}
+
+// layoutSidebarTabbed renders the sidebar with tabs (manila or other styles)
+func (r *Renderer) layoutSidebarTabbed(gtx layout.Context, state *State, eventOut *UIEvent, sidebarYOffset int) layout.Dimensions {
+	// Check if using vertical tabs (manila) or horizontal tabs
+	if r.sidebarTabs.Style == TabStyleManila {
+		// Horizontal layout: manila tabs on left, content on right
+		return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+			// Manila folder tabs on the left side
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				dims, _ := r.sidebarTabs.LayoutVertical(gtx, r.Theme)
+				return dims
+			}),
+
+			// Vertical separator
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				width := gtx.Dp(unit.Dp(1))
+				paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(width, gtx.Constraints.Max.Y)}.Op())
+				return layout.Dimensions{Size: image.Pt(width, gtx.Constraints.Max.Y)}
+			}),
+
+			// Content area - scrollable list based on selected tab
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+					switch r.sidebarTabs.SelectedID() {
+					case "favorites":
+						return r.layoutFavoritesList(gtx, state, eventOut, sidebarYOffset)
+					case "drives":
+						return r.layoutDrivesList(gtx, state, eventOut)
+					default:
+						return r.layoutFavoritesList(gtx, state, eventOut, sidebarYOffset)
+					}
+				})
+			}),
+		)
+	}
+
+	// Horizontal tabs at top (underline or pill style)
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		// Tabs at top
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			dims, _ := r.sidebarTabs.LayoutVertical(gtx, r.Theme)
+			dims, _ := r.sidebarTabs.Layout(gtx, r.Theme)
 			return dims
 		}),
 
-		// Vertical separator
+		// Horizontal separator
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			width := gtx.Dp(unit.Dp(1))
-			paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(width, gtx.Constraints.Max.Y)}.Op())
-			return layout.Dimensions{Size: image.Pt(width, gtx.Constraints.Max.Y)}
+			height := gtx.Dp(unit.Dp(1))
+			paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, height)}.Op())
+			return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, height)}
 		}),
 
-		// Content area - scrollable list based on selected tab
+		// Content area
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
 				switch r.sidebarTabs.SelectedID() {
@@ -563,6 +638,51 @@ func (r *Renderer) layoutSidebar(gtx layout.Context, state *State, eventOut *UIE
 			})
 		}),
 	)
+}
+
+// layoutSidebarStacked renders both Favorites and Drives stacked vertically
+func (r *Renderer) layoutSidebarStacked(gtx layout.Context, state *State, eventOut *UIEvent, sidebarYOffset int) layout.Dimensions {
+	return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			// Favorites section header
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(4), Left: unit.Dp(8)}.Layout(gtx,
+					func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(r.Theme, "Favorites")
+						lbl.Font.Weight = 600
+						lbl.Color = colGray
+						return lbl.Layout(gtx)
+					})
+			}),
+			// Favorites list
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return r.layoutFavoritesList(gtx, state, eventOut, sidebarYOffset)
+			}),
+			// Separator
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx,
+					func(gtx layout.Context) layout.Dimensions {
+						height := gtx.Dp(unit.Dp(1))
+						paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, height)}.Op())
+						return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, height)}
+					})
+			}),
+			// Drives section header
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Bottom: unit.Dp(4), Left: unit.Dp(8)}.Layout(gtx,
+					func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(r.Theme, "Drives")
+						lbl.Font.Weight = 600
+						lbl.Color = colGray
+						return lbl.Layout(gtx)
+					})
+			}),
+			// Drives list
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return r.layoutDrivesList(gtx, state, eventOut)
+			}),
+		)
+	})
 }
 
 // layoutFavoritesList renders the favorites list content

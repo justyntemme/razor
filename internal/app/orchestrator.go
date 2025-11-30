@@ -109,6 +109,7 @@ func NewOrchestrator() *Orchestrator {
 	o.ui.SetShowDotfilesCheck(cfg.UI.FileList.ShowDotfiles)
 	o.ui.SetDefaultDepth(cfg.Search.DefaultDepth)
 	o.ui.SetDarkMode(cfg.UI.Theme == "dark")
+	o.ui.SetSidebarLayout(cfg.UI.Sidebar.Layout)
 	o.ui.SetSidebarTabStyle(cfg.UI.Sidebar.TabStyle)
 
 	// Set search engine from config
@@ -156,9 +157,10 @@ func (o *Orchestrator) Run(startPath string) error {
 		debug.Log(debug.APP, "Debug categories enabled: %v", debug.ListEnabled())
 	}
 
-	// Database is still used for search history (future)
-	configDir, _ := os.UserConfigDir()
-	dbPath := filepath.Join(configDir, "razor", "razor.db")
+	// Database is still used for search history
+	// Use ~/.config/razor/ on all platforms for consistency
+	home, _ := os.UserHomeDir()
+	dbPath := filepath.Join(home, ".config", "razor", "razor.db")
 	debug.Log(debug.APP, "Opening database: %s", dbPath)
 	if err := o.store.Open(dbPath); err != nil {
 		log.Printf("Failed to open DB: %v", err)

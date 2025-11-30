@@ -3,7 +3,9 @@ package ui
 import (
 	"image"
 	"image/color"
+	"math"
 
+	"gioui.org/f32"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -277,27 +279,31 @@ func (tb *TabBar) tabFlexChildrenPill(gtx layout.Context, theme *material.Theme,
 	return children
 }
 
-// layoutManilaStyle renders vertical manila folder tabs on the left side
-// Tabs are stacked vertically with no overlap, with rotated text
+// layoutManilaStyle renders vertical folder tabs on the left side
+// Tabs are stacked vertically with no overlap, with vertical text
 func (tb *TabBar) layoutManilaStyle(gtx layout.Context, theme *material.Theme) layout.Dimensions {
-	tabWidth := gtx.Dp(32)    // Width of the tab (narrow since text is rotated)
-	tabHeight := gtx.Dp(90)   // Height of each tab (tall for vertical text)
-	gap := gtx.Dp(2)          // Gap between tabs
-	cornerRadius := gtx.Dp(6)
+	tabWidth := gtx.Dp(28)    // Width of the tab (narrow since text is vertical)
+	tabHeight := gtx.Dp(80)   // Height of each tab (tall for vertical text)
+	gap := gtx.Dp(4)          // Gap between tabs
+	cornerRadius := gtx.Dp(4)
 
-	// Manila folder colors
-	manilaActive := color.NRGBA{R: 245, G: 222, B: 179, A: 255}   // Warm manila/buff color
-	manilaInactive := color.NRGBA{R: 230, G: 215, B: 185, A: 255} // Slightly lighter manila
-	borderColor := color.NRGBA{R: 180, G: 160, B: 120, A: 255}    // Brown border
+	// Colors matching project theme
+	activeColor := color.NRGBA{R: 255, G: 255, B: 255, A: 255}    // White for selected (matches content area)
+	inactiveColor := color.NRGBA{R: 235, G: 235, B: 235, A: 255}  // Light gray for inactive
+	borderColor := color.NRGBA{R: 200, G: 200, B: 200, A: 255}    // Light gray border (colLightGray)
 
 	totalHeight := len(tb.Tabs)*tabHeight + (len(tb.Tabs)-1)*gap
 
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, tb.manilaTabChildren(gtx, theme, tabWidth, tabHeight, gap, cornerRadius, manilaActive, manilaInactive, borderColor, totalHeight)...)
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, tb.manilaTabChildren(gtx, theme, tabWidth, tabHeight, gap, cornerRadius, activeColor, inactiveColor, borderColor, totalHeight)...)
 }
 
-// manilaTabChildren creates flex children for manila tabs
+// manilaTabChildren creates flex children for folder-style tabs
 func (tb *TabBar) manilaTabChildren(gtx layout.Context, theme *material.Theme, tabWidth, tabHeight, gap, cornerRadius int, activeColor, inactiveColor, borderColor color.NRGBA, totalHeight int) []layout.FlexChild {
 	children := make([]layout.FlexChild, 0, len(tb.Tabs)*2)
+
+	// Consistent text color for all tabs (gray, matching project theme)
+	textColor := color.NRGBA{R: 100, G: 100, B: 100, A: 255} // colGray
+	accentColor := color.NRGBA{R: 66, G: 133, B: 244, A: 255} // colAccent (blue)
 
 	for i := range tb.Tabs {
 		idx := i
@@ -317,7 +323,7 @@ func (tb *TabBar) manilaTabChildren(gtx layout.Context, theme *material.Theme, t
 					bgColor = activeColor
 				}
 
-				// Draw the manila tab shape (rounded on left side only)
+				// Draw the tab shape (rounded on left side only for folder look)
 				tabRect := image.Rect(0, 0, tabWidth, tabHeight)
 				rr := clip.RRect{
 					Rect: tabRect,
@@ -328,54 +334,71 @@ func (tb *TabBar) manilaTabChildren(gtx layout.Context, theme *material.Theme, t
 				}
 				paint.FillShape(gtx.Ops, bgColor, rr.Op(gtx.Ops))
 
-				// Draw border on inactive tabs
+				// Draw border
 				if !isSelected {
+					// Border on inactive tabs
 					// Top border
 					topBorder := clip.Rect{Max: image.Pt(tabWidth, 1)}
 					paint.FillShape(gtx.Ops, borderColor, topBorder.Op())
 					// Left border
 					leftBorder := clip.Rect{Max: image.Pt(1, tabHeight)}
 					paint.FillShape(gtx.Ops, borderColor, leftBorder.Op())
-					// Bottom border
-					defer op.Offset(image.Pt(0, tabHeight-1)).Push(gtx.Ops).Pop()
-					bottomBorder := clip.Rect{Max: image.Pt(tabWidth, 1)}
-					paint.FillShape(gtx.Ops, borderColor, bottomBorder.Op())
-				} else {
-					// Selected tab gets a highlight on the left edge
-					highlightColor := color.NRGBA{R: 139, G: 90, B: 43, A: 255} // Darker brown
-					leftHighlight := clip.Rect{Max: image.Pt(3, tabHeight)}
-					paint.FillShape(gtx.Ops, highlightColor, leftHighlight.Op())
-				}
-
-				// Draw vertical text using rotation
-				// Position at center of tab, then rotate
-				centerX := tabWidth / 2
-				centerY := tabHeight / 2
-
-				// Create rotated text by drawing each character vertically
-				labelText := tab.Label
-				textColor := color.NRGBA{R: 100, G: 80, B: 50, A: 255} // Medium brown
-				if isSelected {
-					textColor = color.NRGBA{R: 60, G: 40, B: 20, A: 255} // Dark brown
-				}
-
-				// Draw text character by character vertically
-				charHeight := gtx.Dp(12)
-				startY := centerY - (len(labelText)*charHeight)/2
-
-				for j, ch := range labelText {
-					charY := startY + j*charHeight
+					// Bottom border (use separate scope to avoid defer issue)
 					func() {
-						defer op.Offset(image.Pt(centerX-gtx.Dp(5), charY)).Push(gtx.Ops).Pop()
-						lbl := material.Body2(theme, string(ch))
-						lbl.Color = textColor
-						lbl.TextSize = unit.Sp(11)
-						if isSelected {
-							lbl.Font.Weight = 600
-						}
-						lbl.Layout(gtx)
+						defer op.Offset(image.Pt(0, tabHeight-1)).Push(gtx.Ops).Pop()
+						bottomBorder := clip.Rect{Max: image.Pt(tabWidth, 1)}
+						paint.FillShape(gtx.Ops, borderColor, bottomBorder.Op())
 					}()
+				} else {
+					// Selected tab gets accent color highlight on left edge
+					leftHighlight := clip.Rect{Max: image.Pt(3, tabHeight)}
+					paint.FillShape(gtx.Ops, accentColor, leftHighlight.Op())
 				}
+
+				// Draw rotated text - clip to tab bounds to prevent overflow
+				clipArea := clip.Rect{Max: image.Pt(tabWidth, tabHeight)}.Push(gtx.Ops)
+
+				// Create the label
+				labelText := tab.Label
+				lbl := material.Body2(theme, labelText)
+				lbl.Color = textColor
+				lbl.TextSize = unit.Sp(11)
+				if isSelected {
+					lbl.Font.Weight = 600
+				}
+
+				// Measure the text dimensions (approximate)
+				// We'll position based on tab dimensions
+				// Rotate -90 degrees (counter-clockwise) so text reads bottom-to-top
+				// when looking at vertical tab from left side
+
+				// Position: move to center of tab, rotate, then offset to center text
+				centerX := float32(tabWidth) / 2
+				centerY := float32(tabHeight) / 2
+
+				// Apply transformations: translate to center, rotate, translate back
+				func() {
+					// Move origin to center of tab
+					offset1 := op.Offset(image.Pt(int(centerX), int(centerY))).Push(gtx.Ops)
+
+					// Rotate -90 degrees (text will read from bottom to top)
+					angle := float32(-math.Pi / 2)
+					rotation := op.Affine(f32.Affine2D{}.Rotate(f32.Pt(0, 0), angle)).Push(gtx.Ops)
+
+					// Offset to center the text (text will be horizontal after rotation)
+					// After -90° rotation: +X moves down (toward bottom of tab), +Y moves right (toward right edge)
+					// Move left (in rotated space) to center text horizontally in tab
+					// Move slightly toward right edge (positive Y after rotation)
+					textOffset := op.Offset(image.Pt(-int(centerY)+gtx.Dp(6), gtx.Dp(2))).Push(gtx.Ops)
+
+					lbl.Layout(gtx)
+
+					textOffset.Pop()
+					rotation.Pop()
+					offset1.Pop()
+				}()
+
+				clipArea.Pop()
 
 				return layout.Dimensions{Size: image.Pt(tabWidth, tabHeight)}
 			})

@@ -128,10 +128,86 @@ ext:log modified:<2024-01-01 size:>10MB
 
 ## Configuration
 
-Settings are stored in:
+Configuration is stored in `~/.config/razor/config.json` on all platforms. The file is created with defaults on first run.
 
-- Linux/macOS: `~/.config/razor/razor.db`
-- Windows: `%APPDATA%\razor\razor.db`
+### Example config.json
+
+```json
+{
+  "ui": {
+    "theme": "light",
+    "sidebar": {
+      "layout": "tabbed",
+      "tabStyle": "manila",
+      "width": 200,
+      "position": "left",
+      "showFavorites": true,
+      "showDrives": true,
+      "collapsible": true
+    },
+    "fileList": {
+      "showDotfiles": false,
+      "defaultSort": "name",
+      "sortAscending": true,
+      "rowHeight": "normal",
+      "showIcons": true
+    }
+  },
+  "search": {
+    "engine": "builtin",
+    "defaultDepth": 2,
+    "rememberLastQuery": false
+  },
+  "behavior": {
+    "confirmDelete": true,
+    "doubleClickToOpen": true,
+    "restoreLastPath": true,
+    "singleClickToSelect": true
+  },
+  "favorites": [
+    {"name": "Home", "path": "/Users/you", "icon": "home"},
+    {"name": "Documents", "path": "/Users/you/Documents", "icon": "folder"}
+  ]
+}
+```
+
+### Sidebar Options
+
+**Layout** (`ui.sidebar.layout`):
+- `"tabbed"` - Tabs to switch between Favorites and Drives (default)
+- `"stacked"` - Show both Favorites and Drives stacked vertically
+- `"favorites_only"` - Only show Favorites
+- `"drives_only"` - Only show Drives
+
+**Tab Style** (`ui.sidebar.tabStyle`) - Only applies when layout is `"tabbed"`:
+- `"manila"` - Vertical folder-style tabs on left side with rotated text (default)
+- `"underline"` - Horizontal tabs at top with underline indicator (legacy style)
+- `"pill"` - Horizontal tabs with pill/rounded background
+
+To get the legacy horizontal tab layout, set:
+```json
+{
+  "ui": {
+    "sidebar": {
+      "layout": "tabbed",
+      "tabStyle": "underline"
+    }
+  }
+}
+```
+
+### Search Engines
+
+**Engine** (`search.engine`):
+- `"builtin"` - Built-in Go-based search (always available)
+- `"ripgrep"` - Use ripgrep for content search (must be installed)
+- `"ugrep"` - Use ugrep for content search (must be installed)
+
+### Data Storage
+
+Additional data (search history, etc.) is stored in:
+
+- All platforms: `~/.config/razor/razor.db` (SQLite)
 
 ## Architecture
 
