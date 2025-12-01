@@ -558,8 +558,9 @@ type Renderer struct {
 	searchEngine        widget.Enum
 	mousePos            image.Point
 	mouseTag            struct{}
-	bgRightClickTag     struct{} // Tag for detecting right-clicks on empty space
+	bgRightClickTag     struct{}    // Tag for detecting right-clicks on empty space
 	fileListOffset      image.Point // Offset of file list area from window origin
+	fileListSize        image.Point // Size of file list area (for hit-testing background clicks)
 
 	// Multi-select mode
 	multiSelectMode    bool          // When true, show checkboxes for multi-select

@@ -43,6 +43,16 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 	passOp.Pop()
 	areaStack.Pop()
 
+	// Calculate file list bounds at top level where gtx has correct scale
+	// Sidebar: 180dp + 1dp divider = 181dp from left
+	// Header: ~92dp from top (File button + navbar + insets)
+	sidebarWidth := gtx.Dp(181)
+	headerHeight := gtx.Dp(92)
+	fileListLeft := sidebarWidth
+	fileListTop := headerHeight
+	fileListRight := gtx.Constraints.Max.X
+	fileListBottom := gtx.Constraints.Max.Y
+
 	// Process mouse move events to track position
 	for {
 		ev, ok := gtx.Event(pointer.Filter{Target: &r.mouseTag, Kinds: pointer.Move | pointer.Press})
@@ -53,6 +63,25 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 			r.mousePos = image.Pt(int(e.Position.X), int(e.Position.Y))
 			if e.Kind == pointer.Press {
 				r.lastClickModifiers = e.Modifiers
+				debug.Log(debug.UI, "Global mouse press: pos=%v, buttons=%v", r.mousePos, e.Buttons)
+
+				// Detect right-click in file list area for background context menu
+				// This is needed because layout.List's internal clips prevent events
+				// from reaching the bgRightClickTag handler in empty space
+				if e.Buttons.Contain(pointer.ButtonSecondary) {
+					// Check if click is within the file list bounds
+					fileListBounds := image.Rectangle{
+						Min: image.Pt(fileListLeft, fileListTop),
+						Max: image.Pt(fileListRight, fileListBottom),
+					}
+					debug.Log(debug.UI, "Right-click detected: mousePos=%v, fileListBounds=%v, inBounds=%v",
+						r.mousePos, fileListBounds, r.mousePos.In(fileListBounds))
+					if r.mousePos.In(fileListBounds) {
+						r.bgRightClickPending = true
+						r.bgRightClickPos = r.mousePos
+						debug.Log(debug.UI, "Set bgRightClickPending=true")
+					}
+				}
 			}
 		}
 	}
@@ -1251,6 +1280,9 @@ func (r *Renderer) drawClockIcon(ops *op.Ops, size int, iconColor color.NRGBA) {
 }
 
 func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layout.List, eventOut *UIEvent) layout.Dimensions {
+	// Track file list size for background click hit-testing
+	r.fileListSize = gtx.Constraints.Max
+
 	// Track vertical offset for row bounds calculation
 	headerHeight := 0
 
