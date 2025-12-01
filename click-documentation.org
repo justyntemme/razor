@@ -192,23 +192,69 @@ Gio uses a clip-based event routing system. When a pointer event occurs:
    -> But favorite's menu is already shown, so it works correctly
 #+END_EXAMPLE
 
+**** Event Flow for Left-Clicks
+
+***** Scenario 4: Left-click on a file row
+#+BEGIN_EXAMPLE
+1. Global mouse tracker receives event (PassOp=YES)
+   -> Records mousePos, sets lastClickModifiers
+   -> Sets bgLeftClickPending = true (tentatively)
+   -> Event passes through
+
+2. File row handler receives event (PassOp=NO)
+   -> Detects ButtonPrimary
+   -> Sets rowLeftClicked = true
+   -> Clears bgLeftClickPending
+   -> Processes selection/double-click logic
+   -> Event consumed (stops here)
+
+3. After row processing in layoutFileList:
+   -> Checks: if bgLeftClickPending && !rowLeftClicked
+   -> Since rowLeftClicked=true, no background action taken
+#+END_EXAMPLE
+
+***** Scenario 5: Left-click on empty space (background) - DISMISSES CONTEXT MENU
+#+BEGIN_EXAMPLE
+1. Global mouse tracker receives event (PassOp=YES)
+   -> Records mousePos, sets lastClickModifiers
+   -> Sets bgLeftClickPending = true
+   -> Event passes through
+
+2. No file row handler exists at click position
+   -> Event continues to bgRightClickTag handler (handles both L/R)
+
+3. After row processing in layoutFileList:
+   -> Checks: if bgLeftClickPending && !rowLeftClicked
+   -> Since rowLeftClicked=false, calls r.onLeftClick()
+   -> This dismisses: context menu, file menu, path edit mode
+#+END_EXAMPLE
+
 **** The Pending Flag Pattern
 
-The ~bgRightClickPending~ flag serves as a coordination mechanism:
+The ~bgRightClickPending~ and ~bgLeftClickPending~ flags serve as coordination mechanisms:
 
 #+BEGIN_SRC go
-// Set tentatively by global handler (for ALL right-clicks)
-r.bgRightClickPending = true
-r.bgRightClickPos = r.mousePos
+// Set tentatively by global handler (for ALL clicks)
+if e.Buttons.Contain(pointer.ButtonSecondary) {
+    r.bgRightClickPending = true
+    r.bgRightClickPos = r.mousePos
+} else if e.Buttons.Contain(pointer.ButtonPrimary) {
+    r.bgLeftClickPending = true
+}
 
 // Cleared/used after processing all rows
 if r.bgRightClickPending && !rowRightClicked {
-    // This was truly a background click
+    // This was truly a background right-click - show menu
     r.menuVisible = true
     r.menuIsBackground = true
-    // ... show background menu
 }
 r.bgRightClickPending = false
+
+if r.bgLeftClickPending && !rowLeftClicked {
+    // This was truly a background left-click - dismiss menus
+    r.onLeftClick()
+}
+r.bgLeftClickPending = false
 #+END_SRC
 
 This pattern allows:
@@ -231,7 +277,7 @@ was within calculated file list bounds. This was:
    filtering we need - if an event reaches the background check without being
    claimed by a row, it's by definition a background click
 
-**** Current Implementation (layout.go:46-68)
+**** Current Implementation (layout.go:46-73)
 
 #+BEGIN_SRC go
 // Global mouse tracker with PassOp
@@ -252,15 +298,30 @@ for {
         if e.Kind == pointer.Press {
             r.lastClickModifiers = e.Modifiers
 
-            // Any right-click reaching here that isn't claimed by a row
-            // is a background click - trust the event routing
+            // Since we use PassOp, this handler only receives events that weren't
+            // consumed by other handlers (rows, sidebar, buttons, etc.)
+            // So any click reaching here is on "empty" space - treat it as background
+
             if e.Buttons.Contain(pointer.ButtonSecondary) {
+                // Right-click on background - show context menu
                 r.bgRightClickPending = true
                 r.bgRightClickPos = r.mousePos
+            } else if e.Buttons.Contain(pointer.ButtonPrimary) {
+                // Left-click on background - dismiss context menu if shown
+                r.bgLeftClickPending = true
             }
         }
     }
 }
+#+END_SRC
+
+**** Renderer Fields for Background Click Tracking
+
+#+BEGIN_SRC go
+// renderer.go - Background click pending flags
+bgRightClickPending bool        // Right-click detected, waiting to see if row claims it
+bgRightClickPos     image.Point // Position of background right-click (for menu placement)
+bgLeftClickPending  bool        // Left-click on background - dismiss menus
 #+END_SRC
 
 * Overview
@@ -874,3 +935,31 @@ Complete list of click-triggered actions handled in ~orchestrator.go~:
 | ActionClearSearch | Clear search query |
 | ActionNewWindow | Open new window |
 | ActionSettings | Open settings dialog |
+
+* Testing Click Handling
+
+** Background Click Tests
+
+1. Navigate to a directory with few files (so there's empty space below)
+2. Right-click in the empty space - should show context menu with "New File", "New Folder", "Paste" options
+3. Left-click in the empty space - should dismiss context menu if shown, clear selection
+4. Navigate to an empty directory
+5. Right-click anywhere - should show background context menu
+6. Left-click anywhere - should dismiss any open menus
+
+** File Row Click Tests
+
+1. Left-click on a file - should select it
+2. Double-click on a folder - should navigate into it
+3. Double-click on a file - should open it with default application
+4. Right-click on a file - should show file context menu (Open, Copy, Cut, Delete, Rename)
+5. Right-click on a folder - should show folder context menu (includes "Open in New Tab", "Add to Favorites")
+6. Shift+click on multiple files - should enter multi-select mode with checkboxes
+
+** Menu Dismissal Tests
+
+1. Open context menu via right-click on file
+2. Left-click on empty space - menu should dismiss
+3. Open context menu via right-click on empty space
+4. Left-click on a file row - menu should dismiss and file should be selected
+5. Press Escape - menu should dismiss
