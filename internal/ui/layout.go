@@ -1383,16 +1383,16 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 							*eventOut = UIEvent{Action: ActionOpen, Path: item.Path}
 						}
 					} else if shiftHeld {
-						// Shift+click: enter multi-select mode
-						r.multiSelectMode = true
+						// Shift+click: toggle checkbox (alias for checkbox click)
 						r.lastClickIndex = i
 						r.lastClickTime = now
-						if state.SelectedIndex >= 0 && state.SelectedIndex != i {
-							// Range selection from current selection to clicked item
-							*eventOut = UIEvent{Action: ActionRangeSelect, NewIndex: i, OldIndex: state.SelectedIndex}
+						if !r.multiSelectMode && state.SelectedIndex >= 0 {
+							// First shift+click: add current selection to multi-select, then toggle new item
+							r.multiSelectMode = true
+							*eventOut = UIEvent{Action: ActionToggleSelect, NewIndex: i, OldIndex: state.SelectedIndex}
 						} else {
-							// No selection or clicking same item - just select this item in multi-select mode
-							*eventOut = UIEvent{Action: ActionSelect, NewIndex: i}
+							r.multiSelectMode = true
+							*eventOut = UIEvent{Action: ActionToggleSelect, NewIndex: i, OldIndex: -1}
 						}
 					} else {
 						// Single click: select immediately (no delay)
