@@ -61,6 +61,208 @@ Need to test clicking on empty space in the ACTUAL file list area (to the right 
 - Header area: Y=0 to Y~92dp (File button + navbar)
 - File list content: Y~92dp onwards
 
+** Fix: Simplified Background Right-Click Detection (2025-12-01)
+
+*** Problem Identified
+The right-click bounds checking in the global mouse handler was using hardcoded pixel offsets
+and complex bounds calculations that didn't work reliably across different screen positions.
+
+Original approach tried to calculate file list bounds using:
+- ~sidebarWidth := gtx.Dp(181)~ (sidebar + divider)
+- ~headerHeight := gtx.Dp(92)~ (approximation of File button + navbar + insets)
+
+This failed because:
+1. Coordinate systems in Gio are complex with transformations at each layout level
+2. The bounds detection was inconsistent - clicks would only register ~1/4 of the way across the empty space
+3. Dynamic elements (tab bar, config banner) change the offsets unpredictably
+
+*** Key Insight
+The global mouse handler uses ~pointer.PassOp{}~ which means it only receives events that
+*weren't consumed* by other handlers. Since:
+- File rows have their own right-click handlers
+- Sidebar favorites have their own right-click handlers
+- Buttons and other UI elements consume their own events
+
+Any right-click that reaches the global handler is, by definition, on "empty" background space.
+
+*** Solution Implemented
+*Removed all bounds checking* - simply treat any right-click reaching the global handler as a background click:
+
+#+BEGIN_SRC go
+// Before: Complex bounds checking that didn't work
+if e.Buttons.Contain(pointer.ButtonSecondary) {
+    fileListBounds := image.Rectangle{...}
+    if r.mousePos.In(fileListBounds) {
+        r.bgRightClickPending = true
+    }
+}
+
+// After: Trust that PassOp filters to only unhandled clicks
+if e.Buttons.Contain(pointer.ButtonSecondary) {
+    r.bgRightClickPending = true
+    r.bgRightClickPos = r.mousePos
+}
+#+END_SRC
+
+*** Why This Works
+- Gio's event system with ~PassOp~ naturally filters events
+- Events consumed by specific handlers (rows, sidebar, etc.) don't reach the global handler
+- Only "orphan" clicks on empty space pass through
+- This is more robust than trying to calculate exact pixel bounds
+
+*** How PassOp Event Filtering Works
+
+**** Gio's Event Routing Model
+Gio uses a clip-based event routing system. When a pointer event occurs:
+1. Gio traverses the clip stack from front to back (top to bottom in z-order)
+2. Each clip area with a registered event handler gets a chance to receive the event
+3. By default, once an event is delivered to a handler, it is *consumed* and not passed further
+
+**** The PassOp Mechanism
+~pointer.PassOp{}~ changes this behavior. When pushed onto the ops stack:
+- Events are still delivered to the handler
+- But they are also *passed through* to handlers underneath
+- This allows a "catch-all" handler that observes events without blocking them
+
+**** Current Event Handler Hierarchy (Z-Order)
+
+| Priority | Handler                | Location              | PassOp | Consumes Right-Click |
+|----------+------------------------+-----------------------+--------+----------------------|
+| 1 (top)  | Global mouse tracker   | layout.go:40-44       | YES    | NO (observes only)   |
+| 2        | File row clickables    | renderer.go:1519-1523 | NO     | YES                  |
+| 3        | Favorite row clickables| renderer.go:1642-1650 | NO     | YES                  |
+| 4        | Sidebar buttons        | various               | NO     | YES (left-click)     |
+| 5        | bgClick (left-click)   | layout.go:113-128     | NO     | YES (left-click)     |
+| 6        | bgRightClickTag        | layout.go:1314-1316   | NO     | YES                  |
+
+**** Event Flow for Right-Clicks
+
+***** Scenario 1: Right-click on a file row
+#+BEGIN_EXAMPLE
+1. Global mouse tracker receives event (PassOp=YES)
+   -> Records mousePos, sets lastClickModifiers
+   -> Sets bgRightClickPending = true (tentatively)
+   -> Event passes through
+
+2. File row handler receives event (PassOp=NO)
+   -> Detects ButtonSecondary
+   -> Sets rowRightClicked = true
+   -> Shows context menu for that file
+   -> Event consumed (stops here)
+
+3. After row processing in layoutFileList:
+   -> Checks: if bgRightClickPending && !rowRightClicked
+   -> Since rowRightClicked=true, bgRightClickPending is cleared
+   -> No background menu shown
+#+END_EXAMPLE
+
+***** Scenario 2: Right-click on empty space (background)
+#+BEGIN_EXAMPLE
+1. Global mouse tracker receives event (PassOp=YES)
+   -> Records mousePos, sets lastClickModifiers
+   -> Sets bgRightClickPending = true
+   -> Event passes through
+
+2. No file row handler exists at click position
+   -> Event continues to bgRightClickTag handler
+
+3. bgRightClickTag handler in layoutFileList
+   -> Also sets bgRightClickPending = true (redundant but safe)
+
+4. After row processing in layoutFileList:
+   -> Checks: if bgRightClickPending && !rowRightClicked
+   -> Since rowRightClicked=false, shows background context menu
+   -> Menu shows: New File, New Folder, Paste
+#+END_EXAMPLE
+
+***** Scenario 3: Right-click on sidebar favorite
+#+BEGIN_EXAMPLE
+1. Global mouse tracker receives event (PassOp=YES)
+   -> Records mousePos
+   -> Sets bgRightClickPending = true (tentatively)
+   -> Event passes through
+
+2. Favorite row handler receives event (PassOp=NO)
+   -> Detects ButtonSecondary
+   -> Shows context menu for that favorite
+   -> Event consumed (stops here)
+
+3. layoutFileList never sees this event
+   -> bgRightClickPending from global handler is stale
+   -> But favorite's menu is already shown, so it works correctly
+#+END_EXAMPLE
+
+**** The Pending Flag Pattern
+
+The ~bgRightClickPending~ flag serves as a coordination mechanism:
+
+#+BEGIN_SRC go
+// Set tentatively by global handler (for ALL right-clicks)
+r.bgRightClickPending = true
+r.bgRightClickPos = r.mousePos
+
+// Cleared/used after processing all rows
+if r.bgRightClickPending && !rowRightClicked {
+    // This was truly a background click
+    r.menuVisible = true
+    r.menuIsBackground = true
+    // ... show background menu
+}
+r.bgRightClickPending = false
+#+END_SRC
+
+This pattern allows:
+1. Global handler to optimistically mark potential background clicks
+2. Row handlers to claim clicks on actual items
+3. Final decision made after all rows processed
+
+**** Why Bounds Checking Was Unnecessary
+
+The previous implementation tried to filter right-clicks by checking if mousePos
+was within calculated file list bounds. This was:
+
+1. *Redundant*: Events outside the file list area are already handled by their
+   respective handlers (sidebar, navbar, etc.) and never reach the background handler
+
+2. *Error-prone*: Calculating exact bounds requires tracking accumulated offsets
+   through multiple nested layout containers, which is fragile
+
+3. *Over-complicated*: The PassOp + pending flag pattern already provides the
+   filtering we need - if an event reaches the background check without being
+   claimed by a row, it's by definition a background click
+
+**** Current Implementation (layout.go:46-68)
+
+#+BEGIN_SRC go
+// Global mouse tracker with PassOp
+areaStack := clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops)
+passOp := pointer.PassOp{}.Push(gtx.Ops)
+event.Op(gtx.Ops, &r.mouseTag)
+passOp.Pop()
+areaStack.Pop()
+
+// Process events - no bounds checking needed
+for {
+    ev, ok := gtx.Event(pointer.Filter{Target: &r.mouseTag, Kinds: pointer.Move | pointer.Press})
+    if !ok {
+        break
+    }
+    if e, ok := ev.(pointer.Event); ok {
+        r.mousePos = image.Pt(int(e.Position.X), int(e.Position.Y))
+        if e.Kind == pointer.Press {
+            r.lastClickModifiers = e.Modifiers
+
+            // Any right-click reaching here that isn't claimed by a row
+            // is a background click - trust the event routing
+            if e.Buttons.Contain(pointer.ButtonSecondary) {
+                r.bgRightClickPending = true
+                r.bgRightClickPos = r.mousePos
+            }
+        }
+    }
+}
+#+END_SRC
+
 * Overview
 
 This document details how left and right mouse clicks are handled in the Razor file manager, both at a global level and for specific UI objects. The application is built using the Gio UI framework for Go.

@@ -43,16 +43,6 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 	passOp.Pop()
 	areaStack.Pop()
 
-	// Calculate file list bounds at top level where gtx has correct scale
-	// Sidebar: 180dp + 1dp divider = 181dp from left
-	// Header: ~92dp from top (File button + navbar + insets)
-	sidebarWidth := gtx.Dp(181)
-	headerHeight := gtx.Dp(92)
-	fileListLeft := sidebarWidth
-	fileListTop := headerHeight
-	fileListRight := gtx.Constraints.Max.X
-	fileListBottom := gtx.Constraints.Max.Y
-
 	// Process mouse move events to track position
 	for {
 		ev, ok := gtx.Event(pointer.Filter{Target: &r.mouseTag, Kinds: pointer.Move | pointer.Press})
@@ -63,24 +53,15 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 			r.mousePos = image.Pt(int(e.Position.X), int(e.Position.Y))
 			if e.Kind == pointer.Press {
 				r.lastClickModifiers = e.Modifiers
-				debug.Log(debug.UI, "Global mouse press: pos=%v, buttons=%v", r.mousePos, e.Buttons)
 
-				// Detect right-click in file list area for background context menu
-				// This is needed because layout.List's internal clips prevent events
-				// from reaching the bgRightClickTag handler in empty space
+				// Detect right-click for background context menu
+				// Since we use PassOp, this handler only receives events that weren't
+				// consumed by other handlers (rows, sidebar, buttons, etc.)
+				// So any right-click reaching here is on "empty" space - treat it as background
 				if e.Buttons.Contain(pointer.ButtonSecondary) {
-					// Check if click is within the file list bounds
-					fileListBounds := image.Rectangle{
-						Min: image.Pt(fileListLeft, fileListTop),
-						Max: image.Pt(fileListRight, fileListBottom),
-					}
-					debug.Log(debug.UI, "Right-click detected: mousePos=%v, fileListBounds=%v, inBounds=%v",
-						r.mousePos, fileListBounds, r.mousePos.In(fileListBounds))
-					if r.mousePos.In(fileListBounds) {
-						r.bgRightClickPending = true
-						r.bgRightClickPos = r.mousePos
-						debug.Log(debug.UI, "Set bgRightClickPending=true")
-					}
+					debug.Log(debug.UI, "Global right-click detected (background): pos=%v", r.mousePos)
+					r.bgRightClickPending = true
+					r.bgRightClickPos = r.mousePos
 				}
 			}
 		}
@@ -129,9 +110,12 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 		}),
 
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			// Track accumulated vertical offset for file list bounds calculation
+			accumulatedHeight := 0
+
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					dims := layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						if r.fileMenuBtn.Clicked(gtx) {
 							r.onLeftClick()
 							r.fileMenuOpen = !r.fileMenuOpen
@@ -141,28 +125,42 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 						btn.Background, btn.Color = color.NRGBA{}, colBlack
 						return btn.Layout(gtx)
 					})
+					accumulatedHeight += dims.Size.Y
+					return dims
 				}),
 
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx,
+					dims := layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx,
 						func(gtx layout.Context) layout.Dimensions {
 							return r.layoutNavBar(gtx, state, keyTag, &eventOut)
 						})
+					accumulatedHeight += dims.Size.Y
+					return dims
 				}),
 
 				// Config error banner (shown when config.json failed to parse)
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return r.layoutConfigErrorBanner(gtx)
+					dims := r.layoutConfigErrorBanner(gtx)
+					accumulatedHeight += dims.Size.Y
+					return dims
 				}),
 
 				// Browser tab bar (if tabs are enabled)
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return r.layoutBrowserTabBar(gtx, state, &eventOut)
+					dims := r.layoutBrowserTabBar(gtx, state, &eventOut)
+					accumulatedHeight += dims.Size.Y
+					return dims
 				}),
 
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					// Track vertical offset: File button (~32dp) + navbar (~44dp) + insets (~16dp) ≈ 92dp
-					verticalOffset := gtx.Dp(92)
+					// Use dynamically calculated vertical offset from accumulated heights
+					verticalOffset := accumulatedHeight
+
+					// Calculate horizontal offset for file list (sidebar + divider width in pixels)
+					// This must be calculated in the parent context before Flex lays out children
+					sidebarWidthPx := gtx.Dp(180)
+					dividerWidthPx := gtx.Dp(1)
+					horizontalOffset := sidebarWidthPx + dividerWidthPx
 
 					// Build flex children dynamically based on preview visibility
 					children := []layout.FlexChild{
@@ -201,7 +199,7 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 						children = append(children,
 							// File list takes remaining space
 							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-								r.fileListOffset = image.Pt(gtx.Dp(181), verticalOffset)
+								r.fileListOffset = image.Pt(horizontalOffset, verticalOffset)
 								return r.layoutFileList(gtx, state, keyTag, &eventOut)
 							}),
 							// Resize handle (draggable divider)
@@ -224,7 +222,7 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 					} else {
 						children = append(children,
 							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-								r.fileListOffset = image.Pt(gtx.Dp(181), verticalOffset)
+								r.fileListOffset = image.Pt(horizontalOffset, verticalOffset)
 								return r.layoutFileList(gtx, state, keyTag, &eventOut)
 							}),
 						)
