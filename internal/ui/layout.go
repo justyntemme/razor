@@ -69,7 +69,7 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 		// Background click handler (for dismissing menus)
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			if r.bgClick.Clicked(gtx) {
-				r.menuVisible, r.fileMenuOpen = false, false
+				r.onLeftClick() // Dismiss context menus, file menu, and exit path edit mode
 				r.searchEditorFocused = false // Dismiss search dropdown on background click
 				r.searchHistoryVisible = false
 				r.CancelRename() // Cancel any active rename
