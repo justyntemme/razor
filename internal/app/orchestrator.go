@@ -376,6 +376,21 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 			}
 		}
 		o.window.Invalidate()
+	case ui.ActionRangeSelect:
+		// Select all items from OldIndex to NewIndex (inclusive)
+		if o.state.SelectedIndices == nil {
+			o.state.SelectedIndices = make(map[int]bool)
+		}
+		start, end := evt.OldIndex, evt.NewIndex
+		if start > end {
+			start, end = end, start
+		}
+		for i := start; i <= end; i++ {
+			o.state.SelectedIndices[i] = true
+		}
+		o.state.SelectedIndex = evt.NewIndex
+		o.ui.HidePreview() // Hide preview in multi-select mode
+		o.window.Invalidate()
 	case ui.ActionClearSelection:
 		o.state.SelectedIndex = -1
 		o.state.SelectedIndices = nil

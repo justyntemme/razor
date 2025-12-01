@@ -45,7 +45,8 @@ const (
 	ActionHome
 	ActionNewWindow
 	ActionSelect
-	ActionToggleSelect  // Toggle selection for multi-select mode
+	ActionToggleSelect   // Toggle selection for multi-select mode
+	ActionRangeSelect    // Select range from current selection to clicked item
 	ActionClearSelection // Clear all selections
 	ActionSearch
 	ActionOpen
@@ -562,7 +563,8 @@ type Renderer struct {
 	fileListOffset      image.Point // Offset of file list area from window origin
 
 	// Multi-select mode
-	multiSelectMode bool // When true, show checkboxes for multi-select
+	multiSelectMode    bool          // When true, show checkboxes for multi-select
+	lastClickModifiers key.Modifiers // Modifiers held during last pointer click
 
 	// Pending click for double-click detection
 	// We delay single-click selection until we're sure it's not a double-click
@@ -1284,11 +1286,11 @@ func (r *Renderer) detectRightClick(gtx layout.Context, tag event.Tag) bool {
 	return false
 }
 
-func (r *Renderer) processGlobalInput(gtx layout.Context, state *State) UIEvent {
+func (r *Renderer) processGlobalInput(gtx layout.Context, state *State, keyTag event.Tag) UIEvent {
 	// Keyboard input handling
 
 	for {
-		e, ok := gtx.Event(key.Filter{Focus: true, Name: ""})
+		e, ok := gtx.Event(key.Filter{Focus: keyTag, Name: ""})
 		if !ok {
 			break
 		}
@@ -1299,8 +1301,9 @@ func (r *Renderer) processGlobalInput(gtx layout.Context, state *State) UIEvent 
 		if !ok || k.State != key.Press {
 			continue
 		}
+
 		switch k.Name {
-		case "Up":
+		case key.NameUpArrow:
 			if idx := state.SelectedIndex - 1; idx >= 0 {
 				r.listState.ScrollTo(idx)
 				return UIEvent{Action: ActionSelect, NewIndex: idx}
@@ -1309,22 +1312,28 @@ func (r *Renderer) processGlobalInput(gtx layout.Context, state *State) UIEvent 
 				r.listState.ScrollTo(idx)
 				return UIEvent{Action: ActionSelect, NewIndex: idx}
 			}
-		case "Down":
+		case key.NameDownArrow:
 			if idx := state.SelectedIndex + 1; idx < len(state.Entries) {
 				r.listState.ScrollTo(idx)
 				return UIEvent{Action: ActionSelect, NewIndex: idx}
 			} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
 				return UIEvent{Action: ActionSelect, NewIndex: 0}
 			}
-		case "Left":
-			if k.Modifiers.Contain(key.ModAlt) && state.CanBack {
+		case key.NameLeftArrow:
+			// Left arrow: go back (up one directory level)
+			if state.CanBack {
 				return UIEvent{Action: ActionBack}
 			}
-		case "Right":
-			if k.Modifiers.Contain(key.ModAlt) && state.CanForward {
-				return UIEvent{Action: ActionForward}
+		case key.NameRightArrow:
+			// Right arrow: enter selection (navigate into folder or open file)
+			if idx := state.SelectedIndex; idx >= 0 && idx < len(state.Entries) {
+				item := state.Entries[idx]
+				if item.IsDir {
+					return UIEvent{Action: ActionNavigate, Path: item.Path}
+				}
+				return UIEvent{Action: ActionOpen, Path: item.Path}
 			}
-		case "Return", "Enter":
+		case key.NameReturn, key.NameEnter:
 			if idx := state.SelectedIndex; idx >= 0 && idx < len(state.Entries) {
 				item := state.Entries[idx]
 				if item.IsDir {
@@ -1423,9 +1432,12 @@ func (r *Renderer) renderColumns(gtx layout.Context) (layout.Dimensions, UIEvent
 }
 
 // renderRow renders a file/folder row. Returns dimensions, left-clicked, right-clicked, click position, and rename event.
-func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selected bool, isRenaming bool, isChecked bool, showCheckbox bool) (layout.Dimensions, bool, bool, image.Point, *UIEvent, bool) {
+func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selected bool, isRenaming bool, isChecked bool, showCheckbox bool) (layout.Dimensions, bool, bool, bool, image.Point, *UIEvent, bool) {
 	// Check for left-click BEFORE layout (Gio pattern)
 	leftClicked := item.Clickable.Clicked(gtx)
+
+	// Check for shift modifier during click by tracking last click modifiers
+	shiftHeld := r.lastClickModifiers.Contain(key.ModShift)
 
 	// Check for checkbox toggle (only if checkboxes are visible)
 	checkboxToggled := false
@@ -1525,7 +1537,7 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 		})
 	}
 
-	return dims, leftClicked, rightClicked, clickPos, renameEvent, checkboxToggled
+	return dims, leftClicked, rightClicked, shiftHeld, clickPos, renameEvent, checkboxToggled
 }
 
 // renderRowContent renders the content of a row (shared between normal and rename mode)
@@ -1556,7 +1568,7 @@ func (r *Renderer) renderRowContent(gtx layout.Context, item *UIEntry, isRenamin
 				children = append(children,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						cb := material.CheckBox(r.Theme, &item.Checkbox, "")
-						cb.Size = unit.Dp(18)
+						cb.Size = unit.Dp(14) // Smaller checkbox
 						if isChecked {
 							cb.Color = colAccent
 							cb.IconColor = colAccent
@@ -1565,6 +1577,14 @@ func (r *Renderer) renderRowContent(gtx layout.Context, item *UIEntry, isRenamin
 							cb.IconColor = colGray
 						}
 						return cb.Layout(gtx)
+					}),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+					// Divider between checkbox and filename
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						size := image.Pt(gtx.Dp(unit.Dp(1)), gtx.Dp(unit.Dp(16)))
+						paint.FillShape(gtx.Ops, color.NRGBA{R: 200, G: 200, B: 200, A: 255},
+							clip.Rect{Max: size}.Op())
+						return layout.Dimensions{Size: size}
 					}),
 					layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 				)

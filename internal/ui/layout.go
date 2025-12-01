@@ -45,24 +45,37 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 
 	// Process mouse move events to track position
 	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: &r.mouseTag, Kinds: pointer.Move})
+		ev, ok := gtx.Event(pointer.Filter{Target: &r.mouseTag, Kinds: pointer.Move | pointer.Press})
 		if !ok {
 			break
 		}
 		if e, ok := ev.(pointer.Event); ok {
 			r.mousePos = image.Pt(int(e.Position.X), int(e.Position.Y))
+			if e.Kind == pointer.Press {
+				r.lastClickModifiers = e.Modifiers
+			}
 		}
 	}
 
 	// ===== KEYBOARD FOCUS =====
 	keyTag := &r.listState
 	event.Op(gtx.Ops, keyTag)
+
+	// Request focus on first frame
 	if !r.focused {
 		gtx.Execute(key.FocusCmd{Tag: keyTag})
 		r.focused = true
 	}
 
-	eventOut := r.processGlobalInput(gtx, state)
+	// Check for focus events (to track when we lose focus)
+	for {
+		_, ok := gtx.Event(key.FocusFilter{Target: keyTag})
+		if !ok {
+			break
+		}
+	}
+
+	eventOut := r.processGlobalInput(gtx, state, keyTag)
 
 	// ===== PENDING CLICK HANDLING =====
 	// Check if a pending click has expired (enough time passed without a second click)
@@ -1240,7 +1253,7 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 				showCheckbox := state.SelectedIndex >= 0
 
 				// Render row and capture right-click event
-				rowDims, leftClicked, rightClicked, _, renameEvt, checkboxToggled := r.renderRow(gtx, item, i, i == state.SelectedIndex, isRenaming, isChecked, showCheckbox)
+				rowDims, leftClicked, rightClicked, shiftHeld, _, renameEvt, checkboxToggled := r.renderRow(gtx, item, i, i == state.SelectedIndex, isRenaming, isChecked, showCheckbox)
 
 				// Handle checkbox toggle - this is how users enter/use multi-select mode
 				if checkboxToggled {
@@ -1306,6 +1319,12 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 						} else {
 							*eventOut = UIEvent{Action: ActionOpen, Path: item.Path}
 						}
+					} else if shiftHeld && state.SelectedIndex >= 0 {
+						// Shift+click: range selection from current selection to clicked item
+						r.multiSelectMode = true
+						r.pendingClickIndex = -1
+						r.pendingClickTime = time.Time{}
+						*eventOut = UIEvent{Action: ActionRangeSelect, NewIndex: i, OldIndex: state.SelectedIndex}
 					} else {
 						// First click - store as pending, don't select yet
 						// Selection will happen after doubleClickInterval passes
