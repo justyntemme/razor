@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"io"
 	iofs "io/fs"
 	"log"
@@ -144,10 +145,31 @@ func (o *Orchestrator) doDelete(path string) {
 	o.refreshCurrentDir()
 }
 
+// doDeleteMultiple deletes multiple files or folders
+func (o *Orchestrator) doDeleteMultiple(paths []string) {
+	total := len(paths)
+	for i, path := range paths {
+		if !pathExists(path) {
+			log.Printf("Delete error: path does not exist: %s", path)
+			continue
+		}
+
+		label := fmt.Sprintf("Deleting (%d/%d) %s", i+1, total, filepath.Base(path))
+		o.setProgress(true, label, 0, 0)
+		err := deleteItem(path)
+
+		if err != nil {
+			log.Printf("Delete error for %s: %v", path, err)
+		}
+	}
+	o.setProgress(false, "", 0, 0)
+	o.refreshCurrentDir()
+}
+
 // doPaste pastes the clipboard contents to the current directory
 func (o *Orchestrator) doPaste() {
 	clip := o.state.Clipboard
-	if clip == nil {
+	if clip == nil || len(clip.Paths) == 0 {
 		return
 	}
 
@@ -155,66 +177,94 @@ func (o *Orchestrator) doPaste() {
 	o.conflictResolution = ui.ConflictAsk
 	o.conflictAbort = false
 
-	src := clip.Path
 	dstDir := o.state.CurrentPath
-	dstName := filepath.Base(src)
-	dst := filepath.Join(dstDir, dstName)
+	isCut := clip.Op == ui.ClipCut
+	totalFiles := len(clip.Paths)
+	var lastErr error
 
-	srcInfo, err := os.Stat(src)
-	if err != nil {
-		log.Printf("Paste error: %v", err)
-		return
-	}
-
-	// Check for conflict
-	dstInfo, err := os.Stat(dst)
-	if err == nil {
-		// Destination exists - need to resolve conflict
-		resolution := o.resolveConflict(src, dst, srcInfo, dstInfo)
-
-		switch resolution {
-		case ui.ConflictReplaceAll:
-			// Replace - delete destination first
-			deleteItem(dst)
-		case ui.ConflictKeepBothAll:
-			// Keep both - rename destination
-			ext := filepath.Ext(dstName)
-			base := strings.TrimSuffix(dstName, ext)
-			for i := 1; ; i++ {
-				dst = filepath.Join(dstDir, base+"_copy"+strconv.Itoa(i)+ext)
-				if !pathExists(dst) {
-					break
-				}
-			}
-		case ui.ConflictSkipAll:
-			// Skip this file
-			o.refreshCurrentDir()
-			return
-		case ui.ConflictAsk:
-			// User clicked Stop or dialog was aborted
-			o.refreshCurrentDir()
-			return
+	for i, src := range clip.Paths {
+		if o.conflictAbort {
+			break
 		}
-	}
 
-	label := "Copying"
-	if clip.Op == ui.ClipCut {
-		label = "Moving"
-	}
+		dstName := filepath.Base(src)
+		dst := filepath.Join(dstDir, dstName)
 
-	if srcInfo.IsDir() {
-		o.setProgress(true, label+" folder...", 0, 0)
-		err = o.copyDir(src, dst, clip.Op == ui.ClipCut)
-	} else {
-		o.setProgress(true, label+" "+filepath.Base(src), 0, srcInfo.Size())
-		err = o.copyFile(src, dst, clip.Op == ui.ClipCut)
+		srcInfo, err := os.Stat(src)
+		if err != nil {
+			log.Printf("Paste error for %s: %v", src, err)
+			lastErr = err
+			continue
+		}
+
+		// Check for conflict
+		dstInfo, err := os.Stat(dst)
+		if err == nil {
+			// Destination exists - need to resolve conflict
+			// Set remaining count for UI
+			o.stateMu.Lock()
+			o.state.Conflict.RemainingConflicts = totalFiles - i
+			o.stateMu.Unlock()
+
+			resolution := o.resolveConflict(src, dst, srcInfo, dstInfo)
+
+			switch resolution {
+			case ui.ConflictReplaceAll:
+				// Replace - delete destination first
+				deleteItem(dst)
+			case ui.ConflictKeepBothAll:
+				// Keep both - rename destination
+				ext := filepath.Ext(dstName)
+				base := strings.TrimSuffix(dstName, ext)
+				for j := 1; ; j++ {
+					dst = filepath.Join(dstDir, base+"_copy"+strconv.Itoa(j)+ext)
+					if !pathExists(dst) {
+						break
+					}
+				}
+			case ui.ConflictSkipAll:
+				// Skip this file
+				continue
+			case ui.ConflictAsk:
+				// User clicked Stop or dialog was aborted
+				o.conflictAbort = true
+				break
+			}
+		}
+
+		label := "Copying"
+		if isCut {
+			label = "Moving"
+		}
+
+		// Show progress with file count for multiple files
+		progressLabel := label + " " + filepath.Base(src)
+		if totalFiles > 1 {
+			progressLabel = fmt.Sprintf("%s (%d/%d) %s", label, i+1, totalFiles, filepath.Base(src))
+		}
+
+		if srcInfo.IsDir() {
+			o.setProgress(true, progressLabel, 0, 0)
+			err = o.copyDir(src, dst, isCut)
+		} else {
+			o.setProgress(true, progressLabel, 0, srcInfo.Size())
+			err = o.copyFile(src, dst, isCut)
+		}
+
+		if err != nil {
+			log.Printf("Paste error for %s: %v", src, err)
+			lastErr = err
+		}
 	}
 
 	o.setProgress(false, "", 0, 0)
 
-	if err != nil {
-		log.Printf("Paste error: %v", err)
-	} else if clip.Op == ui.ClipCut {
+	if lastErr != nil {
+		log.Printf("Some paste operations failed")
+	}
+
+	// Clear clipboard after cut operation completes
+	if isCut && !o.conflictAbort {
 		o.state.Clipboard = nil
 	}
 

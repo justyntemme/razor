@@ -45,6 +45,8 @@ const (
 	ActionHome
 	ActionNewWindow
 	ActionSelect
+	ActionToggleSelect  // Toggle selection for multi-select mode
+	ActionClearSelection // Clear all selections
 	ActionSearch
 	ActionOpen
 	ActionOpenWith
@@ -113,15 +115,16 @@ const (
 
 // ConflictState holds state for the file conflict dialog
 type ConflictState struct {
-	Active      bool   // Whether dialog is visible
-	SourcePath  string // Path of file being copied
-	DestPath    string // Path where file would be placed
-	SourceSize  int64  // Size of source file
-	DestSize    int64  // Size of existing destination file
-	SourceTime  time.Time
-	DestTime    time.Time
-	IsDir       bool   // Whether the conflict is for a directory
-	ApplyToAll  bool   // Checkbox state for "Apply to All"
+	Active             bool   // Whether dialog is visible
+	SourcePath         string // Path of file being copied
+	DestPath           string // Path where file would be placed
+	SourceSize         int64  // Size of source file
+	DestSize           int64  // Size of existing destination file
+	SourceTime         time.Time
+	DestTime           time.Time
+	IsDir              bool // Whether the conflict is for a directory
+	ApplyToAll         bool // Checkbox state for "Apply to All"
+	RemainingConflicts int  // Number of remaining conflicts (including current)
 }
 
 // BrowserTab represents a single browser tab with its own navigation state
@@ -378,15 +381,17 @@ const (
 )
 
 type Clipboard struct {
-	Path string
-	Op   ClipOp
+	Paths []string // Multiple paths for multi-select copy/cut
+	Op    ClipOp
 }
 
 type UIEvent struct {
 	Action             UIAction
 	Path               string
-	OldPath            string // Original path for rename operations
+	Paths              []string // Multiple paths for multi-select operations
+	OldPath            string   // Original path for rename operations
 	NewIndex           int
+	OldIndex           int    // Previous index (for multi-select enter)
 	SortColumn         SortColumn
 	SortAscending      bool
 	ShowDotfiles       bool
@@ -407,6 +412,7 @@ type UIEntry struct {
 	Size          int64
 	ModTime       time.Time
 	Clickable     widget.Clickable
+	Checkbox      widget.Bool // For multi-select mode
 	RightClickTag int
 	LastClick     time.Time
 }
@@ -478,20 +484,21 @@ func parseDirectivesForDisplay(text string) ([]DetectedDirective, string) {
 }
 
 type State struct {
-	CurrentPath    string
-	Entries        []UIEntry
-	SelectedIndex  int
-	CanBack        bool
-	CanForward     bool
-	Favorites      map[string]bool
-	FavList        []FavoriteItem
-	Clipboard      *Clipboard
-	Progress       ProgressState
-	DeleteTarget   string
-	Drives         []DriveItem
-	IsSearchResult bool
-	SearchQuery    string
-	Conflict       ConflictState // File conflict dialog state
+	CurrentPath     string
+	Entries         []UIEntry
+	SelectedIndex   int              // Primary selection (for keyboard nav)
+	SelectedIndices map[int]bool     // Multi-select: set of selected indices
+	CanBack         bool
+	CanForward      bool
+	Favorites       map[string]bool
+	FavList         []FavoriteItem
+	Clipboard       *Clipboard
+	Progress        ProgressState
+	DeleteTargets   []string // Paths to delete (supports multi-select)
+	Drives          []DriveItem
+	IsSearchResult  bool
+	SearchQuery     string
+	Conflict        ConflictState // File conflict dialog state
 }
 
 type Renderer struct {
@@ -553,6 +560,19 @@ type Renderer struct {
 	mouseTag            struct{}
 	bgRightClickTag     struct{} // Tag for detecting right-clicks on empty space
 	fileListOffset      image.Point // Offset of file list area from window origin
+
+	// Multi-select mode
+	multiSelectMode bool // When true, show checkboxes for multi-select
+
+	// Pending click for double-click detection
+	// We delay single-click selection until we're sure it's not a double-click
+	pendingClickIndex int       // Index of item with pending click (-1 if none)
+	pendingClickTime  time.Time // Time of the pending click
+	pendingClickPath  string    // Path of item for navigation on double-click
+
+	// Background right-click pending (to detect if click was on row or empty space)
+	bgRightClickPending bool
+	bgRightClickPos     image.Point
 
 	// Delete confirmation
 	deleteConfirmOpen bool
@@ -681,7 +701,7 @@ var (
 )
 
 func NewRenderer() *Renderer {
-	r := &Renderer{Theme: material.NewTheme(), SortAscending: true, DefaultDepth: 2, renameIndex: -1}
+	r := &Renderer{Theme: material.NewTheme(), SortAscending: true, DefaultDepth: 2, renameIndex: -1, pendingClickIndex: -1}
 	r.listState.Axis = layout.Vertical
 	r.favState.Axis = layout.Vertical
 	r.driveState.Axis = layout.Vertical
@@ -1111,12 +1131,135 @@ func (r *Renderer) CancelRename() {
 	r.renamePath = ""
 }
 
+// ResetMultiSelect exits multi-select mode. Call this when navigating to a new directory.
+func (r *Renderer) ResetMultiSelect() {
+	r.multiSelectMode = false
+	r.pendingClickIndex = -1
+	r.pendingClickTime = time.Time{}
+	r.pendingClickPath = ""
+}
+
+// IsMultiSelectMode returns whether multi-select mode is active
+func (r *Renderer) IsMultiSelectMode() bool {
+	return r.multiSelectMode
+}
+
+// collectSelectedPaths returns all selected file paths.
+// If in multi-select mode, returns all paths from SelectedIndices.
+// Otherwise, returns the single selected item or the menu target path.
+func (r *Renderer) collectSelectedPaths(state *State) []string {
+	// If we have multi-select items, use those
+	if state.SelectedIndices != nil && len(state.SelectedIndices) > 0 {
+		paths := make([]string, 0, len(state.SelectedIndices))
+		for idx := range state.SelectedIndices {
+			if idx >= 0 && idx < len(state.Entries) {
+				paths = append(paths, state.Entries[idx].Path)
+			}
+		}
+		return paths
+	}
+	// Otherwise, use the single selected item
+	if state.SelectedIndex >= 0 && state.SelectedIndex < len(state.Entries) {
+		return []string{state.Entries[state.SelectedIndex].Path}
+	}
+	// Fallback to menu path (right-click target)
+	if r.menuPath != "" {
+		return []string{r.menuPath}
+	}
+	return nil
+}
+
 // onLeftClick should be called at the start of any left-click handler.
 // It dismisses context menus and performs other common click cleanup.
 func (r *Renderer) onLeftClick() {
 	r.menuVisible = false
 	r.fileMenuOpen = false
 	r.isEditing = false // Exit path edit mode when clicking elsewhere
+}
+
+// ============================================================================
+// REUSABLE UI COMPONENTS
+// ============================================================================
+
+// ButtonStyle defines the visual style for a button
+type ButtonStyle int
+
+const (
+	ButtonPrimary   ButtonStyle = iota // Blue background, white text
+	ButtonDanger                       // Red background, white text
+	ButtonSecondary                    // Gray background, black text
+	ButtonDisabled                     // Light gray background, muted text
+)
+
+// styledButton renders a button with consistent styling based on the style type
+func (r *Renderer) styledButton(gtx layout.Context, btn *widget.Clickable, label string, style ButtonStyle) layout.Dimensions {
+	b := material.Button(r.Theme, btn, label)
+	switch style {
+	case ButtonPrimary:
+		b.Background = colPrimaryBtn
+		b.Color = colPrimaryBtnText
+	case ButtonDanger:
+		b.Background = colDangerBtn
+		b.Color = colDangerBtnText
+	case ButtonSecondary:
+		b.Background = colLightGray
+		b.Color = colBlack
+	case ButtonDisabled:
+		b.Background = colLightGray
+		b.Color = colDisabled
+	}
+	return b.Layout(gtx)
+}
+
+// dialogButtonRow renders a standard button row for dialogs (Cancel on left, action on right)
+func (r *Renderer) dialogButtonRow(gtx layout.Context, cancelBtn, actionBtn *widget.Clickable, cancelLabel, actionLabel string, actionStyle ButtonStyle) layout.Dimensions {
+	return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceStart}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return r.styledButton(gtx, cancelBtn, cancelLabel, ButtonSecondary)
+		}),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return r.styledButton(gtx, actionBtn, actionLabel, actionStyle)
+		}),
+	)
+}
+
+// modalBackdrop renders a modal dialog with backdrop, centered content using menuShell
+// The dismissBtn is optional - if provided, clicking the backdrop will trigger it
+func (r *Renderer) modalBackdrop(gtx layout.Context, width unit.Dp, dismissBtn *widget.Clickable, content layout.Widget) layout.Dimensions {
+	return layout.Stack{}.Layout(gtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			paint.FillShape(gtx.Ops, colBackdrop, clip.Rect{Max: gtx.Constraints.Max}.Op())
+			if dismissBtn != nil {
+				return material.Clickable(gtx, dismissBtn, func(gtx layout.Context) layout.Dimensions {
+					return layout.Dimensions{Size: gtx.Constraints.Max}
+				})
+			}
+			return layout.Dimensions{Size: gtx.Constraints.Max}
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return r.menuShell(gtx, width, content)
+			})
+		}),
+	)
+}
+
+// modalContent renders standard modal content with title, body, and button row
+func (r *Renderer) modalContent(gtx layout.Context, title string, titleColor color.NRGBA, body layout.Widget, buttons layout.Widget) layout.Dimensions {
+	return layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				h6 := material.H6(r.Theme, title)
+				h6.Color = titleColor
+				return h6.Layout(gtx)
+			}),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+			layout.Rigid(body),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(20)}.Layout),
+			layout.Rigid(buttons),
+		)
+	})
 }
 
 // invisibleClickable renders content inside an invisible clickable area.
@@ -1191,11 +1334,13 @@ func (r *Renderer) processGlobalInput(gtx layout.Context, state *State) UIEvent 
 			}
 		case "C":
 			if k.Modifiers.Contain(key.ModCtrl) && state.SelectedIndex >= 0 {
-				return UIEvent{Action: ActionCopy, Path: state.Entries[state.SelectedIndex].Path}
+				paths := r.collectSelectedPaths(state)
+				return UIEvent{Action: ActionCopy, Paths: paths}
 			}
 		case "X":
 			if k.Modifiers.Contain(key.ModCtrl) && state.SelectedIndex >= 0 {
-				return UIEvent{Action: ActionCut, Path: state.Entries[state.SelectedIndex].Path}
+				paths := r.collectSelectedPaths(state)
+				return UIEvent{Action: ActionCut, Paths: paths}
 			}
 		case "V":
 			if k.Modifiers.Contain(key.ModCtrl) && state.Clipboard != nil {
@@ -1210,9 +1355,9 @@ func (r *Renderer) processGlobalInput(gtx layout.Context, state *State) UIEvent 
 				}
 			}
 		case "⌫", "⌦", "Delete":
-			if state.SelectedIndex >= 0 {
+			if state.SelectedIndex >= 0 || (state.SelectedIndices != nil && len(state.SelectedIndices) > 0) {
 				r.deleteConfirmOpen = true
-				state.DeleteTarget = state.Entries[state.SelectedIndex].Path
+				state.DeleteTargets = r.collectSelectedPaths(state)
 			}
 		case key.NameEscape:
 			// Dismiss preview pane on Escape
@@ -1278,10 +1423,16 @@ func (r *Renderer) renderColumns(gtx layout.Context) (layout.Dimensions, UIEvent
 }
 
 // renderRow renders a file/folder row. Returns dimensions, left-clicked, right-clicked, click position, and rename event.
-func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selected bool, isRenaming bool) (layout.Dimensions, bool, bool, image.Point, *UIEvent) {
+func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selected bool, isRenaming bool, isChecked bool, showCheckbox bool) (layout.Dimensions, bool, bool, image.Point, *UIEvent, bool) {
 	// Check for left-click BEFORE layout (Gio pattern)
 	leftClicked := item.Clickable.Clicked(gtx)
-	
+
+	// Check for checkbox toggle (only if checkboxes are visible)
+	checkboxToggled := false
+	if showCheckbox && item.Checkbox.Update(gtx) {
+		checkboxToggled = true
+	}
+
 	// Check for right-click and capture position
 	rightClicked := false
 	var clickPos image.Point
@@ -1295,7 +1446,7 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 			clickPos = image.Pt(int(e.Position.X), int(e.Position.Y))
 		}
 	}
-	
+
 	// Check for rename submission or cancellation
 	var renameEvent *UIEvent
 	if isRenaming {
@@ -1317,7 +1468,7 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 				r.CancelRename()
 			}
 		}
-		
+
 		// Handle Escape to cancel - check focused key events
 		for {
 			ev, ok := gtx.Event(key.Filter{Focus: true, Name: key.NameEscape})
@@ -1329,7 +1480,12 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 			}
 		}
 	}
-	
+
+	// Determine if row should show as selected
+	// In multi-select mode, only use isChecked (from SelectedIndices)
+	// In single-select mode, use the primary selection
+	showSelected := isChecked
+
 	// Layout the clickable row (but not if renaming - we handle clicks differently)
 	var dims layout.Dimensions
 	cornerRadius := gtx.Dp(4)
@@ -1337,7 +1493,7 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 		// For renaming, render content first to get proper size, then draw background
 		// Use a macro to record the content, measure it, then draw background + content
 		macro := op.Record(gtx.Ops)
-		contentDims := r.renderRowContent(gtx, item, true)
+		contentDims := r.renderRowContent(gtx, item, true, false, false)
 		call := macro.Stop()
 
 		// Draw selection background with rounded corners
@@ -1357,7 +1513,7 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 			event.Op(gtx.Ops, &item.RightClickTag)
 
 			// Draw selection background with rounded corners
-			if selected {
+			if showSelected {
 				rr := clip.RRect{
 					Rect: image.Rect(0, 0, gtx.Constraints.Max.X, gtx.Constraints.Max.Y),
 					NE:   cornerRadius, NW: cornerRadius, SE: cornerRadius, SW: cornerRadius,
@@ -1365,15 +1521,15 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 				paint.FillShape(gtx.Ops, colSelected, rr.Op(gtx.Ops))
 			}
 
-			return r.renderRowContent(gtx, item, false)
+			return r.renderRowContent(gtx, item, false, showCheckbox, isChecked)
 		})
 	}
-	
-	return dims, leftClicked, rightClicked, clickPos, renameEvent
+
+	return dims, leftClicked, rightClicked, clickPos, renameEvent, checkboxToggled
 }
 
 // renderRowContent renders the content of a row (shared between normal and rename mode)
-func (r *Renderer) renderRowContent(gtx layout.Context, item *UIEntry, isRenaming bool) layout.Dimensions {
+func (r *Renderer) renderRowContent(gtx layout.Context, item *UIEntry, isRenaming bool, showCheckbox bool, isChecked bool) layout.Dimensions {
 	name, typeStr, sizeStr := item.Name, "File", formatSize(item.Size)
 	dateStr := item.ModTime.Format("01/02/06 03:04 PM")
 	textColor, weight := colBlack, font.Normal
@@ -1388,10 +1544,39 @@ func (r *Renderer) renderRowContent(gtx layout.Context, item *UIEntry, isRenamin
 		typeStr = strings.ToUpper(ext[1:]) + " File"
 	}
 
+	// Sync checkbox state with selection state
+	item.Checkbox.Value = isChecked
+
 	return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
 		func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween, Alignment: layout.Middle}.Layout(gtx,
-				layout.Flexed(0.5, func(gtx layout.Context) layout.Dimensions {
+			var children []layout.FlexChild
+
+			// Add checkbox if in multi-select mode
+			if showCheckbox {
+				children = append(children,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						cb := material.CheckBox(r.Theme, &item.Checkbox, "")
+						cb.Size = unit.Dp(18)
+						if isChecked {
+							cb.Color = colAccent
+							cb.IconColor = colAccent
+						} else {
+							cb.Color = colGray
+							cb.IconColor = colGray
+						}
+						return cb.Layout(gtx)
+					}),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+				)
+			}
+
+			// Name column (adjusted flex weight when checkbox is present)
+			nameWeight := float32(0.5)
+			if showCheckbox {
+				nameWeight = 0.45
+			}
+			children = append(children,
+				layout.Flexed(nameWeight, func(gtx layout.Context) layout.Dimensions {
 					if isRenaming {
 						// Show editor for renaming
 						gtx.Execute(key.FocusCmd{Tag: &r.renameEditor})
@@ -1424,6 +1609,8 @@ func (r *Renderer) renderRowContent(gtx layout.Context, item *UIEntry, isRenamin
 					return lbl.Layout(gtx)
 				}),
 			)
+
+			return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween, Alignment: layout.Middle}.Layout(gtx, children...)
 		})
 }
 

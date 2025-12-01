@@ -264,12 +264,15 @@ func (o *Orchestrator) refreshDrives() {
 	}
 }
 
-// resetUIState cancels any active rename, hides preview, and exits recent view.
-// Called before navigation operations to ensure clean state.
+// resetUIState cancels any active rename, hides preview, exits recent view,
+// and clears multi-select mode. Called before navigation operations to ensure clean state.
 func (o *Orchestrator) resetUIState() {
 	o.ui.CancelRename()
 	o.ui.HidePreview()
 	o.ui.SetRecentView(false)
+	o.ui.ResetMultiSelect()
+	o.state.SelectedIndices = nil
+	o.state.SelectedIndex = -1
 }
 
 // restoreDirectory restores the cached directory entries after a search is cleared.
@@ -312,6 +315,8 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		o.openNewWindow()
 	case ui.ActionSelect:
 		o.state.SelectedIndex = evt.NewIndex
+		// Clear multi-select when doing single select
+		o.state.SelectedIndices = nil
 		// Show preview for selected file if it's a previewable type
 		if evt.NewIndex >= 0 && evt.NewIndex < len(o.state.Entries) {
 			entry := &o.state.Entries[evt.NewIndex]
@@ -321,6 +326,60 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 				o.ui.HidePreview()
 			}
 		}
+		o.window.Invalidate()
+	case ui.ActionToggleSelect:
+		// Initialize SelectedIndices map if needed
+		if o.state.SelectedIndices == nil {
+			o.state.SelectedIndices = make(map[int]bool)
+		}
+		// If OldIndex is set, we're entering multi-select mode - add the old selection first
+		if evt.OldIndex >= 0 && evt.OldIndex != evt.NewIndex {
+			o.state.SelectedIndices[evt.OldIndex] = true
+		}
+		// Toggle the new index
+		wasSelected := o.state.SelectedIndices[evt.NewIndex]
+		if wasSelected {
+			delete(o.state.SelectedIndices, evt.NewIndex)
+		} else {
+			o.state.SelectedIndices[evt.NewIndex] = true
+		}
+
+		// Update primary selection based on toggle result
+		if wasSelected {
+			// Item was unchecked - pick another selected item as primary, or -1 if none
+			o.state.SelectedIndex = -1
+			for idx := range o.state.SelectedIndices {
+				o.state.SelectedIndex = idx
+				break
+			}
+		} else {
+			// Item was checked - make it the primary selection
+			o.state.SelectedIndex = evt.NewIndex
+		}
+
+		// If no items left selected, clear multi-select state
+		if len(o.state.SelectedIndices) == 0 {
+			o.state.SelectedIndices = nil
+			o.ui.ResetMultiSelect()
+		}
+
+		// Hide preview in multi-select mode (multiple items selected)
+		if len(o.state.SelectedIndices) > 1 {
+			o.ui.HidePreview()
+		} else if len(o.state.SelectedIndices) == 1 && o.state.SelectedIndex >= 0 {
+			// Single item selected - show preview if it's a file
+			if o.state.SelectedIndex < len(o.state.Entries) {
+				entry := &o.state.Entries[o.state.SelectedIndex]
+				if !entry.IsDir {
+					o.ui.ShowPreview(entry.Path)
+				}
+			}
+		}
+		o.window.Invalidate()
+	case ui.ActionClearSelection:
+		o.state.SelectedIndex = -1
+		o.state.SelectedIndices = nil
+		o.ui.HidePreview()
 		o.window.Invalidate()
 	case ui.ActionSearch:
 		o.searchCtrl.DoSearch(evt.Path, evt.SearchSubmitted, o.restoreDirectory, o.setProgress)
@@ -361,17 +420,30 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		o.applyFilterAndSort()
 		o.window.Invalidate()
 	case ui.ActionCopy:
-		o.state.Clipboard = &ui.Clipboard{Path: evt.Path, Op: ui.ClipCopy}
+		o.state.Clipboard = &ui.Clipboard{Paths: evt.Paths, Op: ui.ClipCopy}
+		// Clear selections after copying
+		o.state.SelectedIndex = -1
+		o.state.SelectedIndices = nil
+		o.ui.ResetMultiSelect()
 		o.window.Invalidate()
 	case ui.ActionCut:
-		o.state.Clipboard = &ui.Clipboard{Path: evt.Path, Op: ui.ClipCut}
+		o.state.Clipboard = &ui.Clipboard{Paths: evt.Paths, Op: ui.ClipCut}
+		// Clear selections after cutting
+		o.state.SelectedIndex = -1
+		o.state.SelectedIndices = nil
+		o.ui.ResetMultiSelect()
 		o.window.Invalidate()
 	case ui.ActionPaste:
 		if o.state.Clipboard != nil {
 			go o.doPaste()
 		}
 	case ui.ActionConfirmDelete:
-		go o.doDelete(evt.Path)
+		// Support deleting multiple files
+		if len(evt.Paths) > 0 {
+			go o.doDeleteMultiple(evt.Paths)
+		} else if evt.Path != "" {
+			go o.doDelete(evt.Path)
+		}
 	case ui.ActionCreateFile:
 		go o.doCreateFile(evt.FileName)
 	case ui.ActionCreateFolder:
