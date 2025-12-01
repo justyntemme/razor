@@ -77,23 +77,6 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 
 	eventOut := r.processGlobalInput(gtx, state, keyTag)
 
-	// ===== PENDING CLICK HANDLING =====
-	// Check if a pending click has expired (enough time passed without a second click)
-	// If so, fire the selection event now
-	if r.pendingClickIndex >= 0 && !r.pendingClickTime.IsZero() {
-		elapsed := time.Since(r.pendingClickTime)
-		if elapsed >= doubleClickInterval {
-			// Pending click expired - treat it as a single click (select)
-			eventOut = UIEvent{Action: ActionSelect, NewIndex: r.pendingClickIndex}
-			r.pendingClickIndex = -1
-			r.pendingClickTime = time.Time{}
-			r.pendingClickPath = ""
-		} else {
-			// Still waiting - request a redraw to check again
-			gtx.Execute(op.InvalidateCmd{At: r.pendingClickTime.Add(doubleClickInterval)})
-		}
-	}
-
 	// ===== MAIN LAYOUT =====
 	layout.Stack{}.Layout(gtx,
 		// Background click handler (for dismissing menus)
@@ -104,8 +87,8 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 				r.searchHistoryVisible = false
 				r.CancelRename() // Cancel any active rename
 				r.multiSelectMode = false // Exit multi-select mode
-				r.pendingClickIndex = -1 // Clear any pending click
-				r.pendingClickTime = time.Time{}
+				r.lastClickIndex = -1 // Clear click tracking
+				r.lastClickTime = time.Time{}
 				if !r.settingsOpen && !r.deleteConfirmOpen && !r.createDialogOpen && !state.Conflict.Active {
 					eventOut = UIEvent{Action: ActionClearSelection}
 					gtx.Execute(key.FocusCmd{Tag: keyTag})
@@ -280,6 +263,9 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 
 			// Parse path into breadcrumb segments (max 6 visible segments)
 			r.breadcrumbSegments = parseBreadcrumbSegments(state.CurrentPath, 6)
+
+			// Apply width-based collapsing to prevent overflow
+			r.breadcrumbSegments = r.collapseBreadcrumbsForWidth(gtx, r.breadcrumbSegments)
 
 			// Ensure we have enough buttons and click trackers
 			for len(r.breadcrumbBtns) < len(r.breadcrumbSegments) {
@@ -463,14 +449,96 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 	)
 }
 
+// collapseBreadcrumbsForWidth collapses breadcrumb segments if they exceed available width
+func (r *Renderer) collapseBreadcrumbsForWidth(gtx layout.Context, segments []BreadcrumbSegment) []BreadcrumbSegment {
+	// gtx.Constraints.Max.X here is already the available width for breadcrumbs
+	// (since we're inside a layout.Flexed area that gets remaining space)
+	// Only add a small margin to avoid touching the edge
+	availableWidth := gtx.Constraints.Max.X - gtx.Dp(unit.Dp(8))
+	if availableWidth < gtx.Dp(unit.Dp(100)) {
+		availableWidth = gtx.Dp(unit.Dp(100)) // Minimum breadcrumb width
+	}
+
+	separatorWidth := gtx.Dp(unit.Dp(20)) // Approximate width of " › "
+	ellipsisWidth := gtx.Dp(unit.Dp(25))  // Approximate width of "..."
+
+	// Measure approximate width of each segment (rough estimate based on character count)
+	// Using ~7px per character as a rough estimate for Body2 font
+	charWidth := gtx.Dp(unit.Dp(7))
+	measureSegment := func(name string) int {
+		return len(name) * charWidth
+	}
+
+	// Calculate total width needed
+	totalWidth := 0
+	for i, seg := range segments {
+		if i > 0 {
+			totalWidth += separatorWidth
+		}
+		if seg.IsEllipsis {
+			totalWidth += ellipsisWidth
+		} else {
+			totalWidth += measureSegment(seg.Name)
+		}
+	}
+
+	// If we need to collapse further due to width constraints
+	// Keep collapsing until we fit (keep first and last segments)
+	for totalWidth > availableWidth && len(segments) > 2 {
+		// Find if there's already an ellipsis
+		hasEllipsis := false
+		ellipsisIdx := -1
+		for i, seg := range segments {
+			if seg.IsEllipsis {
+				hasEllipsis = true
+				ellipsisIdx = i
+				break
+			}
+		}
+
+		if !hasEllipsis {
+			// No ellipsis yet - remove second segment and add ellipsis
+			if len(segments) > 2 {
+				removedWidth := measureSegment(segments[1].Name) + separatorWidth
+				newSegments := make([]BreadcrumbSegment, 0, len(segments))
+				newSegments = append(newSegments, segments[0])
+				newSegments = append(newSegments, BreadcrumbSegment{Name: "...", IsEllipsis: true})
+				newSegments = append(newSegments, segments[2:]...)
+				segments = newSegments
+				totalWidth = totalWidth - removedWidth + ellipsisWidth + separatorWidth
+			}
+		} else if ellipsisIdx >= 0 && ellipsisIdx < len(segments)-2 {
+			// Ellipsis exists - remove segment after ellipsis (collapse more)
+			removeIdx := ellipsisIdx + 1
+			if removeIdx < len(segments)-1 { // Don't remove the last segment
+				removedWidth := measureSegment(segments[removeIdx].Name) + separatorWidth
+				newSegments := make([]BreadcrumbSegment, 0, len(segments)-1)
+				newSegments = append(newSegments, segments[:removeIdx]...)
+				newSegments = append(newSegments, segments[removeIdx+1:]...)
+				segments = newSegments
+				totalWidth -= removedWidth
+			} else {
+				break // Can't collapse further
+			}
+		} else {
+			break // Can't collapse further
+		}
+	}
+
+	return segments
+}
+
 // layoutBreadcrumb renders the clickable path breadcrumb
 func (r *Renderer) layoutBreadcrumb(gtx layout.Context, state *State, eventOut *UIEvent) layout.Dimensions {
 	// Wrap in pathClick for double-click to edit
 	return material.Clickable(gtx, &r.pathClick, func(gtx layout.Context) layout.Dimensions {
-		// Build flex children for each segment
+		// Use the already-stored segments (click detection uses these too)
+		segments := r.breadcrumbSegments
+
+		// Build flex children for the segments
 		var children []layout.FlexChild
 
-		for i, seg := range r.breadcrumbSegments {
+		for i, seg := range segments {
 			idx := i
 			segment := seg
 
@@ -479,6 +547,7 @@ func (r *Renderer) layoutBreadcrumb(gtx layout.Context, state *State, eventOut *
 				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body2(r.Theme, " › ")
 					lbl.Color = colGray
+					lbl.MaxLines = 1
 					return lbl.Layout(gtx)
 				}))
 			}
@@ -488,16 +557,18 @@ func (r *Renderer) layoutBreadcrumb(gtx layout.Context, state *State, eventOut *
 				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body2(r.Theme, "...")
 					lbl.Color = colGray
+					lbl.MaxLines = 1
 					return lbl.Layout(gtx)
 				}))
 			} else {
 				// Clickable segment
 				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					// Check if this is the last segment (current directory)
-					isLast := idx == len(r.breadcrumbSegments)-1
+					isLast := idx == len(segments)-1
 
 					return material.Clickable(gtx, &r.breadcrumbBtns[idx], func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Body2(r.Theme, segment.Name)
+						lbl.MaxLines = 1
 						if isLast {
 							// Current directory is bold and darker
 							lbl.Font.Weight = font.Bold
@@ -1205,34 +1276,41 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 			return dims
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			// Check for left-clicks on file list area to dismiss menus
-			if r.fileListClick.Clicked(gtx) {
-				r.onLeftClick()
-			}
+			// === BACKGROUND CLICK DETECTION ===
+			// Create a hit area filling the entire available space behind the list.
+			// This catches clicks that miss the rows (empty space).
+			defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
+			event.Op(gtx.Ops, &r.bgRightClickTag)
 
-			return invisibleClickable(gtx, &r.fileListClick, func(gtx layout.Context) layout.Dimensions {
-				// === BACKGROUND RIGHT-CLICK DETECTION ===
-				// Create a hit area filling the entire available space behind the list.
-				// This catches clicks that miss the rows (empty space).
-				defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
-				event.Op(gtx.Ops, &r.bgRightClickTag)
-
-				// Process events for the background tag
-				// NOTE: We track if a row was right-clicked to avoid showing background menu
-				// when clicking on a row (since background is behind rows in z-order)
-				rowRightClicked := false
-				for {
-					ev, ok := gtx.Event(pointer.Filter{Target: &r.bgRightClickTag, Kinds: pointer.Press})
-					if !ok {
-						break
-					}
-					if e, ok := ev.(pointer.Event); ok && e.Buttons.Contain(pointer.ButtonSecondary) {
-						// Mark that we got a right-click - we'll show background menu only if
-						// no row handles it (checked after row processing)
+			// Process events for the background tag (both left and right clicks)
+			// NOTE: We track if a row was right-clicked to avoid showing background menu
+			// when clicking on a row (since background is behind rows in z-order)
+			rowRightClicked := false
+			for {
+				ev, ok := gtx.Event(pointer.Filter{Target: &r.bgRightClickTag, Kinds: pointer.Press})
+				if !ok {
+					break
+				}
+				if e, ok := ev.(pointer.Event); ok && e.Kind == pointer.Press {
+					if e.Buttons.Contain(pointer.ButtonSecondary) {
+						// Right-click - mark as pending, show menu if no row handles it
 						r.bgRightClickPending = true
 						r.bgRightClickPos = r.mousePos
+					} else if e.Buttons.Contain(pointer.ButtonPrimary) {
+						// Left-click on empty space - dismiss menus and clear selection
+						r.onLeftClick()
+						r.multiSelectMode = false
+						r.lastClickIndex = -1
+						r.lastClickTime = time.Time{}
+						if !r.settingsOpen && !r.deleteConfirmOpen && !r.createDialogOpen && !state.Conflict.Active {
+							*eventOut = UIEvent{Action: ActionClearSelection}
+							gtx.Execute(key.FocusCmd{Tag: keyTag})
+						}
 					}
 				}
+			}
+
+			return layout.Stack{}.Layout(gtx, layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 
 				// Layout file list
 				listDims := r.listState.Layout(gtx, len(state.Entries), func(gtx layout.Context, i int) layout.Dimensions {
@@ -1250,30 +1328,15 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 				}
 
 				// Show checkboxes when any item is selected (allows user to enter multi-select via checkbox)
-				showCheckbox := state.SelectedIndex >= 0
+				// Only show checkboxes when in multi-select mode (entered via shift+click)
+				showCheckbox := r.multiSelectMode
 
 				// Render row and capture right-click event
 				rowDims, leftClicked, rightClicked, shiftHeld, _, renameEvt, checkboxToggled := r.renderRow(gtx, item, i, i == state.SelectedIndex, isRenaming, isChecked, showCheckbox)
 
-				// Handle checkbox toggle - this is how users enter/use multi-select mode
-				if checkboxToggled {
-					if !r.multiSelectMode {
-						// Not in multi-select mode
-						if state.SelectedIndex == i {
-							// Clicking checkbox on currently selected item -> deselect it
-							*eventOut = UIEvent{Action: ActionSelect, NewIndex: -1}
-						} else if state.SelectedIndex >= 0 {
-							// Clicking checkbox on a different item -> enter multi-select with both
-							r.multiSelectMode = true
-							*eventOut = UIEvent{Action: ActionToggleSelect, NewIndex: i, OldIndex: state.SelectedIndex}
-						} else {
-							// No item selected, clicking checkbox -> select this item
-							*eventOut = UIEvent{Action: ActionSelect, NewIndex: i}
-						}
-					} else {
-						// Already in multi-select mode, just toggle this item
-						*eventOut = UIEvent{Action: ActionToggleSelect, NewIndex: i, OldIndex: -1}
-					}
+				// Handle checkbox toggle (only visible in multi-select mode)
+				if checkboxToggled && r.multiSelectMode {
+					*eventOut = UIEvent{Action: ActionToggleSelect, NewIndex: i, OldIndex: -1}
 				}
 
 				// Handle rename event
@@ -1304,34 +1367,39 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 
 					now := time.Now()
 
-					// Check if this is a double-click on the same item as pending click
-					isDoubleClick := r.pendingClickIndex == i &&
-						!r.pendingClickTime.IsZero() &&
-						now.Sub(r.pendingClickTime) < doubleClickInterval
+					// Check if this is a double-click on the same item
+					isDoubleClick := r.lastClickIndex == i &&
+						!r.lastClickTime.IsZero() &&
+						now.Sub(r.lastClickTime) < doubleClickInterval
 
 					if isDoubleClick {
 						// Double-click: exit multi-select mode and navigate/open
 						r.multiSelectMode = false
-						r.pendingClickIndex = -1 // Clear pending click
-						r.pendingClickTime = time.Time{}
+						r.lastClickIndex = -1
+						r.lastClickTime = time.Time{}
 						if item.IsDir {
 							*eventOut = UIEvent{Action: ActionNavigate, Path: item.Path}
 						} else {
 							*eventOut = UIEvent{Action: ActionOpen, Path: item.Path}
 						}
-					} else if shiftHeld && state.SelectedIndex >= 0 {
-						// Shift+click: range selection from current selection to clicked item
+					} else if shiftHeld {
+						// Shift+click: enter multi-select mode
 						r.multiSelectMode = true
-						r.pendingClickIndex = -1
-						r.pendingClickTime = time.Time{}
-						*eventOut = UIEvent{Action: ActionRangeSelect, NewIndex: i, OldIndex: state.SelectedIndex}
+						r.lastClickIndex = i
+						r.lastClickTime = now
+						if state.SelectedIndex >= 0 && state.SelectedIndex != i {
+							// Range selection from current selection to clicked item
+							*eventOut = UIEvent{Action: ActionRangeSelect, NewIndex: i, OldIndex: state.SelectedIndex}
+						} else {
+							// No selection or clicking same item - just select this item in multi-select mode
+							*eventOut = UIEvent{Action: ActionSelect, NewIndex: i}
+						}
 					} else {
-						// First click - store as pending, don't select yet
-						// Selection will happen after doubleClickInterval passes
-						r.pendingClickIndex = i
-						r.pendingClickTime = now
-						r.pendingClickPath = item.Path
+						// Single click: select immediately (no delay)
 						r.multiSelectMode = false
+						*eventOut = UIEvent{Action: ActionSelect, NewIndex: i}
+						r.lastClickIndex = i
+						r.lastClickTime = now
 					}
 				}
 
@@ -1352,7 +1420,7 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 				r.bgRightClickPending = false
 
 				return listDims
-			})
+			}))
 		}),
 	)
 }

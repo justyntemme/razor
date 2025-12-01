@@ -508,7 +508,6 @@ type Renderer struct {
 	driveState          layout.List
 	sidebarScroll       layout.List      // Scrollable container for entire sidebar
 	sidebarClick        widget.Clickable // For dismissing menus when clicking sidebar empty space
-	fileListClick       widget.Clickable // For dismissing menus when clicking file list empty space
 	sidebarTabs         *TabBar     // Tab bar for Favorites/Drives switching
 	sidebarLayout       string      // "tabbed" | "stacked" | "favorites_only" | "drives_only"
 	backBtn, fwdBtn     widget.Clickable
@@ -566,11 +565,9 @@ type Renderer struct {
 	multiSelectMode    bool          // When true, show checkboxes for multi-select
 	lastClickModifiers key.Modifiers // Modifiers held during last pointer click
 
-	// Pending click for double-click detection
-	// We delay single-click selection until we're sure it's not a double-click
-	pendingClickIndex int       // Index of item with pending click (-1 if none)
-	pendingClickTime  time.Time // Time of the pending click
-	pendingClickPath  string    // Path of item for navigation on double-click
+	// Double-click detection (no delay - selection happens immediately)
+	lastClickIndex int       // Index of last clicked item (-1 if none)
+	lastClickTime  time.Time // Time of the last click
 
 	// Background right-click pending (to detect if click was on row or empty space)
 	bgRightClickPending bool
@@ -703,7 +700,7 @@ var (
 )
 
 func NewRenderer() *Renderer {
-	r := &Renderer{Theme: material.NewTheme(), SortAscending: true, DefaultDepth: 2, renameIndex: -1, pendingClickIndex: -1}
+	r := &Renderer{Theme: material.NewTheme(), SortAscending: true, DefaultDepth: 2, renameIndex: -1, lastClickIndex: -1}
 	r.listState.Axis = layout.Vertical
 	r.favState.Axis = layout.Vertical
 	r.driveState.Axis = layout.Vertical
@@ -1136,9 +1133,8 @@ func (r *Renderer) CancelRename() {
 // ResetMultiSelect exits multi-select mode. Call this when navigating to a new directory.
 func (r *Renderer) ResetMultiSelect() {
 	r.multiSelectMode = false
-	r.pendingClickIndex = -1
-	r.pendingClickTime = time.Time{}
-	r.pendingClickPath = ""
+	r.lastClickIndex = -1
+	r.lastClickTime = time.Time{}
 }
 
 // IsMultiSelectMode returns whether multi-select mode is active
