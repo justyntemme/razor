@@ -1,7 +1,8 @@
 #+TITLE: Razor File Manager - Project Status
 #+AUTHOR: justyntemme
 #+DATE: 2024
-
+* Next
+icons for known filetypes (use whatever icon generation was used in recent files, assume we have a font that supports icons)
 * Design Philosophies
 
 ** LLM Commandments
