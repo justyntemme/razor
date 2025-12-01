@@ -133,6 +133,110 @@ type BrowserTab struct {
 	tabBtn       widget.Clickable
 }
 
+// BreadcrumbSegment represents a clickable segment in the path breadcrumb
+type BreadcrumbSegment struct {
+	Name       string // Display name (directory name or "...")
+	Path       string // Full path to this segment (empty for "..." placeholder)
+	IsEllipsis bool   // True if this is the "..." placeholder
+}
+
+// parseBreadcrumbSegments converts a path into clickable segments
+// It collapses the middle when there are too many segments
+func parseBreadcrumbSegments(fullPath string, maxSegments int) []BreadcrumbSegment {
+	if fullPath == "" {
+		return nil
+	}
+
+	// Normalize path separators
+	sep := string(filepath.Separator)
+
+	// Handle root specially
+	var segments []BreadcrumbSegment
+	var parts []string
+
+	// Split the path
+	cleanPath := filepath.Clean(fullPath)
+
+	// Handle Unix root or Windows drive
+	if filepath.IsAbs(cleanPath) {
+		vol := filepath.VolumeName(cleanPath)
+		if vol != "" {
+			// Windows: C:\
+			segments = append(segments, BreadcrumbSegment{
+				Name: vol + sep,
+				Path: vol + sep,
+			})
+			cleanPath = cleanPath[len(vol):]
+		} else if strings.HasPrefix(cleanPath, sep) {
+			// Unix root
+			segments = append(segments, BreadcrumbSegment{
+				Name: sep,
+				Path: sep,
+			})
+			cleanPath = cleanPath[1:]
+		}
+	}
+
+	// Split remaining path into parts
+	if cleanPath != "" && cleanPath != sep {
+		parts = strings.Split(cleanPath, sep)
+	}
+
+	// Filter empty parts
+	filtered := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p != "" {
+			filtered = append(filtered, p)
+		}
+	}
+	parts = filtered
+
+	// Build full paths for each part
+	currentPath := ""
+	if len(segments) > 0 {
+		currentPath = segments[0].Path
+	}
+
+	allParts := make([]BreadcrumbSegment, 0, len(parts))
+	for _, part := range parts {
+		currentPath = filepath.Join(currentPath, part)
+		allParts = append(allParts, BreadcrumbSegment{
+			Name: part,
+			Path: currentPath,
+		})
+	}
+
+	// If total segments fit, return all
+	totalSegments := len(segments) + len(allParts)
+	if totalSegments <= maxSegments {
+		return append(segments, allParts...)
+	}
+
+	// Need to collapse middle - keep first segment(s), ellipsis, and last 2
+	// segments = root (if any)
+	// Keep: root + first dir + "..." + last 2 dirs
+
+	keepStart := 1 // Keep at least first directory after root
+	keepEnd := 2   // Keep last 2 directories
+
+	if len(allParts) <= keepStart+keepEnd {
+		// Not enough to collapse, just return all
+		return append(segments, allParts...)
+	}
+
+	// Build collapsed version
+	result := segments
+	result = append(result, allParts[:keepStart]...)
+	result = append(result, BreadcrumbSegment{
+		Name:       "...",
+		Path:       "", // No path for ellipsis
+		IsEllipsis: true,
+	})
+	result = append(result, allParts[len(allParts)-keepEnd:]...)
+
+	return result
+}
+
 // ResizeHandle is a reusable component for resizing containers
 // It can be placed on any edge of a container to allow drag-to-resize
 type ResizeHandle struct {
@@ -406,6 +510,10 @@ type Renderer struct {
 	pathEditor          widget.Editor
 	pathClick           widget.Clickable
 	isEditing           bool
+	// Breadcrumb navigation
+	breadcrumbSegments    []BreadcrumbSegment
+	breadcrumbBtns        []widget.Clickable // One button per visible segment
+	breadcrumbLastClicks  []time.Time        // For double-click detection on segments
 	searchEditor        widget.Editor
 	searchClearBtn      widget.Clickable
 	searchBoxClick      widget.Clickable // For dismissing menus when clicking search area
@@ -1008,6 +1116,7 @@ func (r *Renderer) CancelRename() {
 func (r *Renderer) onLeftClick() {
 	r.menuVisible = false
 	r.fileMenuOpen = false
+	r.isEditing = false // Exit path edit mode when clicking elsewhere
 }
 
 // invisibleClickable renders content inside an invisible clickable area.

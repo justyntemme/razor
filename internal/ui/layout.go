@@ -244,53 +244,46 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 				}
 				return material.Editor(r.Theme, &r.pathEditor, "Path").Layout(gtx)
 			}
-			if r.pathClick.Clicked(gtx) {
-				r.onLeftClick()
+
+			// Parse path into breadcrumb segments (max 6 visible segments)
+			r.breadcrumbSegments = parseBreadcrumbSegments(state.CurrentPath, 6)
+
+			// Ensure we have enough buttons and click trackers
+			for len(r.breadcrumbBtns) < len(r.breadcrumbSegments) {
+				r.breadcrumbBtns = append(r.breadcrumbBtns, widget.Clickable{})
+				r.breadcrumbLastClicks = append(r.breadcrumbLastClicks, time.Time{})
+			}
+
+			// Check for segment clicks - single click navigates, double click edits
+			segmentClicked := false
+			for i, seg := range r.breadcrumbSegments {
+				if !seg.IsEllipsis && r.breadcrumbBtns[i].Clicked(gtx) {
+					segmentClicked = true
+					now := time.Now()
+					if !r.breadcrumbLastClicks[i].IsZero() && now.Sub(r.breadcrumbLastClicks[i]) < doubleClickInterval {
+						// Double-click: enter edit mode
+						r.isEditing = true
+						r.pathEditor.SetText(state.CurrentPath)
+						gtx.Execute(key.FocusCmd{Tag: &r.pathEditor})
+						r.breadcrumbLastClicks[i] = time.Time{} // Reset
+					} else {
+						// Single click: navigate
+						r.onLeftClick()
+						*eventOut = UIEvent{Action: ActionNavigate, Path: seg.Path}
+						r.breadcrumbLastClicks[i] = now
+					}
+				}
+			}
+
+			// Single click on breadcrumb area (not on a segment) enters edit mode
+			if r.pathClick.Clicked(gtx) && !segmentClicked {
 				r.isEditing = true
 				r.pathEditor.SetText(state.CurrentPath)
 				gtx.Execute(key.FocusCmd{Tag: &r.pathEditor})
 			}
-			return material.Clickable(gtx, &r.pathClick, func(gtx layout.Context) layout.Dimensions {
-				// Truncate path to show start.../end (current directory)
-				displayPath := truncatePathMiddle(state.CurrentPath, 50)
 
-				// Scale font size based on display path length
-				displayLen := len(displayPath)
-				var fontSize unit.Sp
-				switch {
-				case displayLen <= 30:
-					fontSize = unit.Sp(16)
-				case displayLen <= 40:
-					fontSize = unit.Sp(14)
-				default:
-					fontSize = unit.Sp(12)
-				}
-
-				lbl := material.Body1(r.Theme, displayPath)
-				lbl.TextSize = fontSize
-				lbl.MaxLines = 1
-
-				// Layout with optional "Search Results" badge
-				if state.IsSearchResult {
-					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-						layout.Flexed(1, lbl.Layout),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								return widget.Border{Color: colAccent, Width: unit.Dp(1), CornerRadius: unit.Dp(4)}.Layout(gtx,
-									func(gtx layout.Context) layout.Dimensions {
-										return layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2), Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx,
-											func(gtx layout.Context) layout.Dimensions {
-												badge := material.Caption(r.Theme, "Search Results")
-												badge.Color = colAccent
-												return badge.Layout(gtx)
-											})
-									})
-							})
-						}),
-					)
-				}
-				return lbl.Layout(gtx)
-			})
+			// Build the breadcrumb layout
+			return r.layoutBreadcrumb(gtx, state, eventOut)
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
 
@@ -425,6 +418,76 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 			return r.layoutSearchWithHistory(gtx, hasDirectivePrefix, showClearBtn)
 		}),
 	)
+}
+
+// layoutBreadcrumb renders the clickable path breadcrumb
+func (r *Renderer) layoutBreadcrumb(gtx layout.Context, state *State, eventOut *UIEvent) layout.Dimensions {
+	// Wrap in pathClick for double-click to edit
+	return material.Clickable(gtx, &r.pathClick, func(gtx layout.Context) layout.Dimensions {
+		// Build flex children for each segment
+		var children []layout.FlexChild
+
+		for i, seg := range r.breadcrumbSegments {
+			idx := i
+			segment := seg
+
+			// Add separator before all but first segment
+			if i > 0 {
+				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(r.Theme, " › ")
+					lbl.Color = colGray
+					return lbl.Layout(gtx)
+				}))
+			}
+
+			if segment.IsEllipsis {
+				// Ellipsis is not clickable
+				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(r.Theme, "...")
+					lbl.Color = colGray
+					return lbl.Layout(gtx)
+				}))
+			} else {
+				// Clickable segment
+				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					// Check if this is the last segment (current directory)
+					isLast := idx == len(r.breadcrumbSegments)-1
+
+					return material.Clickable(gtx, &r.breadcrumbBtns[idx], func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(r.Theme, segment.Name)
+						if isLast {
+							// Current directory is bold and darker
+							lbl.Font.Weight = font.Bold
+							lbl.Color = colBlack
+						} else {
+							// Parent directories are clickable links
+							lbl.Color = colAccent
+						}
+						return lbl.Layout(gtx)
+					})
+				}))
+			}
+		}
+
+		// Add search results badge if applicable
+		if state.IsSearchResult {
+			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return widget.Border{Color: colAccent, Width: unit.Dp(1), CornerRadius: unit.Dp(4)}.Layout(gtx,
+						func(gtx layout.Context) layout.Dimensions {
+							return layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2), Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx,
+								func(gtx layout.Context) layout.Dimensions {
+									badge := material.Caption(r.Theme, "Search Results")
+									badge.Color = colAccent
+									return badge.Layout(gtx)
+								})
+						})
+				})
+			}))
+		}
+
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+	})
 }
 
 // iconButton renders a clickable icon without background

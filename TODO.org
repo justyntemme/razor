@@ -94,12 +94,15 @@ Reusable code formatting module for preview pane and markdown code blocks.
     - [ ] Click empty space to deselect all
     - [ ] Selection count in status bar
 
-*** TODO Breadcrumb Path Bar
+*** DONE Breadcrumb Path Bar
+    CLOSED: [2024-12-01]
     Priority: HIGH
-    - [ ] Display path as clickable segments (Home > Documents > Projects)
-    - [ ] Click any segment to navigate to that directory
-    - [ ] Right-click segment for context menu (copy path, open in new tab)
-    - [ ] Overflow handling for long paths (collapse middle segments)
+    - [X] Display path as clickable segments (/ › Users › name › Documents)
+    - [X] Click any segment to navigate to that directory
+    - [X] Overflow handling for long paths (collapse middle with "...")
+    - [X] Current directory shown in bold, parent dirs as clickable links
+    - [X] Double-click breadcrumb to enter manual path edit mode
+    - [ ] Right-click segment for context menu (copy path, open in new tab) - future
 
 *** TODO Progress Dialogs for File Operations
     Priority: HIGH
@@ -203,6 +206,40 @@ Reusable code formatting module for preview pane and markdown code blocks.
     - [ ] "Open Terminal Here" context menu
     - [ ] Embedded terminal panel (toggle)
     - [ ] Configurable terminal app
+
+*** TODO Git Integration
+    Priority: HIGH (Differentiator)
+    A major differentiator from Explorer/Finder - built-in git awareness.
+
+**** File Status Icons
+     - [ ] Show git status icons next to files (modified, staged, untracked, ignored)
+     - [ ] Color coding: green (staged), yellow (modified), gray (ignored), red (conflict)
+     - [ ] Icon legend in status bar or tooltip
+
+**** Repository Info in Status Bar
+     - [ ] Detect if current directory is in a git repo
+     - [ ] Show current branch name
+     - [ ] Show ahead/behind count (↑2 ↓3)
+     - [ ] Show dirty/clean status indicator
+
+**** Git Context Menu Actions
+     - [ ] "Git Status" - show status in preview pane or dialog
+     - [ ] "Git Add" - stage selected files
+     - [ ] "Git Reset" - unstage selected files
+     - [ ] "Git Diff" - show diff in preview pane
+     - [ ] "Git Blame" - show blame for selected file
+     - [ ] "Open in GitHub/GitLab" - if remote configured
+
+**** Git History View
+     - [ ] View commit history for current directory
+     - [ ] View file history for selected file
+     - [ ] Show commit message, author, date
+     - [ ] Checkout previous versions (stretch goal)
+
+**** .gitignore Handling
+     - [ ] Visual indication of ignored files (dimmed or hidden)
+     - [ ] Toggle to show/hide ignored files
+     - [ ] Quick add to .gitignore from context menu
 
 * Completed Features
 
