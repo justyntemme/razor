@@ -570,9 +570,10 @@ type Renderer struct {
 	lastClickIndex int       // Index of last clicked item (-1 if none)
 	lastClickTime  time.Time // Time of the last click
 
-	// Background right-click pending (to detect if click was on row or empty space)
+	// Background click pending (to detect if click was on row or empty space)
 	bgRightClickPending bool
 	bgRightClickPos     image.Point
+	bgLeftClickPending  bool // Left-click on background - dismiss menus
 
 	// Delete confirmation
 	deleteConfirmOpen bool

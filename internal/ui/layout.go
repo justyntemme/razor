@@ -54,14 +54,19 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 			if e.Kind == pointer.Press {
 				r.lastClickModifiers = e.Modifiers
 
-				// Detect right-click for background context menu
 				// Since we use PassOp, this handler only receives events that weren't
 				// consumed by other handlers (rows, sidebar, buttons, etc.)
-				// So any right-click reaching here is on "empty" space - treat it as background
+				// So any click reaching here is on "empty" space - treat it as background
+
 				if e.Buttons.Contain(pointer.ButtonSecondary) {
+					// Right-click on background - show context menu
 					debug.Log(debug.UI, "Global right-click detected (background): pos=%v", r.mousePos)
 					r.bgRightClickPending = true
 					r.bgRightClickPos = r.mousePos
+				} else if e.Buttons.Contain(pointer.ButtonPrimary) {
+					// Left-click on background - dismiss context menu if shown
+					debug.Log(debug.UI, "Global left-click detected (background): pos=%v", r.mousePos)
+					r.bgLeftClickPending = true
 				}
 			}
 		}
@@ -1313,9 +1318,10 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 			event.Op(gtx.Ops, &r.bgRightClickTag)
 
 			// Process events for the background tag (both left and right clicks)
-			// NOTE: We track if a row was right-clicked to avoid showing background menu
+			// NOTE: We track if a row was clicked to avoid triggering background actions
 			// when clicking on a row (since background is behind rows in z-order)
 			rowRightClicked := false
+			rowLeftClicked := false
 			for {
 				ev, ok := gtx.Event(pointer.Filter{Target: &r.bgRightClickTag, Kinds: pointer.Press})
 				if !ok {
@@ -1390,6 +1396,8 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 
 				// Handle left-click (but not if renaming)
 				if leftClicked && !isRenaming && !checkboxToggled {
+					rowLeftClicked = true
+					r.bgLeftClickPending = false // Cancel background left-click
 					r.onLeftClick()
 					r.CancelRename()
 					r.isEditing = false
@@ -1448,6 +1456,12 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 					// Don't clear selection on background right-click
 				}
 				r.bgRightClickPending = false
+
+				// Handle pending background left-click - dismiss context menu
+				if r.bgLeftClickPending && !rowLeftClicked {
+					r.onLeftClick() // Dismiss context menus, file menu, exit path edit mode
+				}
+				r.bgLeftClickPending = false
 
 				return listDims
 			}))

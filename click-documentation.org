@@ -126,14 +126,14 @@ Gio uses a clip-based event routing system. When a pointer event occurs:
 
 **** Current Event Handler Hierarchy (Z-Order)
 
-| Priority | Handler                | Location              | PassOp | Consumes Right-Click |
+| Priority | Handler                | Location              | PassOp | Consumes Clicks      |
 |----------+------------------------+-----------------------+--------+----------------------|
 | 1 (top)  | Global mouse tracker   | layout.go:40-44       | YES    | NO (observes only)   |
-| 2        | File row clickables    | renderer.go:1519-1523 | NO     | YES                  |
-| 3        | Favorite row clickables| renderer.go:1642-1650 | NO     | YES                  |
+| 2        | File row clickables    | renderer.go:1519-1523 | NO     | YES (both L/R)       |
+| 3        | Favorite row clickables| renderer.go:1642-1650 | NO     | YES (both L/R)       |
 | 4        | Sidebar buttons        | various               | NO     | YES (left-click)     |
 | 5        | bgClick (left-click)   | layout.go:113-128     | NO     | YES (left-click)     |
-| 6        | bgRightClickTag        | layout.go:1314-1316   | NO     | YES                  |
+| 6        | bgRightClickTag        | layout.go:1314-1316   | NO     | YES (both L/R)       |
 
 **** Event Flow for Right-Clicks
 
