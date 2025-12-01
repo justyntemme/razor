@@ -1,2 +1,0 @@
-  1. PassOp wrapping the background event registration (lines 508-510)
-  2. defer pointer.PassOp{}.Push(gtx.Ops).Pop() BEFORE the list (line 517)
