@@ -2,7 +2,6 @@ package ui
 
 import (
 	"image"
-	"image/color"
 	"strings"
 
 	"gioui.org/font"
@@ -320,17 +319,27 @@ func (r *Renderer) layoutMarkdownParagraph(gtx layout.Context, block MarkdownBlo
 }
 
 func (r *Renderer) layoutMarkdownCodeBlock(gtx layout.Context, block MarkdownBlock) layout.Dimensions {
-	return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		// Code block background
-		bgColor := color.NRGBA{R: 245, G: 245, B: 245, A: 255}
+	return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		cornerRadius := gtx.Dp(4)
 
 		return layout.Stack{}.Layout(gtx,
 			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-				paint.FillShape(gtx.Ops, bgColor, clip.Rect{Max: gtx.Constraints.Max}.Op())
+				// Rounded background
+				rr := clip.RRect{
+					Rect: image.Rect(0, 0, gtx.Constraints.Max.X, gtx.Constraints.Max.Y),
+					NE:   cornerRadius, NW: cornerRadius, SE: cornerRadius, SW: cornerRadius,
+				}
+				paint.FillShape(gtx.Ops, colCodeBlockBg, rr.Op(gtx.Ops))
+				// Border
+				borderRR := clip.RRect{
+					Rect: image.Rect(0, 0, gtx.Constraints.Max.X, gtx.Constraints.Max.Y),
+					NE:   cornerRadius, NW: cornerRadius, SE: cornerRadius, SW: cornerRadius,
+				}
+				paint.FillShape(gtx.Ops, colCodeBlockBorder, clip.Stroke{Path: borderRR.Path(gtx.Ops), Width: 1}.Op())
 				return layout.Dimensions{Size: gtx.Constraints.Max}
 			}),
 			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: unit.Dp(12), Bottom: unit.Dp(12), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					var content string
 					for _, span := range block.Spans {
 						content += span.Text
@@ -346,21 +355,36 @@ func (r *Renderer) layoutMarkdownCodeBlock(gtx layout.Context, block MarkdownBlo
 }
 
 func (r *Renderer) layoutMarkdownBlockquote(gtx layout.Context, block MarkdownBlock) layout.Dimensions {
-	return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		// Left border for blockquote
+	return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		borderWidth := gtx.Dp(3)
-		borderColor := color.NRGBA{R: 200, G: 200, B: 200, A: 255}
+		cornerRadius := gtx.Dp(2)
 
-		return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				paint.FillShape(gtx.Ops, borderColor, clip.Rect{Max: image.Pt(borderWidth, gtx.Constraints.Max.Y)}.Op())
-				return layout.Dimensions{Size: image.Pt(borderWidth, gtx.Constraints.Min.Y)}
+		return layout.Stack{}.Layout(gtx,
+			// Background
+			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+				rr := clip.RRect{
+					Rect: image.Rect(0, 0, gtx.Constraints.Max.X, gtx.Constraints.Max.Y),
+					NE:   cornerRadius, NW: cornerRadius, SE: cornerRadius, SW: cornerRadius,
+				}
+				paint.FillShape(gtx.Ops, colBlockquoteBg, rr.Op(gtx.Ops))
+				return layout.Dimensions{Size: gtx.Constraints.Max}
 			}),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Spacer{Width: unit.Dp(8)}.Layout(gtx)
-			}),
-			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				return r.layoutMarkdownSpans(gtx, block.Spans, unit.Sp(14), font.Normal)
+			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+					// Left border
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						paint.FillShape(gtx.Ops, colBlockquoteLine, clip.Rect{Max: image.Pt(borderWidth, gtx.Constraints.Max.Y)}.Op())
+						return layout.Dimensions{Size: image.Pt(borderWidth, gtx.Constraints.Min.Y)}
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Spacer{Width: unit.Dp(12)}.Layout(gtx)
+					}),
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return r.layoutMarkdownSpans(gtx, block.Spans, unit.Sp(14), font.Normal)
+						})
+					}),
+				)
 			}),
 		)
 	})

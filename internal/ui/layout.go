@@ -1010,9 +1010,14 @@ func (r *Renderer) layoutRecentFilesEntry(gtx layout.Context, eventOut *UIEvent)
 
 	// Match favorites styling - use material.Clickable for hover effect
 	return material.Clickable(gtx, &r.recentFilesBtn, func(gtx layout.Context) layout.Dimensions {
-		// Draw selection background if viewing recent
+		// Draw selection background if viewing recent (with rounded corners)
 		if r.isRecentView {
-			paint.FillShape(gtx.Ops, colSelected, clip.Rect{Max: gtx.Constraints.Max}.Op())
+			cornerRadius := gtx.Dp(4)
+			rr := clip.RRect{
+				Rect: image.Rect(0, 0, gtx.Constraints.Max.X, gtx.Constraints.Max.Y),
+				NE:   cornerRadius, NW: cornerRadius, SE: cornerRadius, SW: cornerRadius,
+			}
+			paint.FillShape(gtx.Ops, colSelected, rr.Op(gtx.Ops))
 		}
 
 		return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
@@ -1281,11 +1286,24 @@ func (r *Renderer) layoutConfigErrorBanner(gtx layout.Context) layout.Dimensions
 }
 
 func (r *Renderer) menuShell(gtx layout.Context, width unit.Dp, content layout.Widget) layout.Dimensions {
-	return widget.Border{Color: colLightGray, Width: unit.Dp(1), CornerRadius: unit.Dp(4)}.Layout(gtx,
+	// Draw shadow layers for depth effect
+	shadowOffset := gtx.Dp(2)
+	cornerRadius := gtx.Dp(6)
+
+	// We need to measure content first to know the size for shadows
+	// Use a macro to record and replay
+	macro := op.Record(gtx.Ops)
+	gtx.Constraints.Min.X = gtx.Dp(width)
+	contentDims := widget.Border{Color: colLightGray, Width: unit.Dp(1), CornerRadius: unit.Dp(6)}.Layout(gtx,
 		func(gtx layout.Context) layout.Dimensions {
 			return layout.Stack{}.Layout(gtx,
 				layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-					paint.FillShape(gtx.Ops, colWhite, clip.Rect{Max: gtx.Constraints.Min}.Op())
+					// Rounded background
+					rr := clip.RRect{
+						Rect: image.Rect(0, 0, gtx.Constraints.Min.X, gtx.Constraints.Min.Y),
+						NE:   cornerRadius, NW: cornerRadius, SE: cornerRadius, SW: cornerRadius,
+					}
+					paint.FillShape(gtx.Ops, colWhite, rr.Op(gtx.Ops))
 					return layout.Dimensions{Size: gtx.Constraints.Min}
 				}),
 				layout.Stacked(func(gtx layout.Context) layout.Dimensions {
@@ -1294,6 +1312,26 @@ func (r *Renderer) menuShell(gtx layout.Context, width unit.Dp, content layout.W
 				}),
 			)
 		})
+	contentCall := macro.Stop()
+
+	// Draw shadow behind content
+	shadowRect := clip.RRect{
+		Rect: image.Rect(shadowOffset, shadowOffset, contentDims.Size.X+shadowOffset, contentDims.Size.Y+shadowOffset),
+		NE:   cornerRadius, NW: cornerRadius, SE: cornerRadius, SW: cornerRadius,
+	}
+	paint.FillShape(gtx.Ops, colShadow, shadowRect.Op(gtx.Ops))
+
+	// Draw second shadow layer for more depth
+	shadowRect2 := clip.RRect{
+		Rect: image.Rect(shadowOffset/2, shadowOffset/2, contentDims.Size.X+shadowOffset/2, contentDims.Size.Y+shadowOffset/2),
+		NE:   cornerRadius, NW: cornerRadius, SE: cornerRadius, SW: cornerRadius,
+	}
+	paint.FillShape(gtx.Ops, color.NRGBA{A: 20}, shadowRect2.Op(gtx.Ops))
+
+	// Replay content on top
+	contentCall.Add(gtx.Ops)
+
+	return contentDims
 }
 
 // menuItemWithColor renders a clickable menu item with the specified text color
@@ -1747,7 +1785,7 @@ func (r *Renderer) layoutDeleteConfirm(gtx layout.Context, state *State, eventOu
 
 	return layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-			paint.FillShape(gtx.Ops, color.NRGBA{A: 150}, clip.Rect{Max: gtx.Constraints.Max}.Op())
+			paint.FillShape(gtx.Ops, colBackdrop, clip.Rect{Max: gtx.Constraints.Max}.Op())
 			return layout.Dimensions{Size: gtx.Constraints.Max}
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
@@ -1785,7 +1823,8 @@ func (r *Renderer) layoutDeleteConfirm(gtx layout.Context, state *State, eventOu
 									layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
 									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 										btn := material.Button(r.Theme, &r.deleteConfirmYes, "Delete")
-										btn.Background = colDanger
+										btn.Background = colDangerBtn
+										btn.Color = colDangerBtnText
 										return btn.Layout(gtx)
 									}),
 								)
@@ -1847,7 +1886,7 @@ func (r *Renderer) layoutCreateDialog(gtx layout.Context, state *State, eventOut
 
 	return layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-			paint.FillShape(gtx.Ops, color.NRGBA{A: 150}, clip.Rect{Max: gtx.Constraints.Max}.Op())
+			paint.FillShape(gtx.Ops, colBackdrop, clip.Rect{Max: gtx.Constraints.Max}.Op())
 			return material.Clickable(gtx, &r.createDialogCancel, func(gtx layout.Context) layout.Dimensions {
 				return layout.Dimensions{Size: gtx.Constraints.Max}
 			})
@@ -1891,7 +1930,8 @@ func (r *Renderer) layoutCreateDialog(gtx layout.Context, state *State, eventOut
 									layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
 									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 										btn := material.Button(r.Theme, &r.createDialogOK, "Create")
-										btn.Background = colSuccess
+										btn.Background = colPrimaryBtn
+										btn.Color = colPrimaryBtnText
 										return btn.Layout(gtx)
 									}),
 								)
@@ -1938,10 +1978,10 @@ func (r *Renderer) layoutConflictDialog(gtx layout.Context, state *State, eventO
 
 	// Colors for the dialog
 	colWarning := color.NRGBA{R: 255, G: 152, B: 0, A: 255}
-	
+
 	return layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-			paint.FillShape(gtx.Ops, color.NRGBA{A: 180}, clip.Rect{Max: gtx.Constraints.Max}.Op())
+			paint.FillShape(gtx.Ops, colBackdrop, clip.Rect{Max: gtx.Constraints.Max}.Op())
 			return layout.Dimensions{Size: gtx.Constraints.Max}
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
@@ -2349,7 +2389,7 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) la
 
 	return layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-			paint.FillShape(gtx.Ops, color.NRGBA{A: 150}, clip.Rect{Max: gtx.Constraints.Max}.Op())
+			paint.FillShape(gtx.Ops, colBackdrop, clip.Rect{Max: gtx.Constraints.Max}.Op())
 			return material.Clickable(gtx, &r.settingsCloseBtn, func(gtx layout.Context) layout.Dimensions {
 				return layout.Dimensions{Size: gtx.Constraints.Max}
 			})
@@ -2357,7 +2397,7 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) la
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return r.menuShell(gtx, 350, func(gtx layout.Context) layout.Dimensions {
-					gtx.Constraints.Min.Y = gtx.Dp(380)
+					gtx.Constraints.Min.Y = gtx.Dp(420)
 					return layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -2366,21 +2406,42 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) la
 								return h6.Layout(gtx)
 							}),
 							layout.Rigid(layout.Spacer{Height: unit.Dp(20)}.Layout),
+							// Section: Appearance
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								lbl := material.Caption(r.Theme, "APPEARANCE")
+								lbl.Color = colGray
+								lbl.Font.Weight = font.Bold
+								return lbl.Layout(gtx)
+							}),
+							layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								cb := material.CheckBox(r.Theme, &r.showDotfilesCheck, "Show dotfiles")
 								cb.Color = colBlack
 								return cb.Layout(gtx)
 							}),
-							layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+							layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								cb := material.CheckBox(r.Theme, &r.darkModeCheck, "Dark mode")
 								cb.Color = colBlack
 								return cb.Layout(gtx)
 							}),
-							layout.Rigid(layout.Spacer{Height: unit.Dp(20)}.Layout),
-							// Default recursive depth setting
+							layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+							// Divider
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								lbl := material.Body1(r.Theme, "Default Recursive Depth:")
+								paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, gtx.Dp(1))}.Op())
+								return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(1))}
+							}),
+							layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+							// Section: Search
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								lbl := material.Caption(r.Theme, "SEARCH")
+								lbl.Color = colGray
+								lbl.Font.Weight = font.Bold
+								return lbl.Layout(gtx)
+							}),
+							layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								lbl := material.Body2(r.Theme, "Default Recursive Depth")
 								lbl.Color = colBlack
 								return lbl.Layout(gtx)
 							}),
@@ -2420,9 +2481,9 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) la
 								lbl.Color = colGray
 								return lbl.Layout(gtx)
 							}),
-							layout.Rigid(layout.Spacer{Height: unit.Dp(20)}.Layout),
+							layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								lbl := material.Body1(r.Theme, "Content Search Engine:")
+								lbl := material.Body2(r.Theme, "Content Search Engine")
 								lbl.Color = colBlack
 								return lbl.Layout(gtx)
 							}),

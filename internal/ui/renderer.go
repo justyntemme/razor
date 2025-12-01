@@ -559,6 +559,17 @@ var (
 	// Config error banner colors
 	colErrorBannerBg   = color.NRGBA{R: 220, G: 53, B: 69, A: 255}   // Red background
 	colErrorBannerText = color.NRGBA{R: 139, G: 69, B: 0, A: 255}    // Dark orange text (readable on red)
+	// UI Polish colors
+	colShadow          = color.NRGBA{R: 0, G: 0, B: 0, A: 40}        // Subtle shadow
+	colBackdrop        = color.NRGBA{R: 0, G: 0, B: 0, A: 150}       // Modal backdrop (consistent)
+	colCodeBlockBg     = color.NRGBA{R: 245, G: 245, B: 245, A: 255} // Code block background
+	colCodeBlockBorder = color.NRGBA{R: 220, G: 220, B: 220, A: 255} // Code block border
+	colBlockquoteBg    = color.NRGBA{R: 248, G: 248, B: 248, A: 255} // Blockquote background
+	colBlockquoteLine  = color.NRGBA{R: 180, G: 180, B: 180, A: 255} // Blockquote left border
+	colPrimaryBtn      = color.NRGBA{R: 66, G: 133, B: 244, A: 255}  // Primary button (blue)
+	colPrimaryBtnText  = color.NRGBA{R: 255, G: 255, B: 255, A: 255} // Primary button text
+	colDangerBtn       = color.NRGBA{R: 220, G: 53, B: 69, A: 255}   // Danger button (red)
+	colDangerBtnText   = color.NRGBA{R: 255, G: 255, B: 255, A: 255} // Danger button text
 )
 
 func NewRenderer() *Renderer {
@@ -1212,28 +1223,37 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 	
 	// Layout the clickable row (but not if renaming - we handle clicks differently)
 	var dims layout.Dimensions
+	cornerRadius := gtx.Dp(4)
 	if isRenaming {
 		// For renaming, render content first to get proper size, then draw background
 		// Use a macro to record the content, measure it, then draw background + content
 		macro := op.Record(gtx.Ops)
 		contentDims := r.renderRowContent(gtx, item, true)
 		call := macro.Stop()
-		
-		// Draw selection background sized to content
-		paint.FillShape(gtx.Ops, colSelected, clip.Rect{Max: contentDims.Size}.Op())
+
+		// Draw selection background with rounded corners
+		rr := clip.RRect{
+			Rect: image.Rect(0, 0, contentDims.Size.X, contentDims.Size.Y),
+			NE:   cornerRadius, NW: cornerRadius, SE: cornerRadius, SW: cornerRadius,
+		}
+		paint.FillShape(gtx.Ops, colSelected, rr.Op(gtx.Ops))
 		// Replay the content on top
 		call.Add(gtx.Ops)
-		
+
 		dims = contentDims
 	} else {
 		dims = material.Clickable(gtx, &item.Clickable, func(gtx layout.Context) layout.Dimensions {
 			// Register right-click handler on this row's area
 			defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
 			event.Op(gtx.Ops, &item.RightClickTag)
-			
-			// Draw selection background
+
+			// Draw selection background with rounded corners
 			if selected {
-				paint.FillShape(gtx.Ops, colSelected, clip.Rect{Max: gtx.Constraints.Max}.Op())
+				rr := clip.RRect{
+					Rect: image.Rect(0, 0, gtx.Constraints.Max.X, gtx.Constraints.Max.Y),
+					NE:   cornerRadius, NW: cornerRadius, SE: cornerRadius, SW: cornerRadius,
+				}
+				paint.FillShape(gtx.Ops, colSelected, rr.Op(gtx.Ops))
 			}
 
 			return r.renderRowContent(gtx, item, false)
