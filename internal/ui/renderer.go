@@ -524,6 +524,12 @@ type Renderer struct {
 	previewWidth        int            // Current preview pane width in pixels (after resize)
 	previewResizeHandle ResizeHandle   // Resize handle for preview pane
 
+	// Markdown preview state
+	previewIsMarkdown     bool             // Whether previewing a markdown file
+	previewMarkdownRender bool             // True = render markdown, False = show raw
+	previewMarkdownBlocks []MarkdownBlock  // Parsed markdown blocks
+	previewMdToggleBtn    widget.Clickable // Toggle button for raw/rendered
+
 	// Recent files state
 	recentFilesBtn    widget.Clickable // Button to show recent files
 	openLocationBtn   widget.Clickable // Context menu item to open file location
@@ -662,11 +668,12 @@ func (r *Renderer) SetSidebarLayout(layout string) {
 }
 
 // SetPreviewConfig sets the preview pane configuration
-func (r *Renderer) SetPreviewConfig(textExtensions, imageExtensions []string, maxSize int64, widthPct int) {
+func (r *Renderer) SetPreviewConfig(textExtensions, imageExtensions []string, maxSize int64, widthPct int, markdownRendered bool) {
 	r.previewExtensions = textExtensions
 	r.previewImageExts = imageExtensions
 	r.previewMaxSize = maxSize
 	r.previewWidthPct = widthPct
+	r.previewMarkdownRender = markdownRendered
 }
 
 // EnableTabs enables the browser tab bar
@@ -878,6 +885,7 @@ func (r *Renderer) loadTextPreview(path, ext string) error {
 
 	r.previewIsImage = false
 	r.previewIsJSON = ext == ".json"
+	r.previewIsMarkdown = ext == ".md" || ext == ".markdown"
 
 	// Format JSON with indentation
 	if r.previewIsJSON {
@@ -896,6 +904,14 @@ func (r *Renderer) loadTextPreview(path, ext string) error {
 		r.previewContent = string(data)
 	}
 
+	// Parse markdown if this is a markdown file
+	if r.previewIsMarkdown {
+		r.previewMarkdownBlocks = ParseMarkdown(string(data))
+		// previewMarkdownRender is already set from config via SetPreviewConfig
+	} else {
+		r.previewMarkdownBlocks = nil
+	}
+
 	r.previewVisible = true
 	return nil
 }
@@ -909,6 +925,8 @@ func (r *Renderer) HidePreview() {
 	r.previewIsImage = false
 	r.previewImage = paint.ImageOp{}
 	r.previewImageSize = image.Point{}
+	r.previewIsMarkdown = false
+	r.previewMarkdownBlocks = nil
 }
 
 // IsPreviewVisible returns whether the preview pane is currently shown

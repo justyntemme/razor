@@ -110,12 +110,13 @@ type PanelConfig struct {
 
 // PreviewConfig holds preview pane settings
 type PreviewConfig struct {
-	Enabled         bool     `json:"enabled"`
-	Position        string   `json:"position"`        // "right" | "bottom"
-	WidthPercent    int      `json:"widthPercent"`    // Percentage of screen width (e.g., 33 for 1/3)
-	TextExtensions  []string `json:"textExtensions"`  // Extensions to show text preview for
-	ImageExtensions []string `json:"imageExtensions"` // Extensions to show image preview for
-	MaxFileSize     int64    `json:"maxFileSize"`     // Max file size in bytes to preview (0 = no limit)
+	Enabled          bool     `json:"enabled"`
+	Position         string   `json:"position"`         // "right" | "bottom"
+	WidthPercent     int      `json:"widthPercent"`     // Percentage of screen width (e.g., 33 for 1/3)
+	TextExtensions   []string `json:"textExtensions"`   // Extensions to show text preview for
+	ImageExtensions  []string `json:"imageExtensions"`  // Extensions to show image preview for
+	MaxFileSize      int64    `json:"maxFileSize"`      // Max file size in bytes to preview (0 = no limit)
+	MarkdownRendered bool     `json:"markdownRendered"` // Default to rendered markdown (true) or raw (false)
 }
 
 // FavoriteEntry represents a single favorite or a group of favorites
@@ -207,12 +208,13 @@ func DefaultConfig() *Config {
 			},
 		},
 		Preview: PreviewConfig{
-			Enabled:         true,
-			Position:        "right",
-			WidthPercent:    33, // 1/3 of screen width
-			TextExtensions:  []string{".txt", ".json", ".csv", ".md", ".log", ".xml", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg"},
-			ImageExtensions: []string{".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".heic", ".heif"},
-			MaxFileSize:     1024 * 1024, // 1MB default limit
+			Enabled:          true,
+			Position:         "right",
+			WidthPercent:     33, // 1/3 of screen width
+			TextExtensions:   []string{".txt", ".json", ".csv", ".md", ".log", ".xml", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg"},
+			ImageExtensions:  []string{".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".heic", ".heif"},
+			MaxFileSize:      1024 * 1024, // 1MB default limit
+			MarkdownRendered: true,
 		},
 		Favorites: []FavoriteEntry{
 			{Name: "Home", Path: home, Icon: "home"},

@@ -1355,7 +1355,8 @@ func (r *Renderer) layoutBrowserTabBar(gtx layout.Context, state *State, eventOu
 // browserTabChildren creates flex children for each browser tab
 func (r *Renderer) browserTabChildren(gtx layout.Context, tabHeight, tabMinWidth, tabMaxWidth, closeSize int) []layout.FlexChild {
 	children := make([]layout.FlexChild, len(r.browserTabs))
-	padding := gtx.Dp(24) // Left padding (8) + right padding (4) + close button space (12)
+	closeBtnWidth := gtx.Dp(28)  // Width for close button area including padding
+	textPadding := gtx.Dp(16)    // Padding around text
 
 	for i := range r.browserTabs {
 		idx := i
@@ -1383,14 +1384,17 @@ func (r *Renderer) browserTabChildren(gtx layout.Context, tabHeight, tabMinWidth
 			dims := lbl.Layout(gtx)
 			macro.Stop()
 
-			// Calculate tab width based on text + padding + close button
-			tabWidth := dims.Size.X + padding + closeSize
+			// Calculate tab width: text + padding + close button area
+			tabWidth := dims.Size.X + textPadding + closeBtnWidth
 			if tabWidth < tabMinWidth {
 				tabWidth = tabMinWidth
 			}
 			if tabWidth > tabMaxWidth {
 				tabWidth = tabMaxWidth
 			}
+
+			// Width available for centered text (total width minus close button area)
+			textAreaWidth := tabWidth - closeBtnWidth
 
 			return material.Clickable(gtx, &tab.tabBtn, func(gtx layout.Context) layout.Dimensions {
 				// Draw background
@@ -1411,51 +1415,58 @@ func (r *Renderer) browserTabChildren(gtx layout.Context, tabHeight, tabMinWidth
 				paint.FillShape(gtx.Ops, colLightGray, borderRect.Op())
 				stack.Pop()
 
-				// Tab content: title + close button, vertically centered
-				gtx.Constraints.Min.Y = tabHeight
-				gtx.Constraints.Max.Y = tabHeight
-				layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layout.Spacer{Width: unit.Dp(8)}.Layout(gtx)
-					}),
-					// Tab title
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body2(r.Theme, title)
-						lbl.Color = colBlack
-						if isActive {
-							lbl.Font.Weight = 600
-						}
-						return lbl.Layout(gtx)
-					}),
-					// Spacer
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layout.Spacer{Width: unit.Dp(4)}.Layout(gtx)
-					}),
-					// Close button
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return material.Clickable(gtx, &tab.closeBtn, func(gtx layout.Context) layout.Dimensions {
-							// Draw X
-							centerX := float32(closeSize) / 2
-							centerY := float32(closeSize) / 2
-							armLen := float32(closeSize) / 4
+				// Draw divider line before close button
+				dividerX := tabWidth - closeBtnWidth
+				dividerPadding := gtx.Dp(6)
+				divStack := op.Offset(image.Pt(dividerX, dividerPadding)).Push(gtx.Ops)
+				divRect := clip.Rect{Max: image.Pt(1, tabHeight-dividerPadding*2)}
+				divColor := colLightGray
+				if !isActive {
+					divColor = color.NRGBA{R: 200, G: 200, B: 200, A: 255}
+				}
+				paint.FillShape(gtx.Ops, divColor, divRect.Op())
+				divStack.Pop()
 
-							xColor := colGray
-							// Draw X lines
-							var p clip.Path
-							p.Begin(gtx.Ops)
-							p.MoveTo(f32.Pt(centerX-armLen, centerY-armLen))
-							p.LineTo(f32.Pt(centerX+armLen, centerY+armLen))
-							p.MoveTo(f32.Pt(centerX+armLen, centerY-armLen))
-							p.LineTo(f32.Pt(centerX-armLen, centerY+armLen))
-							paint.FillShape(gtx.Ops, xColor, clip.Stroke{Path: p.End(), Width: 1.5}.Op())
+				// Draw centered title in the text area
+				lbl := material.Body2(r.Theme, title)
+				lbl.Color = colBlack
+				if isActive {
+					lbl.Font.Weight = 600
+				}
 
-							return layout.Dimensions{Size: image.Pt(closeSize, closeSize)}
-						})
-					}),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layout.Spacer{Width: unit.Dp(4)}.Layout(gtx)
-					}),
-				)
+				// Center text horizontally and vertically in text area
+				textX := (textAreaWidth - dims.Size.X) / 2
+				if textX < gtx.Dp(4) {
+					textX = gtx.Dp(4) // Minimum left padding
+				}
+				textY := (tabHeight - dims.Size.Y) / 2
+				textStack := op.Offset(image.Pt(textX, textY)).Push(gtx.Ops)
+				lbl.Layout(gtx)
+				textStack.Pop()
+
+				// Draw close button at the right side, vertically centered
+				closeBtnX := tabWidth - closeBtnWidth + (closeBtnWidth-closeSize)/2
+				closeBtnY := (tabHeight - closeSize) / 2
+				closeStack := op.Offset(image.Pt(closeBtnX, closeBtnY)).Push(gtx.Ops)
+				material.Clickable(gtx, &tab.closeBtn, func(gtx layout.Context) layout.Dimensions {
+					// Draw X
+					centerX := float32(closeSize) / 2
+					centerY := float32(closeSize) / 2
+					armLen := float32(closeSize) / 4
+
+					xColor := colGray
+					// Draw X lines
+					var p clip.Path
+					p.Begin(gtx.Ops)
+					p.MoveTo(f32.Pt(centerX-armLen, centerY-armLen))
+					p.LineTo(f32.Pt(centerX+armLen, centerY+armLen))
+					p.MoveTo(f32.Pt(centerX+armLen, centerY-armLen))
+					p.LineTo(f32.Pt(centerX-armLen, centerY+armLen))
+					paint.FillShape(gtx.Ops, xColor, clip.Stroke{Path: p.End(), Width: 1.5}.Op())
+
+					return layout.Dimensions{Size: image.Pt(closeSize, closeSize)}
+				})
+				closeStack.Pop()
 
 				return layout.Dimensions{Size: image.Pt(tabWidth, tabHeight)}
 			})
@@ -2070,8 +2081,14 @@ func (r *Renderer) layoutPreviewPane(gtx layout.Context, state *State) layout.Di
 	// Background
 	paint.FillShape(gtx.Ops, colWhite, clip.Rect{Max: gtx.Constraints.Max}.Op())
 
+	// Handle markdown toggle click
+	if r.previewMdToggleBtn.Clicked(gtx) {
+		r.onLeftClick()
+		r.previewMarkdownRender = !r.previewMarkdownRender
+	}
+
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		// Header with filename and close button
+		// Header with filename, toggle (for markdown), and close button
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(8)}.Layout(gtx,
 				func(gtx layout.Context) layout.Dimensions {
@@ -2082,6 +2099,51 @@ func (r *Renderer) layoutPreviewPane(gtx layout.Context, state *State) layout.Di
 							lbl.Font.Weight = font.Bold
 							lbl.MaxLines = 1
 							return lbl.Layout(gtx)
+						}),
+						// Markdown Raw/Preview toggle (only for markdown files)
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							if !r.previewIsMarkdown {
+								return layout.Dimensions{}
+							}
+							return material.Clickable(gtx, &r.previewMdToggleBtn, func(gtx layout.Context) layout.Dimensions {
+								label := "Raw"
+								bgColor := colLightGray
+								if r.previewMarkdownRender {
+									label = "Preview"
+									bgColor = colAccent
+								}
+								return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx,
+									func(gtx layout.Context) layout.Dimensions {
+										// Button background
+										return layout.Stack{}.Layout(gtx,
+											layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+												rr := gtx.Dp(4)
+												paint.FillShape(gtx.Ops, bgColor, clip.RRect{
+													Rect: image.Rect(0, 0, gtx.Constraints.Min.X, gtx.Constraints.Min.Y),
+													NE:   rr, NW: rr, SE: rr, SW: rr,
+												}.Op(gtx.Ops))
+												return layout.Dimensions{Size: gtx.Constraints.Min}
+											}),
+											layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+												return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx,
+													func(gtx layout.Context) layout.Dimensions {
+														lbl := material.Body2(r.Theme, label)
+														if r.previewMarkdownRender {
+															lbl.Color = colWhite
+														}
+														return lbl.Layout(gtx)
+													})
+											}),
+										)
+									})
+							})
+						}),
+						// Spacer between toggle and close button
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							if !r.previewIsMarkdown {
+								return layout.Dimensions{}
+							}
+							return layout.Spacer{Width: unit.Dp(8)}.Layout(gtx)
 						}),
 						// Close button
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -2119,6 +2181,10 @@ func (r *Renderer) layoutPreviewPane(gtx layout.Context, state *State) layout.Di
 			debug.Log(debug.UI, "layoutPreviewPane content: previewIsImage=%v, previewVisible=%v", r.previewIsImage, r.previewVisible)
 			if r.previewIsImage {
 				return r.layoutImagePreview(gtx)
+			}
+			// Render markdown if enabled and this is a markdown file
+			if r.previewIsMarkdown && r.previewMarkdownRender {
+				return r.layoutMarkdownPreview(gtx)
 			}
 			return r.layoutTextPreview(gtx)
 		}),
@@ -2214,6 +2280,20 @@ func (r *Renderer) layoutTextPreview(gtx layout.Context) layout.Dimensions {
 				}
 
 				return lbl.Layout(gtx)
+			})
+		})
+}
+
+// layoutMarkdownPreview renders parsed markdown content
+func (r *Renderer) layoutMarkdownPreview(gtx layout.Context) layout.Dimensions {
+	if len(r.previewMarkdownBlocks) == 0 {
+		return layout.Dimensions{}
+	}
+
+	return layout.Inset{Top: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12), Bottom: unit.Dp(8)}.Layout(gtx,
+		func(gtx layout.Context) layout.Dimensions {
+			return r.previewScroll.Layout(gtx, len(r.previewMarkdownBlocks), func(gtx layout.Context, i int) layout.Dimensions {
+				return r.LayoutMarkdownBlock(gtx, r.previewMarkdownBlocks[i])
 			})
 		})
 }

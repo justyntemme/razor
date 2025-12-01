@@ -57,15 +57,14 @@ Reusable code formatting module for preview pane and markdown code blocks.
     - github.com/alecthomas/chroma - Full-featured syntax highlighter
     - github.com/yuin/goldmark - Markdown parsing
 
-** TODO Markdown Preview with Tabs
-Add rendered markdown preview alongside raw view for .md files.
-
-*** Features:
-    - [ ] "Raw" and "Preview" tabs in preview pane header
-    - [ ] Parse markdown with goldmark (github.com/yuin/goldmark)
-    - [ ] Walk AST to build richtext spans
-    - [ ] Support: headings, bold, italic, code, lists, links, blockquotes
-    - [ ] Code blocks use Syntax Highlighting Module
+** DONE Markdown Preview with Toggle
+   CLOSED: [2024-11-30]
+   - [X] Raw/Preview toggle button in preview pane header
+   - [X] Parse markdown with goldmark (github.com/yuin/goldmark)
+   - [X] Walk AST to build richtext spans
+   - [X] Support: headings, bold, italic, code, lists, links, blockquotes
+   - [X] Config setting for default render mode (markdownRendered)
+   - [ ] Code blocks use Syntax Highlighting Module (future enhancement)
 
 ** TODO Recent Files View Improvements
 - [ ] Apply search bar filtering to Recent Files entries
@@ -73,12 +72,137 @@ Add rendered markdown preview alongside raw view for .md files.
 - [ ] Maintain same search-as-you-type behavior as normal file list
 - [ ] Disable paste in Recent Files view (no target directory to paste to)
 
-** TODO Drag and Drop (On Hold)
-   - [ ] Drag files to move
-   - [ ] Drag to folders to move into
-   - [ ] Ctrl+drag to copy
-   - [ ] Visual feedback during drag
-   Note: Put on hold due to implementation challenges with Gio
+* Critical Features for Explorer/Finder Parity
+
+** Tier 1: Table Stakes (Must Have)
+
+*** TODO Drag and Drop
+    Priority: CRITICAL
+    - [ ] Drag files to move
+    - [ ] Drag to folders to move into
+    - [ ] Ctrl/Cmd+drag to copy instead of move
+    - [ ] Visual feedback during drag (ghost image, drop indicator)
+    - [ ] Drag from external apps (e.g., browser downloads)
+    - [ ] Drop to external apps
+    Note: Previously on hold due to Gio challenges - needs investigation
+
+*** TODO Multi-Select Improvements
+    Priority: CRITICAL
+    - [ ] Shift+click for range selection
+    - [ ] Ctrl/Cmd+click for toggle selection
+    - [ ] Ctrl/Cmd+A to select all
+    - [ ] Click empty space to deselect all
+    - [ ] Selection count in status bar
+
+*** TODO Breadcrumb Path Bar
+    Priority: HIGH
+    - [ ] Display path as clickable segments (Home > Documents > Projects)
+    - [ ] Click any segment to navigate to that directory
+    - [ ] Right-click segment for context menu (copy path, open in new tab)
+    - [ ] Overflow handling for long paths (collapse middle segments)
+
+*** TODO Progress Dialogs for File Operations
+    Priority: HIGH
+    - [ ] Progress bar for copy/move operations
+    - [ ] Show source, destination, current file
+    - [ ] Time remaining estimate
+    - [ ] Cancel button
+    - [ ] Pause/Resume (stretch goal)
+    - [ ] Handle conflicts (skip, replace, rename)
+
+*** TODO Undo/Redo File Operations
+    Priority: HIGH
+    - [ ] Undo stack for delete, move, rename, copy
+    - [ ] Ctrl/Cmd+Z to undo last operation
+    - [ ] Ctrl/Cmd+Shift+Z to redo
+    - [ ] Operation history viewer (stretch goal)
+
+*** TODO Trash/Recycle Bin Integration
+    Priority: HIGH
+    - [ ] Delete moves to trash instead of permanent delete
+    - [ ] "Empty Trash" option
+    - [ ] Restore from trash
+    - [ ] Shift+Delete for permanent delete
+    - [ ] Platform-specific trash locations:
+      - macOS: ~/.Trash
+      - Linux: ~/.local/share/Trash (freedesktop spec)
+      - Windows: Recycle Bin API
+
+*** TODO Column Headers and Sorting
+    Priority: MEDIUM
+    - [ ] Clickable column headers (Name, Size, Date, Type)
+    - [ ] Sort indicator (arrow up/down)
+    - [ ] Column resizing by dragging borders
+    - [ ] Column reordering by dragging headers
+    - [ ] Remember column widths per directory (stretch goal)
+
+*** TODO File Properties Dialog
+    Priority: MEDIUM
+    - [ ] Show file/folder metadata:
+      - Size (and size on disk)
+      - Location
+      - Created/Modified/Accessed dates
+      - Permissions (with edit on Unix)
+      - Type/MIME type
+    - [ ] Keyboard shortcut: Ctrl/Cmd+I or Alt+Enter
+    - [ ] Multiple selection shows combined size
+
+*** TODO Keyboard Navigation
+    Priority: MEDIUM
+    - [ ] Arrow keys to move selection
+    - [ ] Enter to open file/folder
+    - [ ] Backspace to go up one level
+    - [ ] Type-to-select (type filename to jump to it)
+    - [ ] Space bar for Quick Look preview
+    - [ ] Tab to cycle focus between panels
+
+** Tier 2: Expected by Users
+
+*** TODO Grid/Icon View
+    - [ ] Toggle between list and grid view
+    - [ ] Thumbnail previews for images
+    - [ ] Configurable icon/thumbnail size
+    - [ ] View menu or toolbar toggle
+
+*** TODO Archive/Compression Support
+    - [ ] Open zip/tar/gz as virtual folder
+    - [ ] Extract archive (right-click menu)
+    - [ ] Create archive from selection (right-click menu)
+    - [ ] Supported formats: zip, tar, tar.gz, tar.bz2, 7z (stretch)
+
+*** TODO Quick Look (Space Bar Preview)
+    - [ ] Space bar opens preview overlay
+    - [ ] Escape or Space again to close
+    - [ ] Arrow keys to navigate while preview open
+    - [ ] Full-size preview vs current panel preview
+
+*** TODO Selection Info in Status Bar
+    - [ ] Show "X items selected"
+    - [ ] Show combined size of selection
+    - [ ] Show free space on current drive
+
+** Tier 3: Competitive Differentiators
+
+*** TODO Quick Actions / Batch Operations
+    - [ ] Batch rename with patterns
+    - [ ] Batch convert images
+    - [ ] Custom quick actions (user scripts)
+
+*** TODO Tags and Labels
+    - [ ] Color-coded labels (like Finder)
+    - [ ] Custom text tags
+    - [ ] Filter by tag
+    - [ ] Tags stored in extended attributes or sidecar DB
+
+*** TODO Smart Folders / Saved Searches
+    - [ ] Save search criteria as virtual folder
+    - [ ] Smart folders in sidebar
+    - [ ] Real-time updates
+
+*** TODO Terminal Integration
+    - [ ] "Open Terminal Here" context menu
+    - [ ] Embedded terminal panel (toggle)
+    - [ ] Configurable terminal app
 
 * Completed Features
 
@@ -212,14 +336,18 @@ Add rendered markdown preview alongside raw view for .md files.
    - [X] Icon-only buttons for back/forward/home
    - [X] Programmatic icon drawing with clip.Path
 
-* Planned Features
+* Other Planned Features
 
-** TODO Tabs/Multi-window
-   - [ ] Tab bar for multiple directories
-   - [ ] Ctrl+T new tab
-   - [ ] Ctrl+W close tab
-   - [ ] Drag tabs to reorder
-   - [ ] Split window view (stretch goal)
+** DONE Browser Tabs
+   CLOSED: [2024-11-30]
+   - [X] Tab bar for multiple directories (appears when 2+ tabs)
+   - [X] File menu -> New Tab
+   - [X] Close tab (X button)
+   - [X] Tab state preservation (path, history, selection)
+   - [X] Configurable new tab location (home, current, recent, custom path)
+   - [X] "Open in New Tab" context menu for folders
+   - [ ] Ctrl+T / Ctrl+W keyboard shortcuts (not yet implemented)
+   - [ ] Drag tabs to reorder (not yet implemented)
 
 ** TODO Favorites Management
 *** TODO Favorites Folders (Dropdown Groups)
@@ -227,28 +355,29 @@ Add rendered markdown preview alongside raw view for .md files.
     - [ ] Collapsible group headers in sidebar
     - [ ] Drag favorites into groups
 
-** TODO View Modes
-   - [ ] Grid/icon view
-   - [ ] List view (current)
-   - [ ] Column view (macOS style)
-   - [ ] Thumbnail size options
+** TODO Column View (macOS Finder style)
+   - [ ] Multi-column navigation
+   - [ ] Each column shows contents of selected folder
+   - [ ] Horizontal scrolling for deep hierarchies
 
-** TODO File Operations
-   - [ ] Undo/Redo for file operations
-   - [ ] Batch rename
-   - [ ] File compression (zip/tar)
-   - [ ] File extraction
+** TODO Vim-style Navigation (Optional Mode)
+   - [ ] hjkl for movement
+   - [ ] / for search
+   - [ ] dd for delete
+   - [ ] yy/p for copy/paste
+   - [ ] Configurable in settings
 
-** TODO Keyboard Navigation
-   - [ ] Type-to-select (type filename to jump)
-   - [ ] Vim-style navigation option
-   - [ ] Customizable shortcuts
+** TODO Customizable Keyboard Shortcuts
+   - [ ] Settings UI to rebind shortcuts
+   - [ ] Import/export shortcut configs
+   - [ ] Preset profiles (Default, Vim, Emacs)
 
 ** TODO Network/Remote Access
-   - [ ] FTP connection support
    - [ ] SFTP connection support
    - [ ] SMB/CIFS network shares
+   - [ ] FTP connection support
    - [ ] WebDAV support
+   - [ ] Bookmarked remote locations in sidebar
 
 * Known Issues / Technical Debt
 
