@@ -32,6 +32,7 @@ import (
 	_ "golang.org/x/image/bmp"
 	_ "golang.org/x/image/webp"
 
+	"github.com/justyntemme/razor/internal/config"
 	"github.com/justyntemme/razor/internal/debug"
 )
 
@@ -86,6 +87,12 @@ const (
 	ActionCloseTab
 	ActionSwitchTab
 	ActionOpenInNewTab
+	ActionNextTab
+	ActionPrevTab
+	// Additional actions
+	ActionSelectAll
+	ActionRefresh
+	ActionFocusSearch
 )
 
 type ClipOp int
@@ -666,6 +673,9 @@ type Renderer struct {
 
 	// Preview pane close button
 	previewCloseBtn   widget.Clickable
+
+	// Configurable hotkeys
+	hotkeys *config.HotkeyMatcher
 }
 
 var (
@@ -738,6 +748,9 @@ func NewRenderer() *Renderer {
 		Inverted:   true, // Dragging left increases size (since handle is on left edge)
 	}
 
+	// Initialize default hotkeys (can be overridden via SetHotkeys)
+	r.hotkeys = config.NewHotkeyMatcher(config.DefaultHotkeys())
+
 	return r
 }
 
@@ -766,6 +779,14 @@ func (r *Renderer) SetConfigError(err string) {
 // SetSearchHistory updates the search history dropdown items
 func (r *Renderer) SetSearchHistory(items []SearchHistoryItem) {
 	r.searchHistoryItems = items
+}
+
+// SetHotkeys configures the keyboard shortcuts from config
+func (r *Renderer) SetHotkeys(cfg config.HotkeysConfig) {
+	r.hotkeys = config.NewHotkeyMatcher(cfg)
+	debug.Log(debug.HOTKEY, "Hotkeys configured: NewTab=%s, CloseTab=%s, FocusSearch=%s, Back=%s",
+		r.hotkeys.NewTab.String(), r.hotkeys.CloseTab.String(),
+		r.hotkeys.FocusSearch.String(), r.hotkeys.Back.String())
 }
 
 // ShowSearchHistory shows the search history dropdown
@@ -1144,6 +1165,16 @@ func (r *Renderer) IsMultiSelectMode() bool {
 	return r.multiSelectMode
 }
 
+// SetMultiSelectMode enables or disables multi-select mode
+func (r *Renderer) SetMultiSelectMode(enabled bool) {
+	r.multiSelectMode = enabled
+}
+
+// FocusSearch sets a flag to focus the search editor on next layout
+func (r *Renderer) FocusSearch() {
+	r.searchEditorFocused = true
+}
+
 // collectSelectedPaths returns all selected file paths.
 // If in multi-select mode, returns all paths from SelectedIndices.
 // Otherwise, returns the single selected item or the menu target path.
@@ -1285,21 +1316,132 @@ func (r *Renderer) detectRightClick(gtx layout.Context, tag event.Tag) bool {
 }
 
 func (r *Renderer) processGlobalInput(gtx layout.Context, state *State, keyTag event.Tag) UIEvent {
-	// Keyboard input handling
+	// Keyboard input handling using configurable hotkeys
+	// We register explicit filters for each hotkey to ensure they're captured
+	// even when other widgets might consume generic key events
 
+	if r.hotkeys == nil {
+		return UIEvent{}
+	}
+
+	// Skip if modal dialogs are open
+	if r.isEditing || r.settingsOpen || r.deleteConfirmOpen || r.createDialogOpen {
+		return UIEvent{}
+	}
+
+	// Build filters for all configured hotkeys
+	filters := r.buildHotkeyFilters(keyTag)
+
+	// Process events matching our hotkey filters
 	for {
-		e, ok := gtx.Event(key.Filter{Focus: keyTag, Name: ""})
+		e, ok := gtx.Event(filters...)
 		if !ok {
 			break
-		}
-		if r.isEditing || r.settingsOpen || r.deleteConfirmOpen || r.createDialogOpen {
-			continue
 		}
 		k, ok := e.(key.Event)
 		if !ok || k.State != key.Press {
 			continue
 		}
 
+		// Debug log the key press
+		debug.Log(debug.HOTKEY, "Key pressed: name=%s mods=%v", k.Name, k.Modifiers)
+
+		// Check configurable hotkeys
+		if r.hotkeys != nil {
+			// File operations
+			if r.hotkeys.Copy.Matches(k) && state.SelectedIndex >= 0 {
+				paths := r.collectSelectedPaths(state)
+				return UIEvent{Action: ActionCopy, Paths: paths}
+			}
+			if r.hotkeys.Cut.Matches(k) && state.SelectedIndex >= 0 {
+				paths := r.collectSelectedPaths(state)
+				return UIEvent{Action: ActionCut, Paths: paths}
+			}
+			if r.hotkeys.Paste.Matches(k) && state.Clipboard != nil {
+				return UIEvent{Action: ActionPaste}
+			}
+			if r.hotkeys.Delete.Matches(k) {
+				if state.SelectedIndex >= 0 || (state.SelectedIndices != nil && len(state.SelectedIndices) > 0) {
+					r.deleteConfirmOpen = true
+					state.DeleteTargets = r.collectSelectedPaths(state)
+					continue
+				}
+			}
+			if r.hotkeys.Rename.Matches(k) && state.SelectedIndex >= 0 {
+				entry := state.Entries[state.SelectedIndex]
+				r.StartRename(state.SelectedIndex, entry.Path, entry.Name, entry.IsDir)
+				continue
+			}
+			if r.hotkeys.NewFolder.Matches(k) {
+				r.ShowCreateDialog(true)
+				continue
+			}
+			if r.hotkeys.NewFile.Matches(k) {
+				r.ShowCreateDialog(false)
+				continue
+			}
+			if r.hotkeys.SelectAll.Matches(k) && len(state.Entries) > 0 {
+				return UIEvent{Action: ActionSelectAll}
+			}
+
+			// Navigation
+			if r.hotkeys.Back.Matches(k) && state.CanBack {
+				return UIEvent{Action: ActionBack}
+			}
+			if r.hotkeys.Forward.Matches(k) && state.CanForward {
+				return UIEvent{Action: ActionForward}
+			}
+			if r.hotkeys.Up.Matches(k) {
+				return UIEvent{Action: ActionBack}
+			}
+			if r.hotkeys.Home.Matches(k) {
+				return UIEvent{Action: ActionHome}
+			}
+			if r.hotkeys.Refresh.Matches(k) {
+				return UIEvent{Action: ActionRefresh}
+			}
+
+			// UI
+			if r.hotkeys.FocusSearch.Matches(k) {
+				return UIEvent{Action: ActionFocusSearch}
+			}
+			if r.hotkeys.TogglePreview.Matches(k) {
+				if r.previewVisible {
+					r.HidePreview()
+				} else if state.SelectedIndex >= 0 && state.SelectedIndex < len(state.Entries) {
+					r.ShowPreview(state.Entries[state.SelectedIndex].Path)
+				}
+				continue
+			}
+			if r.hotkeys.ToggleHidden.Matches(k) {
+				return UIEvent{Action: ActionToggleDotfiles}
+			}
+			if r.hotkeys.Escape.Matches(k) {
+				if r.previewVisible {
+					r.HidePreview()
+				}
+				if r.menuVisible {
+					r.menuVisible = false
+				}
+				continue
+			}
+
+			// Tabs
+			if r.hotkeys.NewTab.Matches(k) {
+				return UIEvent{Action: ActionNewTab}
+			}
+			if r.hotkeys.CloseTab.Matches(k) {
+				return UIEvent{Action: ActionCloseTab}
+			}
+			if r.hotkeys.NextTab.Matches(k) {
+				return UIEvent{Action: ActionNextTab}
+			}
+			if r.hotkeys.PrevTab.Matches(k) {
+				return UIEvent{Action: ActionPrevTab}
+			}
+		}
+
+		// Arrow keys and Enter are not configurable (fundamental navigation)
 		switch k.Name {
 		case key.NameUpArrow:
 			if idx := state.SelectedIndex - 1; idx >= 0 {
@@ -1339,41 +1481,49 @@ func (r *Renderer) processGlobalInput(gtx layout.Context, state *State, keyTag e
 				}
 				return UIEvent{Action: ActionOpen, Path: item.Path}
 			}
-		case "C":
-			if k.Modifiers.Contain(key.ModCtrl) && state.SelectedIndex >= 0 {
-				paths := r.collectSelectedPaths(state)
-				return UIEvent{Action: ActionCopy, Paths: paths}
-			}
-		case "X":
-			if k.Modifiers.Contain(key.ModCtrl) && state.SelectedIndex >= 0 {
-				paths := r.collectSelectedPaths(state)
-				return UIEvent{Action: ActionCut, Paths: paths}
-			}
-		case "V":
-			if k.Modifiers.Contain(key.ModCtrl) && state.Clipboard != nil {
-				return UIEvent{Action: ActionPaste}
-			}
-		case "N":
-			if k.Modifiers.Contain(key.ModCtrl) {
-				if k.Modifiers.Contain(key.ModShift) {
-					r.ShowCreateDialog(true)
-				} else {
-					r.ShowCreateDialog(false)
-				}
-			}
-		case "⌫", "⌦", "Delete":
-			if state.SelectedIndex >= 0 || (state.SelectedIndices != nil && len(state.SelectedIndices) > 0) {
-				r.deleteConfirmOpen = true
-				state.DeleteTargets = r.collectSelectedPaths(state)
-			}
-		case key.NameEscape:
-			// Dismiss preview pane on Escape
-			if r.previewVisible {
-				r.HidePreview()
-			}
 		}
 	}
 	return UIEvent{}
+}
+
+// buildHotkeyFilters creates key.Filter slice for all configured hotkeys
+func (r *Renderer) buildHotkeyFilters(keyTag event.Tag) []event.Filter {
+	if r.hotkeys == nil {
+		return nil
+	}
+
+	// Collect all non-empty hotkey filters
+	hotkeys := []config.Hotkey{
+		r.hotkeys.Copy, r.hotkeys.Cut, r.hotkeys.Paste, r.hotkeys.Delete,
+		r.hotkeys.Rename, r.hotkeys.NewFile, r.hotkeys.NewFolder, r.hotkeys.SelectAll,
+		r.hotkeys.Back, r.hotkeys.Forward, r.hotkeys.Up, r.hotkeys.Home, r.hotkeys.Refresh,
+		r.hotkeys.FocusSearch, r.hotkeys.TogglePreview, r.hotkeys.ToggleHidden, r.hotkeys.Escape,
+		r.hotkeys.NewTab, r.hotkeys.CloseTab, r.hotkeys.NextTab, r.hotkeys.PrevTab,
+	}
+
+	// Also include arrow keys and Enter for navigation
+	arrowFilters := []key.Filter{
+		{Focus: keyTag, Name: key.NameUpArrow},
+		{Focus: keyTag, Name: key.NameDownArrow},
+		{Focus: keyTag, Name: key.NameLeftArrow},
+		{Focus: keyTag, Name: key.NameRightArrow},
+		{Focus: keyTag, Name: key.NameReturn},
+		{Focus: keyTag, Name: key.NameEnter},
+	}
+
+	filters := make([]event.Filter, 0, len(hotkeys)+len(arrowFilters))
+
+	for _, hk := range hotkeys {
+		if !hk.IsEmpty() {
+			filters = append(filters, hk.Filter(keyTag))
+		}
+	}
+
+	for _, f := range arrowFilters {
+		filters = append(filters, f)
+	}
+
+	return filters
 }
 
 func (r *Renderer) renderColumns(gtx layout.Context) (layout.Dimensions, UIEvent) {

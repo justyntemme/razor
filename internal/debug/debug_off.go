@@ -16,6 +16,7 @@ const (
 	SEARCH    Category = "SEARCH"
 	STORE     Category = "STORE"
 	UI        Category = "UI"
+	HOTKEY    Category = "HOTKEY"
 	FS_ENTRY  Category = "FS_ENTRY"
 	FS_WALK   Category = "FS_WALK"
 	UI_EVENT  Category = "UI_EVENT"

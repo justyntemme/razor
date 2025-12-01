@@ -24,7 +24,44 @@ type Config struct {
 	Tabs      TabsConfig      `json:"tabs"`
 	Panels    PanelsConfig    `json:"panels"`
 	Preview   PreviewConfig   `json:"preview"`
+	Hotkeys   HotkeysConfig   `json:"hotkeys"`
 	Favorites []FavoriteEntry `json:"favorites"`
+}
+
+// HotkeysConfig holds all configurable keyboard shortcuts
+// Keys are action names, values are key combinations like "Ctrl+C", "Ctrl+Shift+N", "F2"
+// Supported modifiers: Ctrl, Shift, Alt, Cmd (or Super)
+// Supported keys: A-Z, 0-9, F1-F12, Delete, Backspace, Escape, Enter, Tab, Space
+//                 Up, Down, Left, Right, Home, End, PageUp, PageDown
+type HotkeysConfig struct {
+	// File operations
+	Copy          string `json:"copy"`
+	Cut           string `json:"cut"`
+	Paste         string `json:"paste"`
+	Delete        string `json:"delete"`
+	Rename        string `json:"rename"`
+	NewFile       string `json:"newFile"`
+	NewFolder     string `json:"newFolder"`
+	SelectAll     string `json:"selectAll"`
+
+	// Navigation
+	Back          string `json:"back"`
+	Forward       string `json:"forward"`
+	Up            string `json:"up"`
+	Home          string `json:"home"`
+	Refresh       string `json:"refresh"`
+
+	// UI
+	FocusSearch   string `json:"focusSearch"`
+	TogglePreview string `json:"togglePreview"`
+	ToggleHidden  string `json:"toggleHidden"`
+	Escape        string `json:"escape"`
+
+	// Tabs
+	NewTab        string `json:"newTab"`
+	CloseTab      string `json:"closeTab"`
+	NextTab       string `json:"nextTab"`
+	PrevTab       string `json:"prevTab"`
 }
 
 // UIConfig holds UI-related settings
@@ -216,6 +253,7 @@ func DefaultConfig() *Config {
 			MaxFileSize:      1024 * 1024, // 1MB default limit
 			MarkdownRendered: true,
 		},
+		Hotkeys: DefaultHotkeys(),
 		Favorites: []FavoriteEntry{
 			{Name: "Home", Path: home, Icon: "home"},
 			{Name: "Documents", Path: filepath.Join(home, "Documents"), Icon: "folder"},
@@ -422,6 +460,13 @@ func (m *Manager) GetTabsConfig() TabsConfig {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.config.Tabs
+}
+
+// GetHotkeys returns the hotkeys configuration
+func (m *Manager) GetHotkeys() HotkeysConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.config.Hotkeys
 }
 
 // GenerateConfig backs up existing config and creates a fresh default config

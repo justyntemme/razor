@@ -210,6 +210,76 @@ To get the legacy horizontal tab layout, set:
 
 When you click a file with a supported extension, the preview pane opens on the right. JSON files are automatically formatted with indentation. Press Escape or navigate away to close the preview.
 
+### Keyboard Shortcuts
+
+All keyboard shortcuts are configurable via the `hotkeys` section in config.json. Default shortcuts vary by platform (macOS uses Cmd for navigation, Windows/Linux use Alt).
+
+#### Default Shortcuts
+
+| Action | macOS | Windows/Linux |
+|--------|-------|---------------|
+| **File Operations** | | |
+| Copy | Ctrl+C | Ctrl+C |
+| Cut | Ctrl+X | Ctrl+X |
+| Paste | Ctrl+V | Ctrl+V |
+| Delete | Delete | Delete |
+| Rename | F2 | F2 |
+| New File | Ctrl+N | Ctrl+N |
+| New Folder | Ctrl+Shift+N | Ctrl+Shift+N |
+| Select All | Ctrl+A | Ctrl+A |
+| **Navigation** | | |
+| Back | Cmd+Left | Alt+Left |
+| Forward | Cmd+Right | Alt+Right |
+| Up | Cmd+Up | Alt+Up |
+| Home | Cmd+Shift+H | Alt+Home |
+| Refresh | F5 | F5 |
+| **UI** | | |
+| Focus Search | Ctrl+F | Ctrl+F |
+| Toggle Preview | Ctrl+P | Ctrl+P |
+| Toggle Hidden | Ctrl+H | Ctrl+H |
+| Escape | Escape | Escape |
+| **Tabs** | | |
+| New Tab | Ctrl+T | Ctrl+T |
+| Close Tab | Ctrl+W | Ctrl+W |
+| Next Tab | Ctrl+Tab | Ctrl+Tab |
+| Previous Tab | Ctrl+Shift+Tab | Ctrl+Shift+Tab |
+
+#### Custom Hotkeys
+
+Override any shortcut in your config.json:
+
+```json
+{
+  "hotkeys": {
+    "copy": "Ctrl+C",
+    "cut": "Ctrl+X",
+    "paste": "Ctrl+V",
+    "delete": "Delete",
+    "rename": "F2",
+    "newFile": "Ctrl+N",
+    "newFolder": "Ctrl+Shift+N",
+    "selectAll": "Ctrl+A",
+    "back": "Alt+Left",
+    "forward": "Alt+Right",
+    "up": "Alt+Up",
+    "home": "Alt+Home",
+    "refresh": "F5",
+    "focusSearch": "Ctrl+F",
+    "togglePreview": "Ctrl+P",
+    "toggleHidden": "Ctrl+H",
+    "escape": "Escape",
+    "newTab": "Ctrl+T",
+    "closeTab": "Ctrl+W",
+    "nextTab": "Ctrl+Tab",
+    "prevTab": "Ctrl+Shift+Tab"
+  }
+}
+```
+
+Supported modifiers: `Ctrl`, `Shift`, `Alt`, `Cmd` (or `Super`, `Meta`, `Command`)
+
+Supported keys: `A-Z`, `0-9`, `F1-F12`, `Delete`, `Backspace`, `Escape`, `Enter`, `Tab`, `Space`, `Up`, `Down`, `Left`, `Right`, `Home`, `End`, `PageUp`, `PageDown`
+
 ### Search Engines
 
 **Engine** (`search.engine`):

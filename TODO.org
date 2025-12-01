@@ -404,10 +404,17 @@ Reusable code formatting module for preview pane and markdown code blocks.
    - [ ] yy/p for copy/paste
    - [ ] Configurable in settings
 
-** TODO Customizable Keyboard Shortcuts
-   - [ ] Settings UI to rebind shortcuts
-   - [ ] Import/export shortcut configs
-   - [ ] Preset profiles (Default, Vim, Emacs)
+** DONE Customizable Keyboard Shortcuts
+   CLOSED: [2024-12-01]
+   - [X] Configurable via config.json hotkeys section
+   - [X] Support for Ctrl, Shift, Alt, Cmd modifiers
+   - [X] File operations: Copy, Cut, Paste, Delete, Rename, NewFile, NewFolder, SelectAll
+   - [X] Navigation: Back, Forward, Up, Home, Refresh
+   - [X] UI: FocusSearch (Ctrl+F), TogglePreview, ToggleHidden, Escape
+   - [X] Tabs: NewTab, CloseTab, NextTab, PrevTab
+   - [ ] Settings UI to rebind shortcuts (future)
+   - [ ] Import/export shortcut configs (future)
+   - [ ] Preset profiles (Default, Vim, Emacs) (future)
 
 ** TODO Network/Remote Access
    - [ ] SFTP connection support

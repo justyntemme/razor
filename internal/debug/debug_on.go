@@ -25,6 +25,7 @@ const (
 	SEARCH Category = "SEARCH" // Search engine, query parsing, matching
 	STORE  Category = "STORE"  // Database operations, settings, favorites
 	UI     Category = "UI"     // UI events, layout, rendering
+	HOTKEY Category = "HOTKEY" // Keyboard shortcut handling and matching
 
 	// Detailed subcategories (use sparingly - can be verbose)
 	FS_ENTRY  Category = "FS_ENTRY"  // Individual entry processing (very verbose)
@@ -42,6 +43,7 @@ var (
 		SEARCH: true,
 		STORE:  true,
 		UI:     true,
+		HOTKEY: true,
 		// Verbose categories disabled by default
 		FS_ENTRY:  false,
 		FS_WALK:   false,

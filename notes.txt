@@ -1,0 +1,11 @@
+
+⏺ Gio Workarounds Applied
+
+  1. key.NameInsert not defined - Gio doesn't export this constant. Workaround: use key.Name("Insert") as a string-based key name
+  (internal/config/hotkeys.go:112).
+  2. Editor has no Focus() method - Can't programmatically focus a widget.Editor. Workaround: set a flag (searchEditorFocused), then issue
+  gtx.Execute(key.FocusCmd{Tag: &r.searchEditor}) during the next layout pass.
+  3. PassOp for background click detection - Coordinate-based bounds checking failed due to nested transformation stacks. Workaround: trust Gio's event
+  consumption pattern - any right-click reaching the global handler after row processing is on empty space.
+  4. Global mouse position tracking - Pointer positions are relative to current clip area, not window. Workaround: capture mouse position at top-level
+  layout before any transformations apply.
