@@ -20,7 +20,8 @@ func (o *Orchestrator) handleConflictResolution(resolution ui.ConflictResolution
 }
 
 // resolveConflict shows the conflict dialog and waits for user response
-func (o *Orchestrator) resolveConflict(src, dst string, srcInfo, dstInfo os.FileInfo) ui.ConflictResolution {
+// remainingConflicts is the number of remaining files that may have conflicts (including current)
+func (o *Orchestrator) resolveConflict(src, dst string, srcInfo, dstInfo os.FileInfo, remainingConflicts int) ui.ConflictResolution {
 	// If we have a remembered resolution from "Apply to All", use it
 	if o.conflictResolution != ui.ConflictAsk {
 		return o.conflictResolution
@@ -33,15 +34,16 @@ func (o *Orchestrator) resolveConflict(src, dst string, srcInfo, dstInfo os.File
 
 	// Set up the conflict state and show dialog
 	o.state.Conflict = ui.ConflictState{
-		Active:     true,
-		SourcePath: src,
-		DestPath:   dst,
-		SourceSize: srcInfo.Size(),
-		DestSize:   dstInfo.Size(),
-		SourceTime: srcInfo.ModTime(),
-		DestTime:   dstInfo.ModTime(),
-		IsDir:      srcInfo.IsDir(),
-		ApplyToAll: false,
+		Active:             true,
+		SourcePath:         src,
+		DestPath:           dst,
+		SourceSize:         srcInfo.Size(),
+		DestSize:           dstInfo.Size(),
+		SourceTime:         srcInfo.ModTime(),
+		DestTime:           dstInfo.ModTime(),
+		IsDir:              srcInfo.IsDir(),
+		ApplyToAll:         false,
+		RemainingConflicts: remainingConflicts,
 	}
 	o.window.Invalidate()
 

@@ -190,6 +190,12 @@ func (o *Orchestrator) doPaste() {
 		dstName := filepath.Base(src)
 		dst := filepath.Join(dstDir, dstName)
 
+		// Skip if source and destination are the same file (pasting to same directory)
+		if src == dst {
+			log.Printf("Skipping %s: source and destination are the same", src)
+			continue
+		}
+
 		srcInfo, err := os.Stat(src)
 		if err != nil {
 			log.Printf("Paste error for %s: %v", src, err)
@@ -201,12 +207,8 @@ func (o *Orchestrator) doPaste() {
 		dstInfo, err := os.Stat(dst)
 		if err == nil {
 			// Destination exists - need to resolve conflict
-			// Set remaining count for UI
-			o.stateMu.Lock()
-			o.state.Conflict.RemainingConflicts = totalFiles - i
-			o.stateMu.Unlock()
-
-			resolution := o.resolveConflict(src, dst, srcInfo, dstInfo)
+			remainingFiles := totalFiles - i
+			resolution := o.resolveConflict(src, dst, srcInfo, dstInfo, remainingFiles)
 
 			switch resolution {
 			case ui.ConflictReplaceAll:
