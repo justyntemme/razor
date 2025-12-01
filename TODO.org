@@ -2,7 +2,7 @@
 #+AUTHOR: justyntemme
 #+DATE: 2024
 * Next
-icons for known filetypes (use whatever icon generation was used in recent files, assume we have a font that supports icons)
+icons for known filetypes (use whatever icon generation was used in recent files, assume we have a font that supports icons, except windows we may have an issue there)
 * Design Philosophies
 
 ** LLM Commandments
