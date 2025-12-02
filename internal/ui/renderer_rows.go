@@ -31,12 +31,14 @@ func (r *Renderer) renderColumns(gtx layout.Context) (layout.Dimensions, UIEvent
 	handleWidth := gtx.Dp(6)
 
 	// Initialize column widths on first render
+	// Account for row insets (12dp left + 12dp right) so columns fit properly
 	if !r.columnWidthsInited {
+		effectiveWidth := availWidth - gtx.Dp(24) // Subtract row insets
 		r.columnWidths = [4]int{
-			availWidth * 40 / 100,
-			availWidth * 25 / 100,
-			availWidth * 15 / 100,
-			availWidth * 20 / 100,
+			effectiveWidth * 40 / 100,
+			effectiveWidth * 25 / 100,
+			effectiveWidth * 15 / 100,
+			effectiveWidth * 20 / 100,
 		}
 		r.colDragActive = -1
 		r.columnWidthsInited = true
@@ -107,8 +109,10 @@ func (r *Renderer) renderColumns(gtx layout.Context) (layout.Dimensions, UIEvent
 	}
 
 	// Recalculate last column to fill remaining space
+	// Account for row insets (12dp left + 12dp right) so Size column doesn't get cut off
+	rowInsetPx := gtx.Dp(24) // 12dp left + 12dp right inset from renderRowContent
 	usedWidth := r.columnWidths[0] + r.columnWidths[1] + r.columnWidths[2] + handleWidth*3
-	r.columnWidths[3] = availWidth - usedWidth
+	r.columnWidths[3] = availWidth - usedWidth - rowInsetPx
 	if r.columnWidths[3] < 50 {
 		r.columnWidths[3] = 50
 	}
