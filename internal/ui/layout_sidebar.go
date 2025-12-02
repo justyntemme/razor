@@ -69,22 +69,7 @@ func (r *Renderer) layoutSidebarTabbed(gtx layout.Context, state *State, eventOu
 
 			// Content area - scrollable list based on selected tab
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				// Check for clicks on sidebar area to dismiss menus
-				if r.sidebarClick.Clicked(gtx) {
-					r.onLeftClick()
-				}
-				return invisibleClickable(gtx, &r.sidebarClick, func(gtx layout.Context) layout.Dimensions {
-					return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
-						switch r.sidebarTabs.SelectedID() {
-						case "favorites":
-							return r.layoutFavoritesList(gtx, state, eventOut, sidebarYOffset)
-						case "drives":
-							return r.layoutDrivesList(gtx, state, eventOut)
-						default:
-							return r.layoutFavoritesList(gtx, state, eventOut, sidebarYOffset)
-						}
-					})
-				})
+				return r.layoutSidebarTabbedContent(gtx, state, eventOut, sidebarYOffset)
 			}),
 		)
 	}
@@ -102,31 +87,34 @@ func (r *Renderer) layoutSidebarTabbed(gtx layout.Context, state *State, eventOu
 
 		// Horizontal separator
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			height := gtx.Dp(unit.Dp(1))
-			paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, height)}.Op())
-			return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, height)}
+			return r.layoutHorizontalSeparator(gtx, colLightGray)
 		}),
 
 		// Content area
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			// Check for clicks on sidebar area to dismiss menus
-			if r.sidebarClick.Clicked(gtx) {
-				r.onLeftClick()
-			}
-			return invisibleClickable(gtx, &r.sidebarClick, func(gtx layout.Context) layout.Dimensions {
-				return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
-					switch r.sidebarTabs.SelectedID() {
-					case "favorites":
-						return r.layoutFavoritesList(gtx, state, eventOut, sidebarYOffset)
-					case "drives":
-						return r.layoutDrivesList(gtx, state, eventOut)
-					default:
-						return r.layoutFavoritesList(gtx, state, eventOut, sidebarYOffset)
-					}
-				})
-			})
+			return r.layoutSidebarTabbedContent(gtx, state, eventOut, sidebarYOffset)
 		}),
 	)
+}
+
+// layoutSidebarTabbedContent renders the scrollable content area for tabbed sidebar
+func (r *Renderer) layoutSidebarTabbedContent(gtx layout.Context, state *State, eventOut *UIEvent, sidebarYOffset int) layout.Dimensions {
+	// Check for clicks on sidebar area to dismiss menus
+	if r.sidebarClick.Clicked(gtx) {
+		r.onLeftClick()
+	}
+	return invisibleClickable(gtx, &r.sidebarClick, func(gtx layout.Context) layout.Dimensions {
+		return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+			switch r.sidebarTabs.SelectedID() {
+			case "favorites":
+				return r.layoutFavoritesList(gtx, state, eventOut, sidebarYOffset)
+			case "drives":
+				return r.layoutDrivesList(gtx, state, eventOut)
+			default:
+				return r.layoutFavoritesList(gtx, state, eventOut, sidebarYOffset)
+			}
+		})
+	})
 }
 
 // layoutSidebarStacked renders both Favorites and Drives stacked vertically
@@ -140,12 +128,7 @@ func (r *Renderer) layoutSidebarStacked(gtx layout.Context, state *State, eventO
 				}),
 				// Separator after Recent Files
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx,
-						func(gtx layout.Context) layout.Dimensions {
-							height := gtx.Dp(unit.Dp(1))
-							paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, height)}.Op())
-							return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, height)}
-						})
+					return r.layoutInsetSeparator(gtx, colLightGray, unit.Dp(4), unit.Dp(4))
 				}),
 				// Favorites section header
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -163,12 +146,7 @@ func (r *Renderer) layoutSidebarStacked(gtx layout.Context, state *State, eventO
 				}),
 				// Separator
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx,
-						func(gtx layout.Context) layout.Dimensions {
-							height := gtx.Dp(unit.Dp(1))
-							paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, height)}.Op())
-							return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, height)}
-						})
+					return r.layoutInsetSeparator(gtx, colLightGray, unit.Dp(8), unit.Dp(8))
 				}),
 				// Drives section header
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -200,12 +178,7 @@ func (r *Renderer) layoutFavoritesList(gtx layout.Context, state *State, eventOu
 			}),
 			// Separator
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx,
-					func(gtx layout.Context) layout.Dimensions {
-						height := gtx.Dp(unit.Dp(1))
-						paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, height)}.Op())
-						return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, height)}
-					})
+				return r.layoutInsetSeparator(gtx, colLightGray, unit.Dp(4), unit.Dp(4))
 			}),
 			// Favorites list
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {

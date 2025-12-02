@@ -1347,6 +1347,51 @@ func (r *Renderer) dialogButtonRow(gtx layout.Context, cancelBtn, actionBtn *wid
 	)
 }
 
+// layoutHorizontalSeparator renders a horizontal line separator that fills the available width
+func (r *Renderer) layoutHorizontalSeparator(gtx layout.Context, c color.NRGBA) layout.Dimensions {
+	height := gtx.Dp(unit.Dp(1))
+	paint.FillShape(gtx.Ops, c, clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, height)}.Op())
+	return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, height)}
+}
+
+// layoutHorizontalSeparatorMin renders a horizontal line separator using min width (for menus)
+func (r *Renderer) layoutHorizontalSeparatorMin(gtx layout.Context, c color.NRGBA) layout.Dimensions {
+	height := gtx.Dp(unit.Dp(1))
+	paint.FillShape(gtx.Ops, c, clip.Rect{Max: image.Pt(gtx.Constraints.Min.X, height)}.Op())
+	return layout.Dimensions{Size: image.Pt(gtx.Constraints.Min.X, height)}
+}
+
+// layoutInsetSeparator renders a horizontal separator with vertical insets
+func (r *Renderer) layoutInsetSeparator(gtx layout.Context, c color.NRGBA, topInset, bottomInset unit.Dp) layout.Dimensions {
+	return layout.Inset{Top: topInset, Bottom: bottomInset}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return r.layoutHorizontalSeparator(gtx, c)
+	})
+}
+
+// layoutMenuSeparator renders a standard menu separator with 4dp vertical insets
+func (r *Renderer) layoutMenuSeparator(gtx layout.Context) layout.Dimensions {
+	return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return r.layoutHorizontalSeparatorMin(gtx, colLightGray)
+	})
+}
+
+// drawXIcon draws an X close icon at the current position
+func (r *Renderer) drawXIcon(gtx layout.Context, size int, iconColor color.NRGBA) layout.Dimensions {
+	centerX := float32(size) / 2
+	centerY := float32(size) / 2
+	armLen := float32(size) / 4
+
+	var p clip.Path
+	p.Begin(gtx.Ops)
+	p.MoveTo(f32.Pt(centerX-armLen, centerY-armLen))
+	p.LineTo(f32.Pt(centerX+armLen, centerY+armLen))
+	p.MoveTo(f32.Pt(centerX+armLen, centerY-armLen))
+	p.LineTo(f32.Pt(centerX-armLen, centerY+armLen))
+	paint.FillShape(gtx.Ops, iconColor, clip.Stroke{Path: p.End(), Width: 1.5}.Op())
+
+	return layout.Dimensions{Size: image.Pt(size, size)}
+}
+
 // modalBackdrop renders a modal dialog with backdrop, centered content using menuShell
 // The dismissBtn is optional - if provided, clicking the backdrop will trigger it
 func (r *Renderer) modalBackdrop(gtx layout.Context, width unit.Dp, dismissBtn *widget.Clickable, content layout.Widget) layout.Dimensions {

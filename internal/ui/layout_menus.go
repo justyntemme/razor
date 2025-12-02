@@ -127,11 +127,7 @@ func (r *Renderer) layoutFileMenu(gtx layout.Context, eventOut *UIEvent) layout.
 		// Separator and Settings
 		children = append(children,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					height := gtx.Dp(unit.Dp(1))
-					paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Min.X, height)}.Op())
-					return layout.Dimensions{Size: image.Pt(gtx.Constraints.Min.X, height)}
-				})
+				return r.layoutMenuSeparator(gtx)
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				if r.hotkeysBtn.Clicked(gtx) {
@@ -277,11 +273,7 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, state *State, eventOut 
 					}
 					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								height := gtx.Dp(unit.Dp(1))
-								paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Min.X, height)}.Op())
-								return layout.Dimensions{Size: image.Pt(gtx.Constraints.Min.X, height)}
-							})
+							return r.layoutMenuSeparator(gtx)
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return r.menuItem(gtx, &r.pasteBtn, "Paste")
@@ -290,11 +282,7 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, state *State, eventOut 
 				}),
 				// Separator and Open Terminal Here
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						height := gtx.Dp(unit.Dp(1))
-						paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Min.X, height)}.Op())
-						return layout.Dimensions{Size: image.Pt(gtx.Constraints.Min.X, height)}
-					})
+					return r.layoutMenuSeparator(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return r.menuItem(gtx, &r.openTerminalBtn, "Open Terminal Here")
@@ -352,11 +340,7 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, state *State, eventOut 
 				return r.menuItem(gtx, &r.renameBtn, "Rename")
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					height := gtx.Dp(unit.Dp(1))
-					paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Min.X, height)}.Op())
-					return layout.Dimensions{Size: image.Pt(gtx.Constraints.Min.X, height)}
-				})
+				return r.layoutMenuSeparator(gtx)
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return r.menuItem(gtx, &r.newFileBtn, "New File")
@@ -365,11 +349,7 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, state *State, eventOut 
 				return r.menuItem(gtx, &r.newFolderBtn, "New Folder")
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					height := gtx.Dp(unit.Dp(1))
-					paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Min.X, height)}.Op())
-					return layout.Dimensions{Size: image.Pt(gtx.Constraints.Min.X, height)}
-				})
+				return r.layoutMenuSeparator(gtx)
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				if !r.menuIsDir {

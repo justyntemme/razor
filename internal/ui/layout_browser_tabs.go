@@ -4,7 +4,6 @@ import (
 	"image"
 	"image/color"
 
-	"gioui.org/f32"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -146,22 +145,7 @@ func (r *Renderer) browserTabChildren(gtx layout.Context, tabHeight, tabMinWidth
 				closeBtnY := (tabHeight - closeSize) / 2
 				closeStack := op.Offset(image.Pt(closeBtnX, closeBtnY)).Push(gtx.Ops)
 				material.Clickable(gtx, &tab.closeBtn, func(gtx layout.Context) layout.Dimensions {
-					// Draw X
-					centerX := float32(closeSize) / 2
-					centerY := float32(closeSize) / 2
-					armLen := float32(closeSize) / 4
-
-					xColor := colGray
-					// Draw X lines
-					var p clip.Path
-					p.Begin(gtx.Ops)
-					p.MoveTo(f32.Pt(centerX-armLen, centerY-armLen))
-					p.LineTo(f32.Pt(centerX+armLen, centerY+armLen))
-					p.MoveTo(f32.Pt(centerX+armLen, centerY-armLen))
-					p.LineTo(f32.Pt(centerX-armLen, centerY+armLen))
-					paint.FillShape(gtx.Ops, xColor, clip.Stroke{Path: p.End(), Width: 1.5}.Op())
-
-					return layout.Dimensions{Size: image.Pt(closeSize, closeSize)}
+					return r.drawXIcon(gtx, closeSize, colGray)
 				})
 				closeStack.Pop()
 

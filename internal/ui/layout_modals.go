@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"image"
 
-	"gioui.org/f32"
 	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
@@ -97,8 +96,7 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) la
 						layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
 						// Divider
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, gtx.Dp(1))}.Op())
-							return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(1))}
+							return r.layoutHorizontalSeparator(gtx, colLightGray)
 						}),
 						layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
 						// Section: Search
@@ -164,8 +162,7 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) la
 						layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
 						// Divider
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, gtx.Dp(1))}.Op())
-							return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(1))}
+							return r.layoutHorizontalSeparator(gtx, colLightGray)
 						}),
 						layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
 						// Section: Terminal
@@ -357,21 +354,7 @@ func (r *Renderer) layoutHotkeysModal(gtx layout.Context) layout.Dimensions {
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							closeSize := gtx.Dp(24)
 							return material.Clickable(gtx, &r.hotkeysCloseBtn, func(gtx layout.Context) layout.Dimensions {
-								// Draw X
-								centerX := float32(closeSize) / 2
-								centerY := float32(closeSize) / 2
-								armLen := float32(closeSize) / 4
-
-								xColor := colGray
-								var p clip.Path
-								p.Begin(gtx.Ops)
-								p.MoveTo(f32.Pt(centerX-armLen, centerY-armLen))
-								p.LineTo(f32.Pt(centerX+armLen, centerY+armLen))
-								p.MoveTo(f32.Pt(centerX+armLen, centerY-armLen))
-								p.LineTo(f32.Pt(centerX-armLen, centerY+armLen))
-								paint.FillShape(gtx.Ops, xColor, clip.Stroke{Path: p.End(), Width: 1.5}.Op())
-
-								return layout.Dimensions{Size: image.Pt(closeSize, closeSize)}
+								return r.drawXIcon(gtx, closeSize, colGray)
 							})
 						}),
 					)
@@ -428,8 +411,7 @@ func (r *Renderer) layoutHotkeysModal(gtx layout.Context) layout.Dimensions {
 				// Footer (fixed)
 				layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, gtx.Dp(1))}.Op())
-					return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(1))}
+					return r.layoutHorizontalSeparator(gtx, colLightGray)
 				}),
 				layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
