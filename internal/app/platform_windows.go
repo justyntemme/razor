@@ -87,16 +87,32 @@ type AppInfo struct {
 	Path string // Executable path or identifier
 }
 
-// platformOpenTerminal opens a terminal (cmd.exe or PowerShell) in the specified directory.
-// On Windows, this tries Windows Terminal first, then falls back to cmd.exe.
-func platformOpenTerminal(dir string) error {
-	// Try Windows Terminal first (wt.exe) - available on Windows 10/11
-	if _, err := exec.LookPath("wt.exe"); err == nil {
-		// Windows Terminal with -d flag for starting directory
+// platformOpenTerminal opens a terminal in the specified directory.
+// If terminalApp is empty, tries Windows Terminal first, then falls back to cmd.exe.
+func platformOpenTerminal(dir, terminalApp string) error {
+	switch terminalApp {
+	case "wt":
 		return exec.Command("wt.exe", "-d", dir).Start()
+	case "pwsh":
+		return exec.Command("cmd", "/c", "start", "pwsh", "-WorkingDirectory", dir).Start()
+	case "powershell":
+		return exec.Command("cmd", "/c", "start", "powershell", "-NoExit", "-Command", "Set-Location '"+dir+"'").Start()
+	case "cmd":
+		return exec.Command("cmd", "/c", "start", "cmd", "/K", "cd", "/d", dir).Start()
+	case "alacritty":
+		return exec.Command("alacritty.exe", "--working-directory", dir).Start()
+	case "wezterm":
+		return exec.Command("wezterm.exe", "start", "--cwd", dir).Start()
+	case "kitty":
+		return exec.Command("kitty.exe", "--directory", dir).Start()
+	case "":
+		// Auto-detect: prefer Windows Terminal, fallback to cmd
+		if _, err := exec.LookPath("wt.exe"); err == nil {
+			return exec.Command("wt.exe", "-d", dir).Start()
+		}
+		return exec.Command("cmd", "/c", "start", "cmd", "/K", "cd", "/d", dir).Start()
+	default:
+		// Try running the terminal directly
+		return exec.Command("cmd", "/c", "start", terminalApp).Start()
 	}
-
-	// Fallback to cmd.exe with /K to keep window open and cd to directory
-	// Using start command to open in new window
-	return exec.Command("cmd", "/c", "start", "cmd", "/K", "cd", "/d", dir).Start()
 }

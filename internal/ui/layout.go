@@ -2789,6 +2789,31 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) la
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return r.layoutSearchEngineOptions(gtx)
 					}),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+					// Divider
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, gtx.Dp(1))}.Op())
+						return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(1))}
+					}),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+					// Section: Terminal
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Caption(r.Theme, "TERMINAL")
+						lbl.Color = colGray
+						lbl.Font.Weight = font.Bold
+						return lbl.Layout(gtx)
+					}),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(r.Theme, "Default Terminal Application")
+						lbl.Color = colBlack
+						return lbl.Layout(gtx)
+					}),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+					// Render each terminal as a radio button
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return r.layoutTerminalOptions(gtx, eventOut)
+					}),
 				)
 			},
 			nil, // No button row for settings
@@ -3086,5 +3111,45 @@ func (r *Renderer) layoutSearchEngineOption(gtx layout.Context, eng SearchEngine
 				})
 			}),
 		)
+	})
+}
+
+func (r *Renderer) layoutTerminalOptions(gtx layout.Context, eventOut *UIEvent) layout.Dimensions {
+	// Check for terminal selection changes
+	if r.terminalEnum.Update(gtx) {
+		selected := r.terminalEnum.Value
+		r.SelectedTerminal = selected
+		*eventOut = UIEvent{Action: ActionChangeTerminal, TerminalApp: selected}
+	}
+
+	var children []layout.FlexChild
+
+	for _, term := range r.Terminals {
+		term := term // capture loop variable
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return r.layoutTerminalOption(gtx, term)
+		}))
+	}
+
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+}
+
+func (r *Renderer) layoutTerminalOption(gtx layout.Context, term TerminalInfo) layout.Dimensions {
+	// Build display label
+	label := term.Name
+	if term.Default {
+		label += " (default)"
+	}
+
+	rb := material.RadioButton(r.Theme, &r.terminalEnum, term.ID, label)
+
+	if r.SelectedTerminal == term.ID {
+		rb.Color = colAccent
+	} else {
+		rb.Color = colBlack
+	}
+
+	return layout.Inset{Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return rb.Layout(gtx)
 	})
 }

@@ -78,6 +78,7 @@ const (
 	ActionChangeSearchEngine
 	ActionChangeDefaultDepth
 	ActionChangeTheme
+	ActionChangeTerminal
 	// Search history
 	ActionRequestSearchHistory
 	ActionSelectSearchHistory
@@ -119,6 +120,13 @@ type SearchEngineInfo struct {
 	Command   string // Command path (empty for builtin)
 	Available bool   // Whether it's installed
 	Version   string // Version string if available
+}
+
+// TerminalInfo contains information about a terminal application
+type TerminalInfo struct {
+	ID      string // Internal ID (e.g., "terminal", "iterm2", "wezterm")
+	Name    string // Display name (e.g., "Terminal.app", "iTerm2")
+	Default bool   // Whether this is the platform default
 }
 
 // ConflictResolution represents the user's choice for handling file conflicts
@@ -422,6 +430,7 @@ type UIEvent struct {
 	SearchHistoryQuery string // For fetching/selecting search history
 	SearchSubmitted    bool   // True if search was submitted via Enter, not typed
 	TabIndex           int    // Tab index for tab operations
+	TerminalApp        string // Selected terminal application ID
 }
 
 type UIEntry struct {
@@ -652,7 +661,12 @@ type Renderer struct {
 	// Search engine settings
 	SearchEngines     []SearchEngineInfo // Available engines (detected on startup)
 	SelectedEngine    string             // Currently selected engine name
-	
+
+	// Terminal settings
+	Terminals         []TerminalInfo     // Available terminals (detected on startup)
+	SelectedTerminal  string             // Currently selected terminal ID
+	terminalEnum      widget.Enum        // Radio button group for terminal selection
+
 	// Default recursive depth setting
 	DefaultDepth      int               // Current default depth value
 	depthDecBtn       widget.Clickable  // Decrease depth button
@@ -807,6 +821,17 @@ func (r *Renderer) SetDarkMode(dark bool) {
 	r.DarkMode = dark
 	r.darkModeCheck.Value = dark
 	r.applyTheme()
+}
+
+// SetTerminals sets the available terminal applications
+func (r *Renderer) SetTerminals(terminals []TerminalInfo) {
+	r.Terminals = terminals
+}
+
+// SetSelectedTerminal sets the currently selected terminal
+func (r *Renderer) SetSelectedTerminal(terminalID string) {
+	r.SelectedTerminal = terminalID
+	r.terminalEnum.Value = terminalID
 }
 
 // SetConfigError sets the config error message to display in the banner

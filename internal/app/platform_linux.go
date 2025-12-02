@@ -89,35 +89,45 @@ type AppInfo struct {
 }
 
 // platformOpenTerminal opens a terminal emulator in the specified directory.
-// On Linux, this tries common terminal emulators in order of preference.
-func platformOpenTerminal(dir string) error {
-	// List of common terminal emulators to try, in order of preference
-	terminals := []struct {
-		cmd  string
-		args []string
-	}{
-		// Modern terminals with --working-directory support
-		{"gnome-terminal", []string{"--working-directory=" + dir}},
-		{"konsole", []string{"--workdir", dir}},
-		{"xfce4-terminal", []string{"--working-directory=" + dir}},
-		{"mate-terminal", []string{"--working-directory=" + dir}},
-		{"tilix", []string{"--working-directory=" + dir}},
-		{"terminator", []string{"--working-directory=" + dir}},
-		{"alacritty", []string{"--working-directory", dir}},
-		{"kitty", []string{"--directory", dir}},
-		{"wezterm", []string{"start", "--cwd", dir}},
-		// Fallback: x-terminal-emulator (Debian/Ubuntu default)
-		{"x-terminal-emulator", []string{"--working-directory=" + dir}},
-		// Last resort: xterm with cd command
-		{"xterm", []string{"-e", "cd '" + dir + "' && $SHELL -l"}},
+// If terminalApp is empty, tries common terminal emulators in order of preference.
+func platformOpenTerminal(dir, terminalApp string) error {
+	// Terminal commands and their arguments for working directory
+	terminalArgs := map[string][]string{
+		"gnome-terminal":     {"--working-directory=" + dir},
+		"konsole":            {"--workdir", dir},
+		"xfce4-terminal":     {"--working-directory=" + dir},
+		"mate-terminal":      {"--working-directory=" + dir},
+		"tilix":              {"--working-directory=" + dir},
+		"terminator":         {"--working-directory=" + dir},
+		"alacritty":          {"--working-directory", dir},
+		"kitty":              {"--directory", dir},
+		"wezterm":            {"start", "--cwd", dir},
+		"x-terminal-emulator": {"--working-directory=" + dir},
+		"xterm":              {"-e", "cd '" + dir + "' && $SHELL -l"},
 	}
 
-	for _, term := range terminals {
-		if _, err := exec.LookPath(term.cmd); err == nil {
-			return exec.Command(term.cmd, term.args...).Start()
+	// If a specific terminal is configured, use it
+	if terminalApp != "" {
+		if args, ok := terminalArgs[terminalApp]; ok {
+			return exec.Command(terminalApp, args...).Start()
+		}
+		// Unknown terminal, try with common args
+		return exec.Command(terminalApp, "--working-directory="+dir).Start()
+	}
+
+	// Auto-detect: try terminals in order of preference
+	order := []string{
+		"gnome-terminal", "konsole", "xfce4-terminal", "mate-terminal",
+		"tilix", "terminator", "alacritty", "kitty", "wezterm",
+		"x-terminal-emulator", "xterm",
+	}
+
+	for _, term := range order {
+		if _, err := exec.LookPath(term); err == nil {
+			return exec.Command(term, terminalArgs[term]...).Start()
 		}
 	}
 
-	// If no terminal found, try xdg-open on a shell script (unlikely to work well)
+	// If no terminal found, try xdg-open (unlikely to work well)
 	return exec.Command("xdg-open", dir).Start()
 }

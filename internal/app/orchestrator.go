@@ -136,6 +136,25 @@ func NewOrchestrator() *Orchestrator {
 	// Set up UI with detected engines
 	o.ui.SearchEngines = uiEngines
 
+	// Detect and set up available terminals
+	terminals := config.DetectTerminals()
+	var uiTerminals []ui.TerminalInfo
+	for _, t := range terminals {
+		uiTerminals = append(uiTerminals, ui.TerminalInfo{
+			ID:      t.ID,
+			Name:    t.Name,
+			Default: t.Default,
+		})
+	}
+	o.ui.SetTerminals(uiTerminals)
+
+	// Set configured terminal (or default if not set)
+	configuredTerminal := cfg.Terminal.App
+	if configuredTerminal == "" {
+		configuredTerminal = config.DefaultTerminalID()
+	}
+	o.ui.SetSelectedTerminal(configuredTerminal)
+
 	// Apply config to UI
 	o.ui.ShowDotfiles = cfg.UI.FileList.ShowDotfiles
 	o.ui.SetShowDotfilesCheck(cfg.UI.FileList.ShowDotfiles)
@@ -420,10 +439,14 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 			log.Printf("Error opening with app: %v", err)
 		}
 	case ui.ActionOpenTerminal:
-		// Open terminal in the specified directory
-		if err := platformOpenTerminal(evt.Path); err != nil {
+		// Open terminal in the specified directory using configured terminal app
+		terminalApp := o.config.GetTerminalApp()
+		if err := platformOpenTerminal(evt.Path, terminalApp); err != nil {
 			log.Printf("Error opening terminal: %v", err)
 		}
+	case ui.ActionChangeTerminal:
+		// Update terminal app in config
+		o.config.SetTerminalApp(evt.TerminalApp)
 	case ui.ActionAddFavorite:
 		// Add favorite to config.json
 		name := filepath.Base(evt.Path)

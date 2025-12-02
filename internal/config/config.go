@@ -24,8 +24,14 @@ type Config struct {
 	Tabs      TabsConfig      `json:"tabs"`
 	Panels    PanelsConfig    `json:"panels"`
 	Preview   PreviewConfig   `json:"preview"`
+	Terminal  TerminalConfig  `json:"terminal"`
 	Hotkeys   HotkeysConfig   `json:"hotkeys"`
 	Favorites []FavoriteEntry `json:"favorites"`
+}
+
+// TerminalConfig holds terminal application settings
+type TerminalConfig struct {
+	App string `json:"app"` // Terminal application to use (empty = platform default)
 }
 
 // HotkeysConfig holds all configurable keyboard shortcuts
@@ -263,6 +269,9 @@ func DefaultConfig() *Config {
 			MaxFileSize:      1024 * 1024, // 1MB default limit
 			MarkdownRendered: true,
 		},
+		Terminal: TerminalConfig{
+			App: "", // Empty means use platform default
+		},
 		Hotkeys: DefaultHotkeys(),
 		Favorites: []FavoriteEntry{
 			{Name: "Home", Path: home, Icon: "home"},
@@ -481,6 +490,21 @@ func (m *Manager) GetHotkeys() HotkeysConfig {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.config.Hotkeys
+}
+
+// GetTerminalApp returns the configured terminal application
+func (m *Manager) GetTerminalApp() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.config.Terminal.App
+}
+
+// SetTerminalApp sets the terminal application and saves the config
+func (m *Manager) SetTerminalApp(app string) {
+	m.mu.Lock()
+	m.config.Terminal.App = app
+	m.mu.Unlock()
+	m.Save()
 }
 
 // GenerateConfig backs up existing config and creates a fresh default config

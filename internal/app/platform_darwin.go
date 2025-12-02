@@ -121,7 +121,23 @@ type AppInfo struct {
 }
 
 // platformOpenTerminal opens a terminal in the specified directory.
-// On macOS, this opens Terminal.app which uses the user's login shell.
-func platformOpenTerminal(dir string) error {
-	return exec.Command("open", "-a", "Terminal", dir).Start()
+// If terminalApp is empty, uses the platform default (Terminal.app).
+func platformOpenTerminal(dir, terminalApp string) error {
+	switch terminalApp {
+	case "", "terminal":
+		return exec.Command("open", "-a", "Terminal", dir).Start()
+	case "iterm2":
+		return exec.Command("open", "-a", "iTerm", dir).Start()
+	case "wezterm":
+		return exec.Command("wezterm", "start", "--cwd", dir).Start()
+	case "kitty":
+		return exec.Command("kitty", "--directory", dir).Start()
+	case "alacritty":
+		return exec.Command("alacritty", "--working-directory", dir).Start()
+	case "hyper":
+		return exec.Command("open", "-a", "Hyper", dir).Start()
+	default:
+		// Try to open as an app name
+		return exec.Command("open", "-a", terminalApp, dir).Start()
+	}
 }
