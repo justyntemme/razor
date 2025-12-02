@@ -420,7 +420,9 @@ func (m *Manager) AddFavorite(name, path string) {
 		Path: path,
 		Icon: "folder",
 	})
-	m.saveUnlocked()
+	if err := m.saveUnlocked(); err != nil {
+		log.Printf("Error saving config after adding favorite: %v", err)
+	}
 }
 
 // RemoveFavorite removes a favorite by path
@@ -433,7 +435,9 @@ func (m *Manager) RemoveFavorite(path string) {
 			break
 		}
 	}
-	m.saveUnlocked()
+	if err := m.saveUnlocked(); err != nil {
+		log.Printf("Error saving config after removing favorite: %v", err)
+	}
 }
 
 // GetFavorites returns a flat list of favorite paths (for backwards compatibility)
