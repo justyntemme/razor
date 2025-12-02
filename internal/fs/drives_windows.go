@@ -30,23 +30,39 @@ const (
 	DRIVE_RAMDISK     = 6
 )
 
-// ListDrives returns available drives on Windows
-func ListDrives() []Drive {
-	var drives []Drive
+// ListDrivePaths returns drive paths without volume names.
+// This is fast and non-blocking - uses GetLogicalDrives API which returns immediately.
+// Use this when you only need paths (e.g., for scanning recycle bins).
+func ListDrivePaths() []string {
+	var paths []string
 
-	// Get bitmask of available drives
+	// GetLogicalDrives returns immediately without blocking on disconnected drives
 	mask, _, _ := getLogicalDrives.Call()
 	if mask == 0 {
-		return drives
+		return paths
 	}
 
 	for i := 0; i < 26; i++ {
 		if mask&(1<<uint(i)) == 0 {
 			continue
 		}
+		paths = append(paths, string(rune('A'+i))+":\\")
+	}
 
-		letter := string(rune('A' + i))
-		path := letter + ":\\"
+	return paths
+}
+
+// ListDrives returns available drives on Windows with display names.
+// Note: This may be slow if there are disconnected network drives or empty CD-ROMs,
+// as GetVolumeInformationW can block. Call from a goroutine to avoid UI blocking.
+func ListDrives() []Drive {
+	var drives []Drive
+
+	// Get drive paths first (fast, non-blocking)
+	paths := ListDrivePaths()
+
+	for _, path := range paths {
+		letter := string(path[0])
 
 		// Get drive type
 		pathPtr, _ := syscall.UTF16PtrFromString(path)
@@ -57,7 +73,7 @@ func ListDrives() []Drive {
 			continue
 		}
 
-		// Try to get volume name
+		// Try to get volume name (this can block on slow/disconnected drives)
 		volumeName := make([]uint16, 256)
 		ret, _, _ := getVolumeInfoW.Call(
 			uintptr(unsafe.Pointer(pathPtr)),

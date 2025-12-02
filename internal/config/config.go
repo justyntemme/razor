@@ -42,14 +42,15 @@ type TerminalConfig struct {
 //                 Up, Down, Left, Right, Home, End, PageUp, PageDown
 type HotkeysConfig struct {
 	// File operations
-	Copy          string `json:"copy"`
-	Cut           string `json:"cut"`
-	Paste         string `json:"paste"`
-	Delete        string `json:"delete"`
-	Rename        string `json:"rename"`
-	NewFile       string `json:"newFile"`
-	NewFolder     string `json:"newFolder"`
-	SelectAll     string `json:"selectAll"`
+	Copy            string `json:"copy"`
+	Cut             string `json:"cut"`
+	Paste           string `json:"paste"`
+	Delete          string `json:"delete"`
+	PermanentDelete string `json:"permanentDelete"` // Bypass trash
+	Rename          string `json:"rename"`
+	NewFile         string `json:"newFile"`
+	NewFolder       string `json:"newFolder"`
+	SelectAll       string `json:"selectAll"`
 
 	// Navigation
 	Back          string `json:"back"`

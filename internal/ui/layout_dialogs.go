@@ -11,6 +11,8 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
+
+	"github.com/justyntemme/razor/internal/trash"
 )
 
 // Confirmation and input dialogs
@@ -32,16 +34,33 @@ func (r *Renderer) layoutDeleteConfirm(gtx layout.Context, state *State, eventOu
 		state.DeleteTargets = nil
 	}
 
-	// Build message based on number of items to delete
-	var message string
-	if len(state.DeleteTargets) == 1 {
-		message = fmt.Sprintf("Are you sure you want to delete \"%s\"?", filepath.Base(state.DeleteTargets[0]))
+	// Determine if using trash or permanent delete
+	useTrash := trash.IsAvailable()
+
+	// Build message based on number of items and trash availability
+	var message, subMessage, title, buttonText string
+	if useTrash {
+		title = trash.VerbPhrase()
+		buttonText = trash.VerbPhrase()
+		subMessage = fmt.Sprintf("Items can be restored from the %s.", trash.DisplayName())
+		if len(state.DeleteTargets) == 1 {
+			message = fmt.Sprintf("Move \"%s\" to the %s?", filepath.Base(state.DeleteTargets[0]), trash.DisplayName())
+		} else {
+			message = fmt.Sprintf("Move %d items to the %s?", len(state.DeleteTargets), trash.DisplayName())
+		}
 	} else {
-		message = fmt.Sprintf("Are you sure you want to delete %d items?", len(state.DeleteTargets))
+		title = "Confirm Delete"
+		buttonText = "Delete"
+		subMessage = "This action cannot be undone."
+		if len(state.DeleteTargets) == 1 {
+			message = fmt.Sprintf("Are you sure you want to delete \"%s\"?", filepath.Base(state.DeleteTargets[0]))
+		} else {
+			message = fmt.Sprintf("Are you sure you want to delete %d items?", len(state.DeleteTargets))
+		}
 	}
 
 	return r.modalBackdrop(gtx, 350, nil, func(gtx layout.Context) layout.Dimensions {
-		return r.modalContent(gtx, "Confirm Delete", colDanger,
+		return r.modalContent(gtx, title, colDanger,
 			// Body content
 			func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -52,7 +71,7 @@ func (r *Renderer) layoutDeleteConfirm(gtx layout.Context, state *State, eventOu
 					}),
 					layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body2(r.Theme, "This action cannot be undone.")
+						lbl := material.Body2(r.Theme, subMessage)
 						lbl.Color = colGray
 						return lbl.Layout(gtx)
 					}),
@@ -60,7 +79,7 @@ func (r *Renderer) layoutDeleteConfirm(gtx layout.Context, state *State, eventOu
 			},
 			// Button row
 			func(gtx layout.Context) layout.Dimensions {
-				return r.dialogButtonRow(gtx, &r.deleteConfirmNo, &r.deleteConfirmYes, "Cancel", "Delete", ButtonDanger)
+				return r.dialogButtonRow(gtx, &r.deleteConfirmNo, &r.deleteConfirmYes, "Cancel", buttonText, ButtonDanger)
 			},
 		)
 	})

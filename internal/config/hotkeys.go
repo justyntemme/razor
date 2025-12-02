@@ -217,14 +217,15 @@ func (h Hotkey) Filter(focus event.Tag) key.Filter {
 // HotkeyMatcher provides efficient hotkey matching from config
 type HotkeyMatcher struct {
 	// File operations
-	Copy      Hotkey
-	Cut       Hotkey
-	Paste     Hotkey
-	Delete    Hotkey
-	Rename    Hotkey
-	NewFile   Hotkey
-	NewFolder Hotkey
-	SelectAll Hotkey
+	Copy            Hotkey
+	Cut             Hotkey
+	Paste           Hotkey
+	Delete          Hotkey
+	PermanentDelete Hotkey
+	Rename          Hotkey
+	NewFile         Hotkey
+	NewFolder       Hotkey
+	SelectAll       Hotkey
 
 	// Navigation
 	Back    Hotkey
@@ -259,14 +260,15 @@ type HotkeyMatcher struct {
 func NewHotkeyMatcher(cfg HotkeysConfig) *HotkeyMatcher {
 	return &HotkeyMatcher{
 		// File operations
-		Copy:      ParseHotkey(cfg.Copy),
-		Cut:       ParseHotkey(cfg.Cut),
-		Paste:     ParseHotkey(cfg.Paste),
-		Delete:    ParseHotkey(cfg.Delete),
-		Rename:    ParseHotkey(cfg.Rename),
-		NewFile:   ParseHotkey(cfg.NewFile),
-		NewFolder: ParseHotkey(cfg.NewFolder),
-		SelectAll: ParseHotkey(cfg.SelectAll),
+		Copy:            ParseHotkey(cfg.Copy),
+		Cut:             ParseHotkey(cfg.Cut),
+		Paste:           ParseHotkey(cfg.Paste),
+		Delete:          ParseHotkey(cfg.Delete),
+		PermanentDelete: ParseHotkey(cfg.PermanentDelete),
+		Rename:          ParseHotkey(cfg.Rename),
+		NewFile:         ParseHotkey(cfg.NewFile),
+		NewFolder:       ParseHotkey(cfg.NewFolder),
+		SelectAll:       ParseHotkey(cfg.SelectAll),
 
 		// Navigation
 		Back:    ParseHotkey(cfg.Back),

@@ -207,6 +207,12 @@ type Renderer struct {
 	openLocationBtn   widget.Clickable // Context menu item to open file location
 	isRecentView      bool             // True when viewing recent files
 
+	// Trash state
+	trashBtn            widget.Clickable // Button to show trash
+	isTrashView         bool             // True when viewing trash
+	emptyTrashBtn       widget.Clickable // Button to empty trash (in context menu)
+	permanentDeleteBtn  widget.Clickable // Button to permanently delete (bypass trash)
+
 	// Preview pane close button
 	previewCloseBtn   widget.Clickable
 

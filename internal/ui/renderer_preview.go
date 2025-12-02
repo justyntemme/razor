@@ -203,6 +203,9 @@ func (r *Renderer) IsPreviewVisible() bool {
 // SetRecentView sets whether we're viewing recent files
 func (r *Renderer) SetRecentView(isRecent bool) {
 	r.isRecentView = isRecent
+	if isRecent {
+		r.isTrashView = false // Can't be in both views
+	}
 }
 
 // IsRecentView returns whether we're viewing recent files

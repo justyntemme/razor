@@ -17,6 +17,17 @@ type Drive struct {
 	Path string
 }
 
+// ListDrivePaths returns drive mount paths on macOS.
+// On macOS, this just returns paths from /Volumes.
+func ListDrivePaths() []string {
+	drives := ListDrives()
+	paths := make([]string, len(drives))
+	for i, d := range drives {
+		paths[i] = d.Path
+	}
+	return paths
+}
+
 // ListDrives returns mounted drives on macOS
 func ListDrives() []Drive {
 	var drives []Drive

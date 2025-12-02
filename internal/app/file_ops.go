@@ -15,6 +15,7 @@ import (
 
 	"github.com/charlievieth/fastwalk"
 	"github.com/justyntemme/razor/internal/debug"
+	"github.com/justyntemme/razor/internal/trash"
 	"github.com/justyntemme/razor/internal/ui"
 )
 
@@ -157,15 +158,21 @@ func (o *Orchestrator) doRename(oldPath, newPath string) {
 	o.refreshCurrentDir()
 }
 
-// doDelete deletes a file or folder
+// doDelete moves a file or folder to trash (or permanently deletes if trash unavailable)
 func (o *Orchestrator) doDelete(path string) {
 	if !pathExists(path) {
 		log.Printf("Delete error: path does not exist: %s", path)
 		return
 	}
 
-	o.setProgress(true, "Deleting "+filepath.Base(path), 0, 0)
-	err := deleteItem(path)
+	var err error
+	if trash.IsAvailable() {
+		o.setProgress(true, "Moving to "+trash.DisplayName()+": "+filepath.Base(path), 0, 0)
+		err = trash.MoveToTrash(path)
+	} else {
+		o.setProgress(true, "Deleting "+filepath.Base(path), 0, 0)
+		err = deleteItem(path)
+	}
 	o.setProgress(false, "", 0, 0)
 
 	if err != nil {
@@ -188,10 +195,11 @@ func (o *Orchestrator) doDelete(path string) {
 	o.window.Invalidate()
 }
 
-// doDeleteMultiple deletes multiple files or folders
+// doDeleteMultiple moves multiple files or folders to trash
 func (o *Orchestrator) doDeleteMultiple(paths []string) {
 	total := len(paths)
 	deletedPaths := make([]string, 0, total)
+	useTrash := trash.IsAvailable()
 
 	for i, path := range paths {
 		if !pathExists(path) {
@@ -199,12 +207,89 @@ func (o *Orchestrator) doDeleteMultiple(paths []string) {
 			continue
 		}
 
-		label := fmt.Sprintf("Deleting (%d/%d) %s", i+1, total, filepath.Base(path))
+		var label string
+		var err error
+		if useTrash {
+			label = fmt.Sprintf("Moving to %s (%d/%d) %s", trash.DisplayName(), i+1, total, filepath.Base(path))
+			o.setProgress(true, label, 0, 0)
+			err = trash.MoveToTrash(path)
+		} else {
+			label = fmt.Sprintf("Deleting (%d/%d) %s", i+1, total, filepath.Base(path))
+			o.setProgress(true, label, 0, 0)
+			err = deleteItem(path)
+		}
+
+		if err != nil {
+			log.Printf("Delete error for %s: %v", path, err)
+		} else {
+			deletedPaths = append(deletedPaths, path)
+		}
+	}
+	o.setProgress(false, "", 0, 0)
+
+	// Remove deleted entries from StateOwner (preserves expansion state)
+	o.stateOwner.RemoveEntries(deletedPaths)
+
+	// Sync to state for UI
+	snapshot := o.stateOwner.GetSnapshot()
+	o.stateMu.Lock()
+	o.state.Entries = snapshot.Entries
+	o.state.SelectedIndex = -1
+	o.state.SelectedIndices = nil
+	o.stateMu.Unlock()
+	o.ui.ResetMultiSelect()
+
+	o.window.Invalidate()
+}
+
+// doPermanentDelete permanently deletes a file or folder (bypassing trash)
+func (o *Orchestrator) doPermanentDelete(path string) {
+	if !pathExists(path) {
+		log.Printf("Permanent delete error: path does not exist: %s", path)
+		return
+	}
+
+	o.setProgress(true, "Permanently deleting "+filepath.Base(path), 0, 0)
+	err := deleteItem(path)
+	o.setProgress(false, "", 0, 0)
+
+	if err != nil {
+		log.Printf("Permanent delete error: %v", err)
+		return
+	}
+
+	// Remove from StateOwner (preserves expansion state)
+	o.stateOwner.RemoveEntry(path)
+
+	// Sync to state for UI
+	snapshot := o.stateOwner.GetSnapshot()
+	o.stateMu.Lock()
+	o.state.Entries = snapshot.Entries
+	o.state.SelectedIndex = -1
+	o.state.SelectedIndices = nil
+	o.stateMu.Unlock()
+	o.ui.ResetMultiSelect()
+
+	o.window.Invalidate()
+}
+
+// doPermanentDeleteMultiple permanently deletes multiple files (bypassing trash)
+func (o *Orchestrator) doPermanentDeleteMultiple(paths []string) {
+	total := len(paths)
+	deletedPaths := make([]string, 0, total)
+
+	for i, path := range paths {
+		if !pathExists(path) {
+			log.Printf("Permanent delete error: path does not exist: %s", path)
+			continue
+		}
+
+		label := fmt.Sprintf("Permanently deleting (%d/%d) %s", i+1, total, filepath.Base(path))
 		o.setProgress(true, label, 0, 0)
 		err := deleteItem(path)
 
 		if err != nil {
-			log.Printf("Delete error for %s: %v", path, err)
+			log.Printf("Permanent delete error for %s: %v", path, err)
 		} else {
 			deletedPaths = append(deletedPaths, path)
 		}

@@ -15,6 +15,17 @@ type Drive struct {
 	Path string
 }
 
+// ListDrivePaths returns drive mount paths on Linux.
+// On Linux, this returns paths from /proc/mounts.
+func ListDrivePaths() []string {
+	drives := ListDrives()
+	paths := make([]string, len(drives))
+	for i, d := range drives {
+		paths[i] = d.Path
+	}
+	return paths
+}
+
 // ListDrives returns mounted drives on Linux
 func ListDrives() []Drive {
 	var drives []Drive

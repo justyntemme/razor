@@ -17,6 +17,7 @@ import (
 	"github.com/justyntemme/razor/internal/fs"
 	"github.com/justyntemme/razor/internal/search"
 	"github.com/justyntemme/razor/internal/store"
+	"github.com/justyntemme/razor/internal/trash"
 	"github.com/justyntemme/razor/internal/ui"
 )
 
@@ -187,7 +188,8 @@ func NewOrchestrator() *Orchestrator {
 func (o *Orchestrator) loadFavoritesFromConfig() {
 	favorites := o.config.GetFavorites()
 	o.state.Favorites = make(map[string]bool)
-	o.state.FavList = make([]ui.FavoriteItem, 0, len(favorites))
+	// +1 for Trash entry at the end
+	o.state.FavList = make([]ui.FavoriteItem, 0, len(favorites)+1)
 
 	homePath := o.sharedDeps.HomePath
 	for _, fav := range favorites {
@@ -205,6 +207,16 @@ func (o *Orchestrator) loadFavoritesFromConfig() {
 		o.state.FavList = append(o.state.FavList, ui.FavoriteItem{
 			Path: path,
 			Name: fav.Name,
+			Type: ui.FavoriteTypeNormal,
+		})
+	}
+
+	// Always add Trash at the end if available
+	if trash.IsAvailable() {
+		o.state.FavList = append(o.state.FavList, ui.FavoriteItem{
+			Path: trash.GetPath(),
+			Name: trash.DisplayName(),
+			Type: ui.FavoriteTypeTrash,
 		})
 	}
 }
@@ -278,19 +290,27 @@ func (o *Orchestrator) Run(startPath string) error {
 }
 
 func (o *Orchestrator) refreshDrives() {
-	drives := fs.ListDrives()
-	o.state.Drives = make([]ui.DriveItem, len(drives))
-	for i, d := range drives {
-		o.state.Drives[i] = ui.DriveItem{Name: d.Name, Path: d.Path}
-	}
+	// Load drives asynchronously to avoid blocking UI on slow/disconnected drives
+	go func() {
+		drives := fs.ListDrives()
+		driveItems := make([]ui.DriveItem, len(drives))
+		for i, d := range drives {
+			driveItems[i] = ui.DriveItem{Name: d.Name, Path: d.Path}
+		}
+		o.stateMu.Lock()
+		o.state.Drives = driveItems
+		o.stateMu.Unlock()
+		o.window.Invalidate()
+	}()
 }
 
-// resetUIState cancels any active rename, hides preview, exits recent view,
+// resetUIState cancels any active rename, hides preview, exits recent/trash view,
 // and clears multi-select mode. Called before navigation operations to ensure clean state.
 func (o *Orchestrator) resetUIState() {
 	o.ui.CancelRename()
 	o.ui.HidePreview()
 	o.ui.SetRecentView(false)
+	o.ui.SetTrashView(false)
 	o.ui.ResetMultiSelect()
 	o.state.SelectedIndices = nil
 	o.state.SelectedIndex = -1
@@ -546,6 +566,19 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 	case ui.ActionShowRecentFiles:
 		// Switch to recent files view
 		o.showRecentFiles()
+	case ui.ActionShowTrash:
+		// Switch to trash view
+		o.showTrash()
+	case ui.ActionEmptyTrash:
+		// Empty the trash
+		go o.emptyTrash()
+	case ui.ActionPermanentDelete:
+		// Permanent delete (Shift+Delete)
+		if len(evt.Paths) > 0 {
+			go o.doPermanentDeleteMultiple(evt.Paths)
+		} else if evt.Path != "" {
+			go o.doPermanentDelete(evt.Path)
+		}
 	case ui.ActionOpenFileLocation:
 		// Navigate to the directory containing the file (with file selection)
 		o.openFileLocation(evt.Path)
@@ -856,16 +889,19 @@ func (o *Orchestrator) handleRecentFilesResponse(recentFiles []store.RecentFileE
 		})
 	}
 
-	// Update StateOwner and state
+	// Use StateOwner as single source of truth
 	o.stateOwner.SetEntries("Recent Files", entries, true, false)
 
+	// Sync to state for UI
+	snapshot := o.stateOwner.GetSnapshot()
 	o.stateMu.Lock()
-	o.state.CurrentPath = "Recent Files"
-	o.state.Entries = entries
+	o.state.CurrentPath = snapshot.CurrentPath
+	o.state.Entries = snapshot.Entries
 	o.state.SelectedIndex = -1
 	o.state.IsSearchResult = false
 	o.state.SearchQuery = ""
-	o.state.CanBack = true // Allow going back
+	o.state.CanBack = snapshot.CanBack
+	o.state.CanForward = snapshot.CanForward
 	o.stateMu.Unlock()
 
 	o.window.Invalidate()
@@ -881,6 +917,66 @@ func (o *Orchestrator) showRecentFiles() {
 	o.store.RequestChan <- store.Request{
 		Op:    store.FetchRecentFiles,
 		Limit: 50,
+	}
+}
+
+// showTrash switches to the virtual "Trash" view
+func (o *Orchestrator) showTrash() {
+	debug.Log(debug.APP, "Showing trash")
+	o.ui.SetTrashView(true)
+	o.ui.HidePreview()
+
+	// Load trash contents
+	items, err := trash.List()
+	if err != nil {
+		log.Printf("Error loading trash: %v", err)
+		items = nil
+	}
+
+	// Convert trash items to UI entries
+	entries := make([]ui.UIEntry, len(items))
+	for i, item := range items {
+		entries[i] = ui.UIEntry{
+			Name:    item.Name,
+			Path:    item.TrashPath, // Use trash path for operations
+			IsDir:   item.IsDir,
+			Size:    item.Size,
+			ModTime: item.DeletedAt,
+		}
+	}
+
+	// Use StateOwner as single source of truth
+	o.stateOwner.SetEntries(trash.DisplayName(), entries, true, false)
+
+	// Sync to state for UI
+	snapshot := o.stateOwner.GetSnapshot()
+	o.stateMu.Lock()
+	o.state.CurrentPath = snapshot.CurrentPath
+	o.state.Entries = snapshot.Entries
+	o.state.SelectedIndex = -1
+	o.state.SelectedIndices = nil
+	o.state.IsSearchResult = false
+	o.state.CanBack = snapshot.CanBack
+	o.state.CanForward = snapshot.CanForward
+	o.stateMu.Unlock()
+	o.ui.ResetMultiSelect()
+
+	o.window.Invalidate()
+}
+
+// emptyTrash permanently deletes all items in the trash
+func (o *Orchestrator) emptyTrash() {
+	o.setProgress(true, "Emptying "+trash.DisplayName()+"...", 0, 0)
+	err := trash.Empty()
+	o.setProgress(false, "", 0, 0)
+
+	if err != nil {
+		log.Printf("Error emptying trash: %v", err)
+	}
+
+	// Refresh trash view if currently showing
+	if o.ui.IsTrashView() {
+		o.showTrash()
 	}
 }
 

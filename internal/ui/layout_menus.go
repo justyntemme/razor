@@ -13,6 +13,7 @@ import (
 	"gioui.org/widget/material"
 
 	"github.com/justyntemme/razor/internal/debug"
+	"github.com/justyntemme/razor/internal/trash"
 )
 
 // Context menus and file menus
@@ -226,6 +227,15 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, state *State, eventOut 
 		r.deleteConfirmOpen = true
 		state.DeleteTargets = r.collectSelectedPaths(state)
 	}
+	if r.emptyTrashBtn.Clicked(gtx) {
+		r.menuVisible = false
+		*eventOut = UIEvent{Action: ActionEmptyTrash}
+	}
+	if r.permanentDeleteBtn.Clicked(gtx) {
+		r.menuVisible = false
+		paths := r.collectSelectedPaths(state)
+		*eventOut = UIEvent{Action: ActionPermanentDelete, Paths: paths}
+	}
 	if r.renameBtn.Clicked(gtx) {
 		r.menuVisible = false
 		// Start rename for the selected item
@@ -286,6 +296,27 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, state *State, eventOut 
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return r.menuItem(gtx, &r.openTerminalBtn, "Open Terminal Here")
+				}),
+			)
+		})
+	}
+
+	// Trash view context menu - shows Copy, Cut, and Permanently Delete
+	// Note: Restore is not supported on macOS/Windows as they don't track original paths
+	if r.isTrashView {
+		return r.menuShell(gtx, 180, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return r.menuItem(gtx, &r.copyBtn, "Copy")
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return r.menuItem(gtx, &r.cutBtn, "Cut")
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return r.layoutMenuSeparator(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return r.menuItemDanger(gtx, &r.permanentDeleteBtn, "Permanently Delete")
 				}),
 			)
 		})
@@ -362,7 +393,11 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, state *State, eventOut 
 				return r.menuItem(gtx, &r.favBtn, label)
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return r.menuItemDanger(gtx, &r.deleteBtn, "Delete")
+				label := "Delete"
+				if trash.IsAvailable() {
+					label = trash.VerbPhrase()
+				}
+				return r.menuItemDanger(gtx, &r.deleteBtn, label)
 			}),
 		)
 	})

@@ -12,6 +12,7 @@ import (
 	"gioui.org/widget/material"
 
 	"github.com/justyntemme/razor/internal/debug"
+	"github.com/justyntemme/razor/internal/trash"
 )
 
 // Settings and hotkeys modal dialogs
@@ -220,7 +221,8 @@ func (r *Renderer) layoutHotkeysModal(gtx layout.Context) layout.Dimensions {
 				{"Copy", r.hotkeys.Copy.String()},
 				{"Cut", r.hotkeys.Cut.String()},
 				{"Paste", r.hotkeys.Paste.String()},
-				{"Delete", r.hotkeys.Delete.String()},
+				{trash.VerbPhrase(), r.hotkeys.Delete.String()},
+				{"Delete Permanently", r.hotkeys.PermanentDelete.String()},
 				{"Rename", r.hotkeys.Rename.String()},
 				{"New File", r.hotkeys.NewFile.String()},
 				{"New Folder", r.hotkeys.NewFolder.String()},

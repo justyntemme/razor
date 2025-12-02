@@ -100,3 +100,16 @@ func (r *Renderer) SetPreviewConfig(textExtensions, imageExtensions []string, ma
 	r.previewWidthPct = widthPct
 	r.previewMarkdownRender = markdownRendered
 }
+
+// SetTrashView sets whether the trash view is active
+func (r *Renderer) SetTrashView(active bool) {
+	r.isTrashView = active
+	if active {
+		r.isRecentView = false // Can't be in both views
+	}
+}
+
+// IsTrashView returns whether the trash view is currently active
+func (r *Renderer) IsTrashView() bool {
+	return r.isTrashView
+}

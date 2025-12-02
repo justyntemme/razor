@@ -494,9 +494,35 @@ func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem) (lay
 		defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
 		event.Op(gtx.Ops, &fav.RightClickTag)
 
+		// Highlight if viewing trash
+		if fav.Type == FavoriteTypeTrash && r.isTrashView {
+			cornerRadius := gtx.Dp(4)
+			rr := clip.RRect{
+				Rect: image.Rect(0, 0, gtx.Constraints.Max.X, gtx.Constraints.Max.Y),
+				NE:   cornerRadius, NW: cornerRadius, SE: cornerRadius, SW: cornerRadius,
+			}
+			paint.FillShape(gtx.Ops, colSelected, rr.Op(gtx.Ops))
+		}
+
 		return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
 			func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					// Icon for trash
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						if fav.Type == FavoriteTypeTrash {
+							size := gtx.Dp(14)
+							r.drawTrashIcon(gtx.Ops, size, colGray)
+							return layout.Dimensions{Size: image.Pt(size, size)}
+						}
+						return layout.Dimensions{}
+					}),
+					// Spacer between icon and text (only for trash)
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						if fav.Type == FavoriteTypeTrash {
+							return layout.Spacer{Width: unit.Dp(8)}.Layout(gtx)
+						}
+						return layout.Dimensions{}
+					}),
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Body1(r.Theme, fav.Name)
 						lbl.Color, lbl.MaxLines = colDirBlue, 1
@@ -507,6 +533,39 @@ func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem) (lay
 	})
 
 	return dims, leftClicked, rightClicked, clickPos
+}
+
+// drawTrashIcon draws a simple trash can icon
+func (r *Renderer) drawTrashIcon(ops *op.Ops, size int, iconColor color.NRGBA) {
+	s := float32(size)
+
+	// Trash can body (rectangle)
+	bodyTop := int(s * 0.3)
+	bodyLeft := int(s * 0.15)
+	bodyRight := int(s * 0.85)
+	bodyBottom := int(s * 0.95)
+	paint.FillShape(ops, iconColor, clip.Rect{
+		Min: image.Pt(bodyLeft, bodyTop),
+		Max: image.Pt(bodyRight, bodyBottom),
+	}.Op())
+
+	// Lid (horizontal line at top)
+	lidTop := int(s * 0.15)
+	lidBottom := int(s * 0.25)
+	paint.FillShape(ops, iconColor, clip.Rect{
+		Min: image.Pt(int(s*0.1), lidTop),
+		Max: image.Pt(int(s*0.9), lidBottom),
+	}.Op())
+
+	// Handle on lid
+	handleLeft := int(s * 0.35)
+	handleRight := int(s * 0.65)
+	handleTop := int(s * 0.05)
+	handleBottom := int(s * 0.15)
+	paint.FillShape(ops, iconColor, clip.Rect{
+		Min: image.Pt(handleLeft, handleTop),
+		Max: image.Pt(handleRight, handleBottom),
+	}.Op())
 }
 
 func (r *Renderer) renderDriveRow(gtx layout.Context, drive *DriveItem) (layout.Dimensions, bool) {

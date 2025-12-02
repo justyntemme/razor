@@ -215,14 +215,18 @@ func (r *Renderer) layoutFavoritesListContent(gtx layout.Context, state *State, 
 				r.menuPos = r.mousePos
 				r.menuPath = fav.Path
 				r.menuIsDir = true
-				r.menuIsFav = true
+				r.menuIsFav = fav.Type == FavoriteTypeNormal // Only normal favorites can be removed
 				r.menuIsBackground = false
 			}
 
 			// Handle left-click
 			if leftClicked {
 				r.onLeftClick()
-				*eventOut = UIEvent{Action: ActionNavigate, Path: fav.Path}
+				if fav.Type == FavoriteTypeTrash {
+					*eventOut = UIEvent{Action: ActionShowTrash}
+				} else {
+					*eventOut = UIEvent{Action: ActionNavigate, Path: fav.Path}
+				}
 			}
 
 			return rowDims

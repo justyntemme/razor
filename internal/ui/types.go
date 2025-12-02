@@ -77,6 +77,10 @@ const (
 	ActionRefresh
 	ActionFocusSearch
 	ActionJumpToLetter // Jump to file starting with letter (uses NewIndex for target)
+	// Trash actions
+	ActionShowTrash       // Show trash view
+	ActionEmptyTrash      // Empty all trash
+	ActionPermanentDelete // Delete permanently (Shift+Delete)
 	// Tree view actions
 	ActionExpandDir   // Expand a directory inline (uses Path)
 	ActionCollapseDir // Collapse an expanded directory (uses Path)
@@ -427,8 +431,17 @@ type UIEntry struct {
 	ParentPath string           // Path of parent directory (empty for root level)
 }
 
+// FavoriteItemType indicates the type of favorite entry
+type FavoriteItemType int
+
+const (
+	FavoriteTypeNormal FavoriteItemType = iota // Regular user favorite
+	FavoriteTypeTrash                          // System trash entry
+)
+
 type FavoriteItem struct {
 	Name, Path    string
+	Type          FavoriteItemType // Type of favorite (normal, trash, etc.)
 	Clickable     widget.Clickable
 	RightClickTag int
 }

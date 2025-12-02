@@ -8,14 +8,15 @@ package config
 func DefaultHotkeys() HotkeysConfig {
 	return HotkeysConfig{
 		// File operations - use Cmd on macOS (standard macOS convention)
-		Copy:      "Cmd+C",
-		Cut:       "Cmd+X",
-		Paste:     "Cmd+V",
-		Delete:    "Backspace", // Mac Delete key is backspace
-		Rename:    "F2",
-		NewFile:   "Cmd+N",
-		NewFolder: "Cmd+Shift+N",
-		SelectAll: "Cmd+A",
+		Copy:            "Cmd+C",
+		Cut:             "Cmd+X",
+		Paste:           "Cmd+V",
+		Delete:          "Backspace", // Mac Delete key is backspace
+		PermanentDelete: "Cmd+Shift+Backspace", // Bypass trash
+		Rename:          "F2",
+		NewFile:         "Cmd+N",
+		NewFolder:       "Cmd+Shift+N",
+		SelectAll:       "Cmd+A",
 
 		// Navigation - uses Cmd on macOS
 		Back:    "Cmd+Left",

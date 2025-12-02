@@ -86,9 +86,22 @@ func (r *Renderer) processGlobalInput(gtx layout.Context, state *State, keyTag e
 			}
 			if r.hotkeys.Delete.Matches(k) {
 				if state.SelectedIndex >= 0 || (state.SelectedIndices != nil && len(state.SelectedIndices) > 0) {
+					// In trash view, Delete key permanently deletes (no confirmation needed)
+					if r.isTrashView {
+						paths := r.collectSelectedPaths(state)
+						return UIEvent{Action: ActionPermanentDelete, Paths: paths}
+					}
+					// Normal view: show confirmation dialog (moves to trash)
 					r.deleteConfirmOpen = true
 					state.DeleteTargets = r.collectSelectedPaths(state)
 					continue
+				}
+			}
+			if r.hotkeys.PermanentDelete.Matches(k) {
+				if state.SelectedIndex >= 0 || (state.SelectedIndices != nil && len(state.SelectedIndices) > 0) {
+					// Permanent delete bypasses trash - return action directly
+					paths := r.collectSelectedPaths(state)
+					return UIEvent{Action: ActionPermanentDelete, Paths: paths}
 				}
 			}
 			if r.hotkeys.Rename.Matches(k) && state.SelectedIndex >= 0 {
@@ -299,7 +312,7 @@ func (r *Renderer) buildHotkeyFilters(keyTag event.Tag) []event.Filter {
 
 	// Create a filter for each hotkey
 	hotkeys := []config.Hotkey{
-		r.hotkeys.Copy, r.hotkeys.Cut, r.hotkeys.Paste, r.hotkeys.Delete,
+		r.hotkeys.Copy, r.hotkeys.Cut, r.hotkeys.Paste, r.hotkeys.Delete, r.hotkeys.PermanentDelete,
 		r.hotkeys.Rename, r.hotkeys.NewFile, r.hotkeys.NewFolder, r.hotkeys.SelectAll,
 		r.hotkeys.Back, r.hotkeys.Forward, r.hotkeys.Up, r.hotkeys.Home, r.hotkeys.Refresh,
 		r.hotkeys.FocusSearch, r.hotkeys.TogglePreview, r.hotkeys.ToggleHidden, r.hotkeys.Escape,
