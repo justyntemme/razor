@@ -726,8 +726,9 @@ var (
 	colErrorBannerBg   = color.NRGBA{R: 220, G: 53, B: 69, A: 255}   // Red background
 	colErrorBannerText = color.NRGBA{R: 139, G: 69, B: 0, A: 255}    // Dark orange text (readable on red)
 	// UI Polish colors
-	colShadow          = color.NRGBA{R: 0, G: 0, B: 0, A: 40}        // Subtle shadow
-	colBackdrop        = color.NRGBA{R: 0, G: 0, B: 0, A: 150}       // Modal backdrop (consistent)
+	colShadow          = color.NRGBA{R: 0, G: 0, B: 0, A: 60}        // Modal shadow (deeper)
+	colShadowOuter     = color.NRGBA{R: 0, G: 0, B: 0, A: 25}        // Outer shadow layer
+	colBackdrop        = color.NRGBA{R: 0, G: 0, B: 0, A: 180}       // Modal backdrop (darker for contrast)
 	colCodeBlockBg     = color.NRGBA{R: 245, G: 245, B: 245, A: 255} // Code block background
 	colCodeBlockBorder = color.NRGBA{R: 220, G: 220, B: 220, A: 255} // Code block border
 	colBlockquoteBg    = color.NRGBA{R: 248, G: 248, B: 248, A: 255} // Blockquote background

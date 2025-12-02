@@ -1600,15 +1600,14 @@ func (r *Renderer) layoutConfigErrorBanner(gtx layout.Context) layout.Dimensions
 }
 
 func (r *Renderer) menuShell(gtx layout.Context, width unit.Dp, content layout.Widget) layout.Dimensions {
-	// Draw shadow layers for depth effect
-	shadowOffset := gtx.Dp(2)
-	cornerRadius := gtx.Dp(6)
+	// Draw shadow layers for depth effect - multi-layer for realistic shadow
+	cornerRadius := gtx.Dp(8)
 
 	// We need to measure content first to know the size for shadows
 	// Use a macro to record and replay
 	macro := op.Record(gtx.Ops)
 	gtx.Constraints.Min.X = gtx.Dp(width)
-	contentDims := widget.Border{Color: colLightGray, Width: unit.Dp(1), CornerRadius: unit.Dp(6)}.Layout(gtx,
+	contentDims := widget.Border{Color: colLightGray, Width: unit.Dp(1), CornerRadius: unit.Dp(8)}.Layout(gtx,
 		func(gtx layout.Context) layout.Dimensions {
 			return layout.Stack{}.Layout(gtx,
 				layout.Expanded(func(gtx layout.Context) layout.Dimensions {
@@ -1628,19 +1627,30 @@ func (r *Renderer) menuShell(gtx layout.Context, width unit.Dp, content layout.W
 		})
 	contentCall := macro.Stop()
 
-	// Draw shadow behind content
-	shadowRect := clip.RRect{
-		Rect: image.Rect(shadowOffset, shadowOffset, contentDims.Size.X+shadowOffset, contentDims.Size.Y+shadowOffset),
-		NE:   cornerRadius, NW: cornerRadius, SE: cornerRadius, SW: cornerRadius,
+	// Draw multiple shadow layers for depth (outer to inner for proper compositing)
+	// Outer shadow - large, soft
+	outerOffset := gtx.Dp(6)
+	shadowOuter := clip.RRect{
+		Rect: image.Rect(outerOffset, outerOffset, contentDims.Size.X+outerOffset, contentDims.Size.Y+outerOffset),
+		NE:   cornerRadius + 2, NW: cornerRadius + 2, SE: cornerRadius + 2, SW: cornerRadius + 2,
 	}
-	paint.FillShape(gtx.Ops, colShadow, shadowRect.Op(gtx.Ops))
+	paint.FillShape(gtx.Ops, colShadowOuter, shadowOuter.Op(gtx.Ops))
 
-	// Draw second shadow layer for more depth
-	shadowRect2 := clip.RRect{
-		Rect: image.Rect(shadowOffset/2, shadowOffset/2, contentDims.Size.X+shadowOffset/2, contentDims.Size.Y+shadowOffset/2),
+	// Middle shadow - medium spread
+	midOffset := gtx.Dp(4)
+	shadowMid := clip.RRect{
+		Rect: image.Rect(midOffset, midOffset, contentDims.Size.X+midOffset, contentDims.Size.Y+midOffset),
+		NE:   cornerRadius + 1, NW: cornerRadius + 1, SE: cornerRadius + 1, SW: cornerRadius + 1,
+	}
+	paint.FillShape(gtx.Ops, color.NRGBA{A: 35}, shadowMid.Op(gtx.Ops))
+
+	// Inner shadow - tight, darker
+	innerOffset := gtx.Dp(2)
+	shadowInner := clip.RRect{
+		Rect: image.Rect(innerOffset, innerOffset, contentDims.Size.X+innerOffset, contentDims.Size.Y+innerOffset),
 		NE:   cornerRadius, NW: cornerRadius, SE: cornerRadius, SW: cornerRadius,
 	}
-	paint.FillShape(gtx.Ops, color.NRGBA{A: 20}, shadowRect2.Op(gtx.Ops))
+	paint.FillShape(gtx.Ops, colShadow, shadowInner.Op(gtx.Ops))
 
 	// Replay content on top
 	contentCall.Add(gtx.Ops)
