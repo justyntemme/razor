@@ -4,6 +4,7 @@
 
 * Next
 review this library and compare how it does gio development and what lessons/refactors we could learn form it https://github.com/oligo/gioview/blob/main/example/basic/file-explorer.go
+review this PR to see how gio implemented external drag and drop so we can support it https://github.com/gioui/gio/pull/111
   icons for known filetypes (use whatever icon generation was used in recent files, assume we have a font that supports icons, except windows we may have an issue there)
 
 * Design Philosophies
