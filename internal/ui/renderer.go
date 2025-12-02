@@ -1316,7 +1316,8 @@ func (r *Renderer) dialogButtonRow(gtx layout.Context, cancelBtn, actionBtn *wid
 // modalBackdrop renders a modal dialog with backdrop, centered content using menuShell
 // The dismissBtn is optional - if provided, clicking the backdrop will trigger it
 func (r *Renderer) modalBackdrop(gtx layout.Context, width unit.Dp, dismissBtn *widget.Clickable, content layout.Widget) layout.Dimensions {
-	return layout.Stack{}.Layout(gtx,
+	return layout.Stack{Alignment: layout.Center}.Layout(gtx,
+		// Backdrop fills the entire screen
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 			paint.FillShape(gtx.Ops, colBackdrop, clip.Rect{Max: gtx.Constraints.Max}.Op())
 			if dismissBtn != nil {
@@ -1326,10 +1327,9 @@ func (r *Renderer) modalBackdrop(gtx layout.Context, width unit.Dp, dismissBtn *
 			}
 			return layout.Dimensions{Size: gtx.Constraints.Max}
 		}),
+		// Modal content centered on screen
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return r.menuShell(gtx, width, content)
-			})
+			return r.menuShell(gtx, width, content)
 		}),
 	)
 }
