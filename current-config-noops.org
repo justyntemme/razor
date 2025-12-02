@@ -1,0 +1,144 @@
+* Current Config No-ops
+
+This document tracks configuration options that are defined in config.json but not yet implemented.
+
+** Summary
+
+| Category    | Implemented | Not Implemented |
+|-------------+-------------+-----------------|
+| Sidebar     | 2           | 5               |
+| Toolbar     | 0           | 3               |
+| FileList    | 2           | 3               |
+| StatusBar   | 0           | 3               |
+| Search      | 2           | 1               |
+| Behavior    | 0           | 4               |
+| Tabs        | 0           | 5               |
+| Preview     | 5           | 1               |
+| Panels      | 0           | 1 (Terminal)    |
+
+** Implemented Options
+
+*** Sidebar
+- ~layout~ - "tabbed" | "stacked" | "favorites_only" | "drives_only"
+- ~tabStyle~ - "manila" | "underline" | "pill"
+
+*** FileList
+- ~showDotfiles~ - Show/hide dotfiles
+- ~sortAscending~ - Sort order
+
+*** Search
+- ~engine~ - "builtin" | "ripgrep" | "ugrep"
+- ~defaultDepth~ - Search depth limit
+
+*** Preview
+- ~enabled~ - Show preview pane
+- ~widthPercent~ - Preview pane width
+- ~textExtensions~ - File types for text preview
+- ~imageExtensions~ - File types for image preview
+- ~maxFileSize~ - Max file size to preview
+- ~markdownRendered~ - Render markdown or show raw
+
+** NO-OPS (Not Implemented)
+
+*** Sidebar Config
+#+begin_src json
+{
+  "width": 200,           // NOOP - Hardcoded sidebar width
+  "position": "left",     // NOOP - Always on left
+  "showFavorites": true,  // NOOP - Always shown when in relevant mode
+  "showDrives": true,     // NOOP - Always shown when in relevant mode
+  "collapsible": true     // NOOP - Not collapsible currently
+}
+#+end_src
+
+*** Toolbar Config
+#+begin_src json
+{
+  "visible": true,        // NOOP - Always visible
+  "position": "top",      // NOOP - Always on top
+  "showLabels": true      // NOOP - Not implemented
+}
+#+end_src
+
+*** FileList Config
+#+begin_src json
+{
+  "defaultSort": "name",      // NOOP - Sort not restored from config
+  "rowHeight": "normal",      // NOOP - Row height is fixed
+  "showIcons": true           // NOOP - Icons always shown
+}
+#+end_src
+
+*** StatusBar Config
+#+begin_src json
+{
+  "visible": true,            // NOOP - Always visible
+  "showFileCount": true,      // NOOP - Always shown
+  "showSelectionInfo": true   // NOOP - Always shown
+}
+#+end_src
+
+*** Search Config
+#+begin_src json
+{
+  "rememberLastQuery": false  // NOOP - Query not persisted between sessions
+}
+#+end_src
+
+*** Behavior Config
+#+begin_src json
+{
+  "confirmDelete": true,        // NOOP - No confirmation dialog implemented
+  "doubleClickToOpen": true,    // NOOP - Always double-click to open
+  "restoreLastPath": false,     // NOOP - Always starts at home/provided path
+  "singleClickToSelect": true   // NOOP - Always single-click to select
+}
+#+end_src
+
+*** Tabs Config
+#+begin_src json
+{
+  "enabled": true,              // NOOP - Tabs always available
+  "newTabLocation": "home",     // NOOP - Now controlled via hotkeys instead
+  "customTabPath": "",          // NOOP - Not implemented
+  "lastTabBehavior": "close_app", // NOOP - Cannot close last tab
+  "restoreTabsOnStart": false   // NOOP - Tabs not restored between sessions
+}
+#+end_src
+
+*** Preview Config
+#+begin_src json
+{
+  "position": "right"           // NOOP - Always on right side
+}
+#+end_src
+
+*** Panels Config
+#+begin_src json
+{
+  "terminal": {
+    "enabled": false,           // NOOP - Terminal panel not implemented
+    "position": "bottom",
+    "height": 200
+  }
+}
+#+end_src
+
+** Implementation Priority Suggestions
+
+*** High Priority (Commonly Expected Features)
+1. ~behavior.confirmDelete~ - Add confirmation dialog before delete
+2. ~behavior.restoreLastPath~ - Remember last directory on startup
+3. ~tabs.restoreTabsOnStart~ - Remember tabs between sessions
+
+*** Medium Priority (Nice to Have)
+1. ~sidebar.width~ - Configurable sidebar width
+2. ~preview.position~ - Preview on right/bottom
+3. ~fileList.rowHeight~ - Compact/normal/comfortable modes
+4. ~tabs.lastTabBehavior~ - What to do when closing last tab
+
+*** Low Priority (Power User Features)
+1. ~sidebar.collapsible~ - Collapsible sidebar
+2. ~toolbar.visible~ - Hide toolbar option
+3. ~search.rememberLastQuery~ - Persist search queries
+4. ~statusBar.visible~ - Hide status bar option

@@ -2,7 +2,7 @@
 
 A fast, lightweight file manager built with Go and [Gio UI](https://gioui.org/).
 
-![Razor Screenshot](docs/screenshot.png)
+![Razor Screenshot](https://raw.githubusercontent.com/justyntemme/razor/main/docs/screenshots/razor-screen-1.png)
 
 ## Features
 
@@ -51,7 +51,24 @@ razor --generate-config
 
 ## Search
 
-The search bar supports powerful directive-based filtering. By default, searches match filenames only.
+The search bar supports powerful directive-based filtering with support for multiple search engines. By default, searches match filenames only, but you can combine directives for advanced filtering.
+
+### Search Engines
+
+Razor supports three search backends:
+
+- **builtin** - Fast Go-based search using [fastwalk](https://github.com/charlievieth/fastwalk) (always available, default)
+- **ripgrep** - Use [ripgrep](https://github.com/BurntSushi/ripgrep) for blazing fast content search (must be installed)
+- **ugrep** - Use [ugrep](https://github.com/Genivia/ugrep) for content search with extended features (must be installed)
+
+Configure your preferred engine in `config.json`:
+```json
+{
+  "search": {
+    "engine": "ripgrep"
+  }
+}
+```
 
 ### Basic Search
 
@@ -101,14 +118,19 @@ modified:year           # Modified in the last year
 
 ### Combining Directives
 
-Multiple directives are combined with AND logic:
+Multiple directives are combined with AND logic. You can combine `contents:`, `ext:`, `size:`, and `modified:` directives to create powerful filters:
 
 ```
 ext:go contents:func        # Go files containing "func"
 ext:md modified:>week       # Markdown files modified in the last week
 size:>1MB ext:log           # Log files larger than 1MB
 *.go size:<100KB            # Small Go files
+contents:password ext:txt   # Text files containing "password"
 ```
+
+![Search Directives with Preview](https://raw.githubusercontent.com/justyntemme/razor/main/docs/screenshots/razor-screen-2-directives.png)
+
+*The screenshot above shows combining `contents:password` and `ext:txt` directives, with the text preview pane displaying the file contents.*
 
 ### Examples
 
@@ -239,7 +261,8 @@ All keyboard shortcuts are configurable via the `hotkeys` section in config.json
 | Toggle Hidden | Cmd+Shift+> | Alt+Shift+> |
 | Escape | Escape | Escape |
 | **Tabs (Vim-style)** | | |
-| New Tab | Ctrl+T | Ctrl+T |
+| New Tab (Current Dir) | Ctrl+T | Ctrl+T |
+| New Tab (Home Dir) | Ctrl+Shift+T | Ctrl+Shift+T |
 | Close Tab | Ctrl+W | Ctrl+W |
 | Next Tab | Ctrl+L | Ctrl+L |
 | Previous Tab | Ctrl+H | Ctrl+H |
@@ -270,6 +293,7 @@ Override any shortcut in your config.json:
     "toggleHidden": "Alt+Shift+>",
     "escape": "Escape",
     "newTab": "Ctrl+T",
+    "newTabHome": "Ctrl+Shift+T",
     "closeTab": "Ctrl+W",
     "nextTab": "Ctrl+L",
     "prevTab": "Ctrl+H",
@@ -286,13 +310,6 @@ Override any shortcut in your config.json:
 Supported modifiers: `Ctrl`, `Shift`, `Alt`, `Cmd` (or `Super`, `Meta`, `Command`)
 
 Supported keys: `A-Z`, `0-9`, `F1-F12`, `Delete`, `Backspace`, `Escape`, `Enter`, `Tab`, `Space`, `Up`, `Down`, `Left`, `Right`, `Home`, `End`, `PageUp`, `PageDown`
-
-### Search Engines
-
-**Engine** (`search.engine`):
-- `"builtin"` - Built-in Go-based search (always available)
-- `"ripgrep"` - Use ripgrep for content search (must be installed)
-- `"ugrep"` - Use ugrep for content search (must be installed)
 
 ### Data Storage
 
@@ -328,6 +345,8 @@ razor/
 
 - [Gio](https://gioui.org/) - Immediate mode GUI
 - [go-sqlite3](https://github.com/mattn/go-sqlite3) - SQLite driver
+- [fastwalk](https://github.com/charlievieth/fastwalk) - Fast parallel directory traversal
+- [goldmark](https://github.com/yuin/goldmark) - Markdown parser for preview rendering
 
 ## License
 
