@@ -30,6 +30,7 @@ type Config struct {
 
 // HotkeysConfig holds all configurable keyboard shortcuts
 // Keys are action names, values are key combinations like "Ctrl+C", "Ctrl+Shift+N", "F2"
+// Values can be a single string or an array of strings for multiple bindings
 // Supported modifiers: Ctrl, Shift, Alt, Cmd (or Super)
 // Supported keys: A-Z, 0-9, F1-F12, Delete, Backspace, Escape, Enter, Tab, Space
 //                 Up, Down, Left, Right, Home, End, PageUp, PageDown
@@ -62,6 +63,14 @@ type HotkeysConfig struct {
 	CloseTab      string `json:"closeTab"`
 	NextTab       string `json:"nextTab"`
 	PrevTab       string `json:"prevTab"`
+
+	// Tab switching (1-6, user can add more)
+	Tab1          string `json:"tab1"`
+	Tab2          string `json:"tab2"`
+	Tab3          string `json:"tab3"`
+	Tab4          string `json:"tab4"`
+	Tab5          string `json:"tab5"`
+	Tab6          string `json:"tab6"`
 }
 
 // UIConfig holds UI-related settings

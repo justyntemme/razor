@@ -149,6 +149,9 @@ func (o *Orchestrator) closeTab(index int) {
 
 	debug.Log(debug.APP, "Closing tab %d", index)
 
+	// Get the path of the closing tab for watcher cleanup
+	closingPath := o.tabs[index].CurrentPath
+
 	// Remove from our state
 	o.tabs = append(o.tabs[:index], o.tabs[index+1:]...)
 
@@ -164,6 +167,21 @@ func (o *Orchestrator) closeTab(index int) {
 	if newActiveIdx >= 0 && newActiveIdx < len(o.tabs) {
 		o.activeTabIndex = newActiveIdx
 		o.loadTabState(newActiveIdx)
+	}
+
+	// Unwatch the closed tab's directory if no other tab is viewing it
+	if o.watcher != nil && closingPath != "" {
+		stillWatching := false
+		for _, tab := range o.tabs {
+			if tab.CurrentPath == closingPath {
+				stillWatching = true
+				break
+			}
+		}
+		if !stillWatching {
+			o.watcher.Unwatch(closingPath)
+			debug.Log(debug.APP, "Unwatched directory (tab closed): %s", closingPath)
+		}
 	}
 
 	o.window.Invalidate()

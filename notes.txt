@@ -1,4 +1,5 @@
-
+add org support
+maybe increase limit for double click 
 ⏺ Gio Workarounds Applied
 
   1. key.NameInsert not defined - Gio doesn't export this constant. Workaround: use key.Name("Insert") as a string-based key name

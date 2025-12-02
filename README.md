@@ -222,7 +222,7 @@ All keyboard shortcuts are configurable via the `hotkeys` section in config.json
 | Copy | Ctrl+C | Ctrl+C |
 | Cut | Ctrl+X | Ctrl+X |
 | Paste | Ctrl+V | Ctrl+V |
-| Delete | Delete | Delete |
+| Delete | Backspace | Delete |
 | Rename | F2 | F2 |
 | New File | Ctrl+N | Ctrl+N |
 | New Folder | Ctrl+Shift+N | Ctrl+Shift+N |
@@ -236,13 +236,14 @@ All keyboard shortcuts are configurable via the `hotkeys` section in config.json
 | **UI** | | |
 | Focus Search | Ctrl+F | Ctrl+F |
 | Toggle Preview | Ctrl+P | Ctrl+P |
-| Toggle Hidden | Ctrl+H | Ctrl+H |
+| Toggle Hidden | Cmd+Shift+> | Alt+Shift+> |
 | Escape | Escape | Escape |
-| **Tabs** | | |
+| **Tabs (Vim-style)** | | |
 | New Tab | Ctrl+T | Ctrl+T |
 | Close Tab | Ctrl+W | Ctrl+W |
-| Next Tab | Ctrl+Tab | Ctrl+Tab |
-| Previous Tab | Ctrl+Shift+Tab | Ctrl+Shift+Tab |
+| Next Tab | Ctrl+L | Ctrl+L |
+| Previous Tab | Ctrl+H | Ctrl+H |
+| Switch to Tab 1-6 | Ctrl+Shift+1-6 | Ctrl+Shift+1-6 |
 
 #### Custom Hotkeys
 
@@ -266,12 +267,18 @@ Override any shortcut in your config.json:
     "refresh": "F5",
     "focusSearch": "Ctrl+F",
     "togglePreview": "Ctrl+P",
-    "toggleHidden": "Ctrl+H",
+    "toggleHidden": "Alt+Shift+>",
     "escape": "Escape",
     "newTab": "Ctrl+T",
     "closeTab": "Ctrl+W",
-    "nextTab": "Ctrl+Tab",
-    "prevTab": "Ctrl+Shift+Tab"
+    "nextTab": "Ctrl+L",
+    "prevTab": "Ctrl+H",
+    "tab1": "Ctrl+Shift+1",
+    "tab2": "Ctrl+Shift+2",
+    "tab3": "Ctrl+Shift+3",
+    "tab4": "Ctrl+Shift+4",
+    "tab5": "Ctrl+Shift+5",
+    "tab6": "Ctrl+Shift+6"
   }
 }
 ```

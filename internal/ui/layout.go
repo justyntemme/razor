@@ -246,6 +246,7 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutContextMenu(gtx, state, &eventOut) }),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutSearchHistoryOverlay(gtx) }),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutSettingsModal(gtx, &eventOut) }),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutHotkeysModal(gtx) }),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutDeleteConfirm(gtx, state, &eventOut) }),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutCreateDialog(gtx, state, &eventOut) }),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutConflictDialog(gtx, state, &eventOut) }),
@@ -354,8 +355,11 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 				r.lastParsedSearchText = currentText
 			}
 
-			// Note: We can't easily detect focus state in Gio, so we'll show history
-			// whenever the search box has content or user is typing
+			// Focus the search editor if requested (via Cmd+F or Ctrl+F)
+			if r.searchFocusRequested {
+				gtx.Execute(key.FocusCmd{Tag: &r.searchEditor})
+				r.searchFocusRequested = false // One-shot, clear after use
+			}
 
 			// Handle search editor events
 			submitPressed := false
@@ -1835,6 +1839,13 @@ func (r *Renderer) layoutFileMenu(gtx layout.Context, eventOut *UIEvent) layout.
 				})
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				if r.hotkeysBtn.Clicked(gtx) {
+					r.onLeftClick()
+					r.hotkeysOpen = true
+				}
+				return r.menuItem(gtx, &r.hotkeysBtn, "Keyboard Shortcuts")
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				if r.settingsBtn.Clicked(gtx) {
 					r.onLeftClick()
 					r.settingsOpen = true
@@ -2718,6 +2729,143 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) la
 				// Render each search engine as a radio button
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return r.layoutSearchEngineOptions(gtx)
+				}),
+			)
+		})
+	})
+}
+
+func (r *Renderer) layoutHotkeysModal(gtx layout.Context) layout.Dimensions {
+	if !r.hotkeysOpen {
+		return layout.Dimensions{}
+	}
+	if r.hotkeysCloseBtn.Clicked(gtx) {
+		r.onLeftClick()
+		r.hotkeysOpen = false
+	}
+
+	// Define hotkey categories and their shortcuts
+	type hotkeyEntry struct {
+		action  string
+		binding string
+	}
+
+	fileOps := []hotkeyEntry{
+		{"Copy", r.hotkeys.Copy.String()},
+		{"Cut", r.hotkeys.Cut.String()},
+		{"Paste", r.hotkeys.Paste.String()},
+		{"Delete", r.hotkeys.Delete.String()},
+		{"Rename", r.hotkeys.Rename.String()},
+		{"New File", r.hotkeys.NewFile.String()},
+		{"New Folder", r.hotkeys.NewFolder.String()},
+		{"Select All", r.hotkeys.SelectAll.String()},
+	}
+
+	navigation := []hotkeyEntry{
+		{"Back", r.hotkeys.Back.String()},
+		{"Forward", r.hotkeys.Forward.String()},
+		{"Go Up", r.hotkeys.Up.String()},
+		{"Go Home", r.hotkeys.Home.String()},
+		{"Refresh", r.hotkeys.Refresh.String()},
+	}
+
+	uiShortcuts := []hotkeyEntry{
+		{"Search", r.hotkeys.FocusSearch.String()},
+		{"Toggle Preview", r.hotkeys.TogglePreview.String()},
+		{"Toggle Hidden Files", r.hotkeys.ToggleHidden.String()},
+		{"Cancel/Close", r.hotkeys.Escape.String()},
+	}
+
+	tabs := []hotkeyEntry{
+		{"New Tab", r.hotkeys.NewTab.String()},
+		{"Close Tab", r.hotkeys.CloseTab.String()},
+		{"Next Tab", r.hotkeys.NextTab.String()},
+		{"Previous Tab", r.hotkeys.PrevTab.String()},
+		{"Tab 1", r.hotkeys.Tab1.String()},
+		{"Tab 2", r.hotkeys.Tab2.String()},
+		{"Tab 3", r.hotkeys.Tab3.String()},
+		{"Tab 4", r.hotkeys.Tab4.String()},
+		{"Tab 5", r.hotkeys.Tab5.String()},
+		{"Tab 6", r.hotkeys.Tab6.String()},
+	}
+
+	// Helper to render a hotkey row
+	renderRow := func(gtx layout.Context, entry hotkeyEntry) layout.Dimensions {
+		return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body2(r.Theme, entry.action)
+				lbl.Color = colBlack
+				return lbl.Layout(gtx)
+			}),
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				return layout.E.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(r.Theme, entry.binding)
+					lbl.Color = colGray
+					return lbl.Layout(gtx)
+				})
+			}),
+		)
+	}
+
+	// Helper to render a section
+	renderSection := func(gtx layout.Context, title string, entries []hotkeyEntry) layout.Dimensions {
+		var children []layout.FlexChild
+		children = append(children,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Caption(r.Theme, title)
+				lbl.Color = colGray
+				lbl.Font.Weight = font.Bold
+				return lbl.Layout(gtx)
+			}),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		)
+		for _, entry := range entries {
+			entry := entry
+			if entry.binding != "" {
+				children = append(children,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return renderRow(gtx, entry)
+					}),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+				)
+			}
+		}
+		children = append(children, layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout))
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+	}
+
+	return r.modalBackdrop(gtx, 400, &r.hotkeysCloseBtn, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min.Y = gtx.Dp(500)
+		return layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					h6 := material.H6(r.Theme, "Keyboard Shortcuts")
+					h6.Color = colBlack
+					return h6.Layout(gtx)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return renderSection(gtx, "FILE OPERATIONS", fileOps)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return renderSection(gtx, "NAVIGATION", navigation)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return renderSection(gtx, "USER INTERFACE", uiShortcuts)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return renderSection(gtx, "TABS", tabs)
+				}),
+				// Divider
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, gtx.Dp(1))}.Op())
+					return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(1))}
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Caption(r.Theme, "Edit shortcuts in ~/.config/razor/config.json")
+					lbl.Color = colGray
+					return lbl.Layout(gtx)
 				}),
 			)
 		})

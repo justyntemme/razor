@@ -31,11 +31,12 @@ const (
 // It owns shared state and dependencies, delegating domain-specific logic to controllers.
 type Orchestrator struct {
 	// Core dependencies
-	window *app.Window
-	fs     *fs.System
-	store  *store.DB
-	config *config.Manager
-	ui     *ui.Renderer
+	window  *app.Window
+	fs      *fs.System
+	store   *store.DB
+	config  *config.Manager
+	ui      *ui.Renderer
+	watcher *DirectoryWatcher // Directory change watcher
 
 	// Shared state (protected by stateMu)
 	stateMu    sync.RWMutex
@@ -202,6 +203,15 @@ func (o *Orchestrator) Run(startPath string) error {
 		log.Printf("Failed to open DB: %v", err)
 	}
 	defer o.store.Close()
+
+	// Initialize directory watcher for live updates
+	watcher, err := NewDirectoryWatcher(200) // 200ms debounce
+	if err != nil {
+		log.Printf("Warning: Failed to create directory watcher: %v", err)
+	} else {
+		o.watcher = watcher
+		defer o.watcher.Close()
+	}
 
 	go o.fs.Start()
 	go o.store.Start()
@@ -519,12 +529,21 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		o.nextTab()
 	case ui.ActionPrevTab:
 		o.prevTab()
+	case ui.ActionSwitchToTab:
+		o.switchToTab(evt.TabIndex)
 	case ui.ActionSelectAll:
 		o.selectAll()
 	case ui.ActionRefresh:
 		o.refreshCurrentDir()
 	case ui.ActionFocusSearch:
 		o.ui.FocusSearch()
+	case ui.ActionJumpToLetter:
+		// Jump navigation handled in renderer, just update selection state
+		if evt.NewIndex >= 0 && evt.NewIndex < len(o.dirEntries) {
+			o.stateMu.Lock()
+			o.state.SelectedIndex = evt.NewIndex
+			o.stateMu.Unlock()
+		}
 	}
 }
 
@@ -539,14 +558,68 @@ func (o *Orchestrator) openNewWindow() {
 }
 
 func (o *Orchestrator) processEvents() {
+	// Get watcher notification channel (may be nil if watcher failed to init)
+	var watcherChan <-chan string
+	if o.watcher != nil {
+		watcherChan = o.watcher.Notify()
+		debug.Log(debug.APP, "Directory watcher initialized, channel ready")
+	} else {
+		debug.Log(debug.APP, "Directory watcher not available")
+	}
+
 	for {
-		select {
-		case resp := <-o.fs.ResponseChan:
-			o.handleFSResponse(resp)
-		case progress := <-o.fs.ProgressChan:
-			o.handleProgress(progress)
-		case resp := <-o.store.ResponseChan:
-			o.handleStoreResponse(resp)
+		// Use separate select to handle nil watcherChan gracefully
+		if watcherChan != nil {
+			select {
+			case resp := <-o.fs.ResponseChan:
+				o.handleFSResponse(resp)
+			case progress := <-o.fs.ProgressChan:
+				o.handleProgress(progress)
+			case resp := <-o.store.ResponseChan:
+				o.handleStoreResponse(resp)
+			case changedDir := <-watcherChan:
+				o.handleDirectoryChange(changedDir)
+			}
+		} else {
+			select {
+			case resp := <-o.fs.ResponseChan:
+				o.handleFSResponse(resp)
+			case progress := <-o.fs.ProgressChan:
+				o.handleProgress(progress)
+			case resp := <-o.store.ResponseChan:
+				o.handleStoreResponse(resp)
+			}
+		}
+	}
+}
+
+// handleDirectoryChange refreshes the display if the changed directory is currently visible
+func (o *Orchestrator) handleDirectoryChange(changedDir string) {
+	o.stateMu.RLock()
+	currentPath := o.state.CurrentPath
+	isSearchResult := o.state.IsSearchResult
+	o.stateMu.RUnlock()
+
+	// Don't auto-refresh during search results
+	if isSearchResult {
+		return
+	}
+
+	// Check if the changed directory is the one we're viewing
+	if changedDir == currentPath {
+		debug.Log(debug.APP, "Directory changed, refreshing: %s", changedDir)
+		o.refreshCurrentDir()
+		return
+	}
+
+	// Also check if it's any of our other tabs' directories
+	// (they'll refresh when switched to, but we update their cached state)
+	for i, tab := range o.tabs {
+		if tab.CurrentPath == changedDir && i != o.activeTabIndex {
+			debug.Log(debug.APP, "Tab %d directory changed: %s (will refresh on switch)", i, changedDir)
+			// Mark tab as needing refresh (clear cached entries)
+			o.tabs[i].DirEntries = nil
+			o.tabs[i].RawEntries = nil
 		}
 	}
 }
@@ -630,6 +703,17 @@ func (o *Orchestrator) handleFSResponse(resp fs.Response) {
 			}
 			o.ui.UpdateTabTitle(o.activeTabIndex, title)
 			o.ui.UpdateTabPath(o.activeTabIndex, resp.Path)
+		}
+
+		// Update directory watcher - watch the new directory
+		// We don't unwatch old directories since other tabs might still be viewing them
+		// Cleanup happens when tabs are closed
+		if o.watcher != nil {
+			if err := o.watcher.Watch(resp.Path); err != nil {
+				debug.Log(debug.APP, "Failed to watch directory %s: %v", resp.Path, err)
+			} else {
+				debug.Log(debug.APP, "Successfully watching directory: %s", resp.Path)
+			}
 		}
 	} else {
 		// Search result: only update rawEntries, keep dirEntries intact

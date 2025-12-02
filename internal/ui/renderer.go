@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"gioui.org/font"
 	"gioui.org/io/event"
@@ -89,10 +90,12 @@ const (
 	ActionOpenInNewTab
 	ActionNextTab
 	ActionPrevTab
+	ActionSwitchToTab // Switch to specific tab by index (uses TabIndex)
 	// Additional actions
 	ActionSelectAll
 	ActionRefresh
 	ActionFocusSearch
+	ActionJumpToLetter // Jump to file starting with letter (uses NewIndex for target)
 )
 
 type ClipOp int
@@ -562,6 +565,9 @@ type Renderer struct {
 	settingsBtn         widget.Clickable
 	settingsOpen        bool
 	settingsCloseBtn    widget.Clickable
+	hotkeysBtn          widget.Clickable
+	hotkeysOpen         bool
+	hotkeysCloseBtn     widget.Clickable
 	searchEngine        widget.Enum
 	mousePos            image.Point
 	mouseTag            struct{}
@@ -576,6 +582,11 @@ type Renderer struct {
 	// Double-click detection (no delay - selection happens immediately)
 	lastClickIndex int       // Index of last clicked item (-1 if none)
 	lastClickTime  time.Time // Time of the last click
+
+	// Quick-jump letter navigation (press a-z to jump to files starting with that letter)
+	lastJumpKey   rune      // Last letter pressed for quick-jump
+	lastJumpTime  time.Time // Time of last jump key press
+	lastJumpIndex int       // Index we jumped to (for cycling)
 
 	// Background click pending (to detect if click was on row or empty space)
 	bgRightClickPending bool
@@ -642,6 +653,7 @@ type Renderer struct {
 	lastHistoryQuery      string              // Track last query we fetched history for
 	searchBoxPos          image.Point         // Position of search box for overlay dropdown
 	searchEditorFocused   bool                // Track if search editor has focus
+	searchFocusRequested  bool                // One-shot flag to request focus on search editor
 
 	// Preview pane state
 	previewVisible    bool           // Whether preview pane is shown
@@ -1172,7 +1184,7 @@ func (r *Renderer) SetMultiSelectMode(enabled bool) {
 
 // FocusSearch sets a flag to focus the search editor on next layout
 func (r *Renderer) FocusSearch() {
-	r.searchEditorFocused = true
+	r.searchFocusRequested = true
 }
 
 // collectSelectedPaths returns all selected file paths.
@@ -1343,8 +1355,9 @@ func (r *Renderer) processGlobalInput(gtx layout.Context, state *State, keyTag e
 			continue
 		}
 
-		// Debug log the key press
-		debug.Log(debug.HOTKEY, "Key pressed: name=%s mods=%v", k.Name, k.Modifiers)
+		// Debug log the key press with detailed modifier info
+		debug.Log(debug.HOTKEY, "Key pressed: name=%q mods=0x%x (Copy: key=%q mods=0x%x)",
+			k.Name, k.Modifiers, r.hotkeys.Copy.Key, r.hotkeys.Copy.Modifiers)
 
 		// Check configurable hotkeys
 		if r.hotkeys != nil {
@@ -1428,16 +1441,40 @@ func (r *Renderer) processGlobalInput(gtx layout.Context, state *State, keyTag e
 
 			// Tabs
 			if r.hotkeys.NewTab.Matches(k) {
+				debug.Log(debug.HOTKEY, "NewTab hotkey matched")
 				return UIEvent{Action: ActionNewTab}
 			}
 			if r.hotkeys.CloseTab.Matches(k) {
+				debug.Log(debug.HOTKEY, "CloseTab hotkey matched")
 				return UIEvent{Action: ActionCloseTab}
 			}
 			if r.hotkeys.NextTab.Matches(k) {
+				debug.Log(debug.HOTKEY, "NextTab hotkey matched: %s", r.hotkeys.NextTab.String())
 				return UIEvent{Action: ActionNextTab}
 			}
 			if r.hotkeys.PrevTab.Matches(k) {
+				debug.Log(debug.HOTKEY, "PrevTab hotkey matched: %s", r.hotkeys.PrevTab.String())
 				return UIEvent{Action: ActionPrevTab}
+			}
+
+			// Direct tab switching (Ctrl+Shift+1-6)
+			if r.hotkeys.Tab1.Matches(k) {
+				return UIEvent{Action: ActionSwitchToTab, TabIndex: 0}
+			}
+			if r.hotkeys.Tab2.Matches(k) {
+				return UIEvent{Action: ActionSwitchToTab, TabIndex: 1}
+			}
+			if r.hotkeys.Tab3.Matches(k) {
+				return UIEvent{Action: ActionSwitchToTab, TabIndex: 2}
+			}
+			if r.hotkeys.Tab4.Matches(k) {
+				return UIEvent{Action: ActionSwitchToTab, TabIndex: 3}
+			}
+			if r.hotkeys.Tab5.Matches(k) {
+				return UIEvent{Action: ActionSwitchToTab, TabIndex: 4}
+			}
+			if r.hotkeys.Tab6.Matches(k) {
+				return UIEvent{Action: ActionSwitchToTab, TabIndex: 5}
 			}
 		}
 
@@ -1481,9 +1518,62 @@ func (r *Renderer) processGlobalInput(gtx layout.Context, state *State, keyTag e
 				}
 				return UIEvent{Action: ActionOpen, Path: item.Path}
 			}
+		default:
+			// Quick-jump: single letter A-Z with no modifiers
+			if k.Modifiers == 0 && len(k.Name) == 1 {
+				letter := rune(k.Name[0])
+				if letter >= 'A' && letter <= 'Z' {
+					if jumpIdx := r.findNextMatchingEntry(state, letter); jumpIdx >= 0 {
+						r.listState.ScrollTo(jumpIdx)
+						return UIEvent{Action: ActionJumpToLetter, NewIndex: jumpIdx}
+					}
+				}
+			}
 		}
 	}
 	return UIEvent{}
+}
+
+// findNextMatchingEntry finds the next entry starting with the given letter
+// If the same letter was pressed recently, it cycles to the next match
+func (r *Renderer) findNextMatchingEntry(state *State, letter rune) int {
+	if len(state.Entries) == 0 {
+		return -1
+	}
+
+	letterLower := unicode.ToLower(letter)
+	now := time.Now()
+
+	// Determine starting position for search
+	startIdx := 0
+	if r.lastJumpKey == letter && now.Sub(r.lastJumpTime) < 1*time.Second {
+		// Same letter pressed recently - cycle to next match
+		startIdx = r.lastJumpIndex + 1
+		if startIdx >= len(state.Entries) {
+			startIdx = 0 // Wrap around
+		}
+	} else if state.SelectedIndex >= 0 {
+		// Different letter or timeout - start from after current selection
+		startIdx = state.SelectedIndex
+	}
+
+	// Search from startIdx to end, then wrap around
+	for i := 0; i < len(state.Entries); i++ {
+		idx := (startIdx + i) % len(state.Entries)
+		entry := state.Entries[idx]
+		if len(entry.Name) > 0 {
+			firstChar := unicode.ToLower(rune(entry.Name[0]))
+			if firstChar == letterLower {
+				// Found a match
+				r.lastJumpKey = letter
+				r.lastJumpTime = now
+				r.lastJumpIndex = idx
+				return idx
+			}
+		}
+	}
+
+	return -1 // No match found
 }
 
 // buildHotkeyFilters creates key.Filter slice for all configured hotkeys
@@ -1492,35 +1582,62 @@ func (r *Renderer) buildHotkeyFilters(keyTag event.Tag) []event.Filter {
 		return nil
 	}
 
-	// Collect all non-empty hotkey filters
+	// Create a filter for each hotkey
 	hotkeys := []config.Hotkey{
 		r.hotkeys.Copy, r.hotkeys.Cut, r.hotkeys.Paste, r.hotkeys.Delete,
 		r.hotkeys.Rename, r.hotkeys.NewFile, r.hotkeys.NewFolder, r.hotkeys.SelectAll,
 		r.hotkeys.Back, r.hotkeys.Forward, r.hotkeys.Up, r.hotkeys.Home, r.hotkeys.Refresh,
 		r.hotkeys.FocusSearch, r.hotkeys.TogglePreview, r.hotkeys.ToggleHidden, r.hotkeys.Escape,
 		r.hotkeys.NewTab, r.hotkeys.CloseTab, r.hotkeys.NextTab, r.hotkeys.PrevTab,
+		r.hotkeys.Tab1, r.hotkeys.Tab2, r.hotkeys.Tab3, r.hotkeys.Tab4, r.hotkeys.Tab5, r.hotkeys.Tab6,
 	}
 
-	// Also include arrow keys and Enter for navigation
-	arrowFilters := []key.Filter{
-		{Focus: keyTag, Name: key.NameUpArrow},
-		{Focus: keyTag, Name: key.NameDownArrow},
-		{Focus: keyTag, Name: key.NameLeftArrow},
-		{Focus: keyTag, Name: key.NameRightArrow},
-		{Focus: keyTag, Name: key.NameReturn},
-		{Focus: keyTag, Name: key.NameEnter},
+	// Use a map to deduplicate filters with same key+modifiers
+	type filterKey struct {
+		name key.Name
+		mods key.Modifiers
 	}
+	seen := make(map[filterKey]bool)
 
-	filters := make([]event.Filter, 0, len(hotkeys)+len(arrowFilters))
+	filters := make([]event.Filter, 0, len(hotkeys)+6)
 
 	for _, hk := range hotkeys {
 		if !hk.IsEmpty() {
-			filters = append(filters, hk.Filter(keyTag))
+			fk := filterKey{hk.Key, hk.Modifiers}
+			if !seen[fk] {
+				seen[fk] = true
+				filters = append(filters, hk.Filter(keyTag))
+			}
 		}
 	}
 
-	for _, f := range arrowFilters {
-		filters = append(filters, f)
+	// Add arrow keys and Enter for navigation (no modifiers required)
+	arrowKeys := []key.Name{
+		key.NameUpArrow, key.NameDownArrow, key.NameLeftArrow, key.NameRightArrow,
+		key.NameReturn, key.NameEnter,
+	}
+	for _, k := range arrowKeys {
+		fk := filterKey{k, 0}
+		if !seen[fk] {
+			seen[fk] = true
+			filters = append(filters, key.Filter{
+				Focus: keyTag,
+				Name:  k,
+			})
+		}
+	}
+
+	// Add letter keys A-Z for quick-jump navigation (no modifiers)
+	for c := 'A'; c <= 'Z'; c++ {
+		letterKey := key.Name(string(c))
+		fk := filterKey{letterKey, 0}
+		if !seen[fk] {
+			seen[fk] = true
+			filters = append(filters, key.Filter{
+				Focus: keyTag,
+				Name:  letterKey,
+			})
+		}
 	}
 
 	return filters

@@ -12,6 +12,7 @@ require (
 require (
 	gioui.org/shader v1.0.8 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-text/typesetting v0.3.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/jdeng/goheif v0.0.0-20251001174315-babb64285736 // indirect

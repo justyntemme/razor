@@ -142,6 +142,13 @@ func (o *Orchestrator) doDelete(path string) {
 		log.Printf("Delete error: %v", err)
 	}
 
+	// Clear selection after delete
+	o.stateMu.Lock()
+	o.state.SelectedIndex = -1
+	o.state.SelectedIndices = nil
+	o.stateMu.Unlock()
+	o.ui.ResetMultiSelect()
+
 	o.refreshCurrentDir()
 }
 
@@ -163,6 +170,14 @@ func (o *Orchestrator) doDeleteMultiple(paths []string) {
 		}
 	}
 	o.setProgress(false, "", 0, 0)
+
+	// Clear selection after delete
+	o.stateMu.Lock()
+	o.state.SelectedIndex = -1
+	o.state.SelectedIndices = nil
+	o.stateMu.Unlock()
+	o.ui.ResetMultiSelect()
+
 	o.refreshCurrentDir()
 }
 

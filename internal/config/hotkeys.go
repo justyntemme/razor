@@ -20,7 +20,7 @@ func ParseHotkey(s string) Hotkey {
 	}
 
 	var mods key.Modifiers
-	var keyName key.Name
+	var rawKeyPart string
 
 	parts := strings.Split(s, "+")
 	for _, part := range parts {
@@ -32,15 +32,43 @@ func ParseHotkey(s string) Hotkey {
 			mods |= key.ModShift
 		case "alt", "option":
 			mods |= key.ModAlt
-		case "cmd", "command", "super", "meta":
-			mods |= key.ModSuper
+		case "cmd", "command":
+			mods |= key.ModCommand // Use ModCommand for macOS Cmd key
+		case "super", "meta", "win", "windows":
+			mods |= key.ModSuper // Use ModSuper for Windows logo key
 		default:
 			// This is the key name
-			keyName = parseKeyName(part)
+			rawKeyPart = part
+		}
+	}
+
+	// Convert the key part to key.Name
+	keyName := parseKeyName(rawKeyPart)
+
+	// If Shift is held and this is a number key, convert to the shifted character
+	// because Gio reports the shifted character (e.g., Shift+1 = "!")
+	// Note: Punctuation should be specified directly (e.g., "Cmd+Shift+>" not "Cmd+Shift+.")
+	if mods.Contain(key.ModShift) {
+		if shifted, ok := shiftedNumbers[string(keyName)]; ok {
+			keyName = key.Name(shifted)
 		}
 	}
 
 	return Hotkey{Key: keyName, Modifiers: mods}
+}
+
+// shiftedNumbers maps number keys to their shifted equivalents (US keyboard layout)
+// This is needed because Gio reports the shifted character, not the physical key
+// Note: Punctuation should be specified directly as the shifted character (e.g., ">" not ".")
+var shiftedNumbers = map[string]string{
+	"1": "!", "2": "@", "3": "#", "4": "$", "5": "%",
+	"6": "^", "7": "&", "8": "*", "9": "(", "0": ")",
+}
+
+// unshiftedNumbers is the reverse mapping for display purposes
+var unshiftedNumbers = map[string]string{
+	"!": "1", "@": "2", "#": "3", "$": "4", "%": "5",
+	"^": "6", "&": "7", "*": "8", "(": "9", ")": "0",
 }
 
 // parseKeyName converts a key string to Gio's key.Name
@@ -119,6 +147,8 @@ func parseKeyName(s string) key.Name {
 }
 
 // Matches checks if a key event matches this hotkey
+// Uses exact matching for modifiers to distinguish between similar hotkeys
+// (e.g., Ctrl+H vs Ctrl+Shift+H)
 func (h Hotkey) Matches(k key.Event) bool {
 	if h.Key == "" {
 		return false
@@ -151,6 +181,9 @@ func (h Hotkey) String() string {
 	if h.Modifiers.Contain(key.ModCtrl) {
 		parts = append(parts, "Ctrl")
 	}
+	if h.Modifiers.Contain(key.ModCommand) {
+		parts = append(parts, "Cmd")
+	}
 	if h.Modifiers.Contain(key.ModShift) {
 		parts = append(parts, "Shift")
 	}
@@ -158,9 +191,17 @@ func (h Hotkey) String() string {
 		parts = append(parts, "Alt")
 	}
 	if h.Modifiers.Contain(key.ModSuper) {
-		parts = append(parts, "Cmd")
+		parts = append(parts, "Super")
 	}
-	parts = append(parts, string(h.Key))
+
+	// For display, convert shifted number symbols back to their original keys
+	keyStr := string(h.Key)
+	if h.Modifiers.Contain(key.ModShift) {
+		if original, ok := unshiftedNumbers[keyStr]; ok {
+			keyStr = original
+		}
+	}
+	parts = append(parts, keyStr)
 	return strings.Join(parts, "+")
 }
 
@@ -203,6 +244,14 @@ type HotkeyMatcher struct {
 	CloseTab Hotkey
 	NextTab  Hotkey
 	PrevTab  Hotkey
+
+	// Tab switching (direct)
+	Tab1 Hotkey
+	Tab2 Hotkey
+	Tab3 Hotkey
+	Tab4 Hotkey
+	Tab5 Hotkey
+	Tab6 Hotkey
 }
 
 // NewHotkeyMatcher creates a matcher from config
@@ -236,5 +285,13 @@ func NewHotkeyMatcher(cfg HotkeysConfig) *HotkeyMatcher {
 		CloseTab: ParseHotkey(cfg.CloseTab),
 		NextTab:  ParseHotkey(cfg.NextTab),
 		PrevTab:  ParseHotkey(cfg.PrevTab),
+
+		// Tab switching (direct)
+		Tab1: ParseHotkey(cfg.Tab1),
+		Tab2: ParseHotkey(cfg.Tab2),
+		Tab3: ParseHotkey(cfg.Tab3),
+		Tab4: ParseHotkey(cfg.Tab4),
+		Tab5: ParseHotkey(cfg.Tab5),
+		Tab6: ParseHotkey(cfg.Tab6),
 	}
 }
