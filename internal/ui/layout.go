@@ -1602,11 +1602,14 @@ func (r *Renderer) layoutConfigErrorBanner(gtx layout.Context) layout.Dimensions
 func (r *Renderer) menuShell(gtx layout.Context, width unit.Dp, content layout.Widget) layout.Dimensions {
 	// Draw shadow layers for depth effect - multi-layer for realistic shadow
 	cornerRadius := gtx.Dp(8)
+	widthPx := gtx.Dp(width)
 
 	// We need to measure content first to know the size for shadows
 	// Use a macro to record and replay
 	macro := op.Record(gtx.Ops)
-	gtx.Constraints.Min.X = gtx.Dp(width)
+	// Constrain both min and max width to create a fixed-width modal
+	gtx.Constraints.Min.X = widthPx
+	gtx.Constraints.Max.X = widthPx
 	contentDims := widget.Border{Color: colLightGray, Width: unit.Dp(1), CornerRadius: unit.Dp(8)}.Layout(gtx,
 		func(gtx layout.Context) layout.Dimensions {
 			return layout.Stack{}.Layout(gtx,
@@ -1620,7 +1623,8 @@ func (r *Renderer) menuShell(gtx layout.Context, width unit.Dp, content layout.W
 					return layout.Dimensions{Size: gtx.Constraints.Min}
 				}),
 				layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-					gtx.Constraints.Min.X = gtx.Dp(width)
+					gtx.Constraints.Min.X = widthPx
+					gtx.Constraints.Max.X = widthPx
 					return content(gtx)
 				}),
 			)
@@ -2668,7 +2672,7 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) la
 		*eventOut = UIEvent{Action: ActionChangeDefaultDepth, DefaultDepth: r.DefaultDepth}
 	}
 
-	return r.modalBackdrop(gtx, 350, &r.settingsCloseBtn, func(gtx layout.Context) layout.Dimensions {
+	return r.modalBackdrop(gtx, 400, &r.settingsCloseBtn, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min.Y = gtx.Dp(420)
 		return r.modalContentWithClose(gtx, "Settings", colBlack, &r.settingsCloseBtn,
 			// Body content
@@ -3027,14 +3031,9 @@ func (r *Renderer) layoutSearchEngineOptions(gtx layout.Context) layout.Dimensio
 }
 
 func (r *Renderer) layoutSearchEngineOption(gtx layout.Context, eng SearchEngineInfo) layout.Dimensions {
-	// Build label with version if available
-	label := eng.Name
-	if eng.Version != "" && eng.Available {
-		label = eng.Name + " (" + eng.Version + ")"
-	}
-	
-	rb := material.RadioButton(r.Theme, &r.searchEngine, eng.ID, label)
-	
+	// Radio button shows just the name
+	rb := material.RadioButton(r.Theme, &r.searchEngine, eng.ID, eng.Name)
+
 	if !eng.Available {
 		// Grey out unavailable engines
 		rb.Color = colDisabled
@@ -3044,8 +3043,23 @@ func (r *Renderer) layoutSearchEngineOption(gtx layout.Context, eng SearchEngine
 	} else {
 		rb.Color = colBlack
 	}
-	
-	return layout.Inset{Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return rb.Layout(gtx)
+
+	return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return rb.Layout(gtx)
+			}),
+			// Show version on separate line if available
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				if eng.Version == "" || !eng.Available {
+					return layout.Dimensions{}
+				}
+				return layout.Inset{Left: unit.Dp(32)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Caption(r.Theme, "v"+eng.Version)
+					lbl.Color = colGray
+					return lbl.Layout(gtx)
+				})
+			}),
+		)
 	})
 }

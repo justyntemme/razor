@@ -1,3 +1,4 @@
+use dynamic sizes instead of fixed sizes
 tab opens (in same directory, in home directory) = make hotkeys for both, cmd t = one and cmd shift t equals the other, but enable them to be confiruable
 add the draggable window element to the header entries (name, date modified... etc)
 delete confirmation doesnt use edpanded modal window (we should also not just expand entirely but look to center the window with a shadow behind it)
