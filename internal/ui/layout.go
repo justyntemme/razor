@@ -2750,43 +2750,59 @@ func (r *Renderer) layoutHotkeysModal(gtx layout.Context) layout.Dimensions {
 		binding string
 	}
 
-	fileOps := []hotkeyEntry{
-		{"Copy", r.hotkeys.Copy.String()},
-		{"Cut", r.hotkeys.Cut.String()},
-		{"Paste", r.hotkeys.Paste.String()},
-		{"Delete", r.hotkeys.Delete.String()},
-		{"Rename", r.hotkeys.Rename.String()},
-		{"New File", r.hotkeys.NewFile.String()},
-		{"New Folder", r.hotkeys.NewFolder.String()},
-		{"Select All", r.hotkeys.SelectAll.String()},
+	type hotkeySection struct {
+		title   string
+		entries []hotkeyEntry
 	}
 
-	navigation := []hotkeyEntry{
-		{"Back", r.hotkeys.Back.String()},
-		{"Forward", r.hotkeys.Forward.String()},
-		{"Go Up", r.hotkeys.Up.String()},
-		{"Go Home", r.hotkeys.Home.String()},
-		{"Refresh", r.hotkeys.Refresh.String()},
-	}
-
-	uiShortcuts := []hotkeyEntry{
-		{"Search", r.hotkeys.FocusSearch.String()},
-		{"Toggle Preview", r.hotkeys.TogglePreview.String()},
-		{"Toggle Hidden Files", r.hotkeys.ToggleHidden.String()},
-		{"Cancel/Close", r.hotkeys.Escape.String()},
-	}
-
-	tabs := []hotkeyEntry{
-		{"New Tab", r.hotkeys.NewTab.String()},
-		{"Close Tab", r.hotkeys.CloseTab.String()},
-		{"Next Tab", r.hotkeys.NextTab.String()},
-		{"Previous Tab", r.hotkeys.PrevTab.String()},
-		{"Tab 1", r.hotkeys.Tab1.String()},
-		{"Tab 2", r.hotkeys.Tab2.String()},
-		{"Tab 3", r.hotkeys.Tab3.String()},
-		{"Tab 4", r.hotkeys.Tab4.String()},
-		{"Tab 5", r.hotkeys.Tab5.String()},
-		{"Tab 6", r.hotkeys.Tab6.String()},
+	sections := []hotkeySection{
+		{
+			title: "FILE OPERATIONS",
+			entries: []hotkeyEntry{
+				{"Copy", r.hotkeys.Copy.String()},
+				{"Cut", r.hotkeys.Cut.String()},
+				{"Paste", r.hotkeys.Paste.String()},
+				{"Delete", r.hotkeys.Delete.String()},
+				{"Rename", r.hotkeys.Rename.String()},
+				{"New File", r.hotkeys.NewFile.String()},
+				{"New Folder", r.hotkeys.NewFolder.String()},
+				{"Select All", r.hotkeys.SelectAll.String()},
+			},
+		},
+		{
+			title: "NAVIGATION",
+			entries: []hotkeyEntry{
+				{"Back", r.hotkeys.Back.String()},
+				{"Forward", r.hotkeys.Forward.String()},
+				{"Go Up", r.hotkeys.Up.String()},
+				{"Go Home", r.hotkeys.Home.String()},
+				{"Refresh", r.hotkeys.Refresh.String()},
+			},
+		},
+		{
+			title: "USER INTERFACE",
+			entries: []hotkeyEntry{
+				{"Search", r.hotkeys.FocusSearch.String()},
+				{"Toggle Preview", r.hotkeys.TogglePreview.String()},
+				{"Toggle Hidden Files", r.hotkeys.ToggleHidden.String()},
+				{"Cancel/Close", r.hotkeys.Escape.String()},
+			},
+		},
+		{
+			title: "TABS",
+			entries: []hotkeyEntry{
+				{"New Tab", r.hotkeys.NewTab.String()},
+				{"Close Tab", r.hotkeys.CloseTab.String()},
+				{"Next Tab", r.hotkeys.NextTab.String()},
+				{"Previous Tab", r.hotkeys.PrevTab.String()},
+				{"Tab 1", r.hotkeys.Tab1.String()},
+				{"Tab 2", r.hotkeys.Tab2.String()},
+				{"Tab 3", r.hotkeys.Tab3.String()},
+				{"Tab 4", r.hotkeys.Tab4.String()},
+				{"Tab 5", r.hotkeys.Tab5.String()},
+				{"Tab 6", r.hotkeys.Tab6.String()},
+			},
+		},
 	}
 
 	// Helper to render a hotkey row
@@ -2808,18 +2824,18 @@ func (r *Renderer) layoutHotkeysModal(gtx layout.Context) layout.Dimensions {
 	}
 
 	// Helper to render a section
-	renderSection := func(gtx layout.Context, title string, entries []hotkeyEntry) layout.Dimensions {
+	renderSection := func(gtx layout.Context, section hotkeySection) layout.Dimensions {
 		var children []layout.FlexChild
 		children = append(children,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Caption(r.Theme, title)
+				lbl := material.Caption(r.Theme, section.title)
 				lbl.Color = colGray
 				lbl.Font.Weight = font.Bold
 				return lbl.Layout(gtx)
 			}),
 			layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		)
-		for _, entry := range entries {
+		for _, entry := range section.entries {
 			entry := entry
 			if entry.binding != "" {
 				children = append(children,
@@ -2830,33 +2846,125 @@ func (r *Renderer) layoutHotkeysModal(gtx layout.Context) layout.Dimensions {
 				)
 			}
 		}
-		children = append(children, layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout))
+		children = append(children, layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout))
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 	}
 
-	return r.modalBackdrop(gtx, 400, &r.hotkeysCloseBtn, func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints.Min.Y = gtx.Dp(500)
+	// Determine modal width based on screen size
+	// Use 2 columns if screen is wide enough (>800dp), otherwise single column
+	screenWidth := gtx.Constraints.Max.X
+	minColumnWidth := gtx.Dp(300)
+	columnGap := gtx.Dp(32)
+	useMultiColumn := screenWidth > gtx.Dp(800)
+
+	modalWidth := unit.Dp(380)
+	if useMultiColumn {
+		modalWidth = unit.Dp(700)
+	}
+
+	// Calculate max modal height (80% of screen height)
+	maxModalHeight := gtx.Constraints.Max.Y * 80 / 100
+	if maxModalHeight < gtx.Dp(300) {
+		maxModalHeight = gtx.Dp(300)
+	}
+
+	return r.modalBackdrop(gtx, modalWidth, &r.hotkeysCloseBtn, func(gtx layout.Context) layout.Dimensions {
+		// Constrain modal height
+		gtx.Constraints.Max.Y = maxModalHeight
+
 		return layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				// Header row with title and close button
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					h6 := material.H6(r.Theme, "Keyboard Shortcuts")
-					h6.Color = colBlack
-					return h6.Layout(gtx)
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						// Title (takes remaining space)
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							h6 := material.H6(r.Theme, "Keyboard Shortcuts")
+							h6.Color = colBlack
+							return h6.Layout(gtx)
+						}),
+						// Divider line
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							height := gtx.Dp(20)
+							return layout.Inset{Left: unit.Dp(12), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(1, height)}.Op())
+								return layout.Dimensions{Size: image.Pt(1, height)}
+							})
+						}),
+						// Close button (X)
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							closeSize := gtx.Dp(24)
+							return material.Clickable(gtx, &r.hotkeysCloseBtn, func(gtx layout.Context) layout.Dimensions {
+								// Draw X
+								centerX := float32(closeSize) / 2
+								centerY := float32(closeSize) / 2
+								armLen := float32(closeSize) / 4
+
+								xColor := colGray
+								var p clip.Path
+								p.Begin(gtx.Ops)
+								p.MoveTo(f32.Pt(centerX-armLen, centerY-armLen))
+								p.LineTo(f32.Pt(centerX+armLen, centerY+armLen))
+								p.MoveTo(f32.Pt(centerX+armLen, centerY-armLen))
+								p.LineTo(f32.Pt(centerX-armLen, centerY+armLen))
+								paint.FillShape(gtx.Ops, xColor, clip.Stroke{Path: p.End(), Width: 1.5}.Op())
+
+								return layout.Dimensions{Size: image.Pt(closeSize, closeSize)}
+							})
+						}),
+					)
 				}),
 				layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return renderSection(gtx, "FILE OPERATIONS", fileOps)
+
+				// Scrollable content area
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					r.hotkeysListState.Axis = layout.Vertical
+					return material.List(r.Theme, &r.hotkeysListState).Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+						if useMultiColumn {
+							// Two-column layout
+							return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+								// Left column
+								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+									gtx.Constraints.Min.X = minColumnWidth
+									return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+											return renderSection(gtx, sections[0]) // File Operations
+										}),
+										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+											return renderSection(gtx, sections[1]) // Navigation
+										}),
+									)
+								}),
+								// Gap between columns
+								layout.Rigid(layout.Spacer{Width: unit.Dp(float32(columnGap) / gtx.Metric.PxPerDp)}.Layout),
+								// Right column
+								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+									gtx.Constraints.Min.X = minColumnWidth
+									return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+											return renderSection(gtx, sections[2]) // UI
+										}),
+										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+											return renderSection(gtx, sections[3]) // Tabs
+										}),
+									)
+								}),
+							)
+						}
+						// Single column layout
+						var children []layout.FlexChild
+						for _, section := range sections {
+							section := section
+							children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return renderSection(gtx, section)
+							}))
+						}
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+					})
 				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return renderSection(gtx, "NAVIGATION", navigation)
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return renderSection(gtx, "USER INTERFACE", uiShortcuts)
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return renderSection(gtx, "TABS", tabs)
-				}),
-				// Divider
+
+				// Footer (fixed)
+				layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, gtx.Dp(1))}.Op())
 					return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(1))}

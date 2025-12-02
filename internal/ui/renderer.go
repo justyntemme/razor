@@ -568,6 +568,7 @@ type Renderer struct {
 	hotkeysBtn          widget.Clickable
 	hotkeysOpen         bool
 	hotkeysCloseBtn     widget.Clickable
+	hotkeysListState    widget.List
 	searchEngine        widget.Enum
 	mousePos            image.Point
 	mouseTag            struct{}
