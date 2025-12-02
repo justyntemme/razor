@@ -1816,10 +1816,13 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 	// Check for chevron click (expand/collapse directory)
 	var chevronEvent *UIEvent
 	if item.IsDir && item.ExpandBtn.Clicked(gtx) {
+		debug.Log(debug.UI, "Chevron clicked for directory: %s (IsExpanded=%v)", item.Path, item.IsExpanded)
 		if item.IsExpanded {
 			chevronEvent = &UIEvent{Action: ActionCollapseDir, Path: item.Path}
+			debug.Log(debug.UI, "Creating ActionCollapseDir event for: %s", item.Path)
 		} else {
 			chevronEvent = &UIEvent{Action: ActionExpandDir, Path: item.Path}
+			debug.Log(debug.UI, "Creating ActionExpandDir event for: %s", item.Path)
 		}
 	}
 

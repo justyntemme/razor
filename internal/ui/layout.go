@@ -1389,8 +1389,11 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 				rowDims, leftClicked, rightClicked, shiftHeld, _, renameEvt, checkboxToggled, chevronEvt := r.renderRow(gtx, item, i, i == state.SelectedIndex, isRenaming, isChecked, showCheckbox)
 
 				// Handle chevron click (expand/collapse directory)
+				chevronClicked := false
 				if chevronEvt != nil {
+					debug.Log(debug.UI, "Chevron event received in layout, Action=%d Path=%s", chevronEvt.Action, chevronEvt.Path)
 					*eventOut = *chevronEvt
+					chevronClicked = true
 				}
 
 				// Handle checkbox toggle (only visible in multi-select mode)
@@ -1417,8 +1420,8 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 					// which will get all selected items. Selection is only cleared after copy/cut.
 				}
 
-				// Handle left-click (but not if renaming)
-				if leftClicked && !isRenaming && !checkboxToggled {
+				// Handle left-click (but not if renaming or chevron was clicked)
+				if leftClicked && !isRenaming && !checkboxToggled && !chevronClicked {
 					rowLeftClicked = true
 					r.bgLeftClickPending = false // Cancel background left-click
 					r.onLeftClick()
@@ -1866,6 +1869,7 @@ func (r *Renderer) layoutFileMenu(gtx layout.Context, eventOut *UIEvent) layout.
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				if r.settingsBtn.Clicked(gtx) {
+					debug.Log(debug.UI, "Settings button clicked, opening settings")
 					r.onLeftClick()
 					r.settingsOpen = true
 				}
@@ -2613,6 +2617,7 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) la
 		r.settingsOpen = false
 	}
 	if r.showDotfilesCheck.Update(gtx) {
+		debug.Log(debug.UI, "showDotfilesCheck toggled! New value: %v", r.showDotfilesCheck.Value)
 		r.ShowDotfiles = r.showDotfilesCheck.Value
 		*eventOut = UIEvent{Action: ActionToggleDotfiles, ShowDotfiles: r.ShowDotfiles}
 	}

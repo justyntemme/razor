@@ -431,6 +431,7 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		o.applyFilterAndSort()
 		o.window.Invalidate()
 	case ui.ActionToggleDotfiles:
+		debug.Log(debug.APP, "ActionToggleDotfiles received! ShowDotfiles=%v", evt.ShowDotfiles)
 		o.showDotfiles = evt.ShowDotfiles
 		o.config.SetShowDotfiles(o.showDotfiles)
 		o.applyFilterAndSort()
@@ -545,8 +546,10 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 			o.stateMu.Unlock()
 		}
 	case ui.ActionExpandDir:
+		debug.Log(debug.APP, "Received ActionExpandDir for path: %s", evt.Path)
 		o.expandDirectory(evt.Path)
 	case ui.ActionCollapseDir:
+		debug.Log(debug.APP, "Received ActionCollapseDir for path: %s", evt.Path)
 		o.collapseDirectory(evt.Path)
 	}
 }
@@ -970,14 +973,17 @@ func (o *Orchestrator) selectAll() {
 
 // expandDirectory expands a directory inline in the tree view
 func (o *Orchestrator) expandDirectory(path string) {
-	debug.Log(debug.APP, "Expanding directory: %s", path)
+	debug.Log(debug.APP, "expandDirectory called for: %s", path)
 
 	// Mark as expanded in the UI
 	o.ui.SetExpanded(path, true)
 
-	// Find the index of the parent directory in the entries
+	o.stateMu.Lock()
+	defer o.stateMu.Unlock()
+
+	// Find the index of the parent directory in state.Entries (the displayed/filtered list)
 	parentIdx := -1
-	for i, entry := range o.dirEntries {
+	for i, entry := range o.state.Entries {
 		if entry.Path == path {
 			parentIdx = i
 			break
@@ -985,12 +991,13 @@ func (o *Orchestrator) expandDirectory(path string) {
 	}
 
 	if parentIdx < 0 {
-		debug.Log(debug.APP, "Directory not found in entries: %s", path)
+		debug.Log(debug.APP, "Directory not found in state.Entries: %s", path)
 		return
 	}
 
 	// Get the depth of the parent
-	parentDepth := o.dirEntries[parentIdx].Depth
+	parentDepth := o.state.Entries[parentIdx].Depth
+	debug.Log(debug.APP, "Found parent at index %d, depth %d", parentIdx, parentDepth)
 
 	// Read the directory contents
 	entries, err := os.ReadDir(path)
@@ -1027,23 +1034,21 @@ func (o *Orchestrator) expandDirectory(path string) {
 
 	// Sort the children (directories first, then by name)
 	o.sortEntries(childEntries)
+	debug.Log(debug.APP, "Adding %d children to expanded directory", len(childEntries))
 
-	// Insert children after the parent
-	o.stateMu.Lock()
-	// Mark the parent as expanded
-	o.dirEntries[parentIdx].IsExpanded = true
+	// Mark the parent as expanded in state.Entries
+	o.state.Entries[parentIdx].IsExpanded = true
 
-	// Create new slice with children inserted
-	newEntries := make([]ui.UIEntry, 0, len(o.dirEntries)+len(childEntries))
-	newEntries = append(newEntries, o.dirEntries[:parentIdx+1]...)
+	// Create new slice with children inserted after the parent
+	newEntries := make([]ui.UIEntry, 0, len(o.state.Entries)+len(childEntries))
+	newEntries = append(newEntries, o.state.Entries[:parentIdx+1]...)
 	newEntries = append(newEntries, childEntries...)
-	newEntries = append(newEntries, o.dirEntries[parentIdx+1:]...)
-	o.dirEntries = newEntries
+	newEntries = append(newEntries, o.state.Entries[parentIdx+1:]...)
+	o.state.Entries = newEntries
 
-	// Update state.Entries to match
-	o.state.Entries = make([]ui.UIEntry, len(o.dirEntries))
-	copy(o.state.Entries, o.dirEntries)
-	o.stateMu.Unlock()
+	// Also update dirEntries to keep them in sync (for fsnotify refresh)
+	o.dirEntries = make([]ui.UIEntry, len(o.state.Entries))
+	copy(o.dirEntries, o.state.Entries)
 
 	// Watch the expanded directory for changes
 	if o.watcher != nil {
@@ -1060,9 +1065,11 @@ func (o *Orchestrator) collapseDirectory(path string) {
 	// Mark as collapsed in the UI
 	o.ui.SetExpanded(path, false)
 
-	// Find the index of the parent directory
+	o.stateMu.Lock()
+
+	// Find the index of the parent directory in state.Entries
 	parentIdx := -1
-	for i, entry := range o.dirEntries {
+	for i, entry := range o.state.Entries {
 		if entry.Path == path {
 			parentIdx = i
 			break
@@ -1070,22 +1077,22 @@ func (o *Orchestrator) collapseDirectory(path string) {
 	}
 
 	if parentIdx < 0 {
-		debug.Log(debug.APP, "Directory not found in entries: %s", path)
+		debug.Log(debug.APP, "Directory not found in state.Entries: %s", path)
+		o.stateMu.Unlock()
 		return
 	}
 
-	parentDepth := o.dirEntries[parentIdx].Depth
+	parentDepth := o.state.Entries[parentIdx].Depth
 
-	o.stateMu.Lock()
 	// Mark the parent as collapsed
-	o.dirEntries[parentIdx].IsExpanded = false
+	o.state.Entries[parentIdx].IsExpanded = false
 
 	// Find all children to remove (entries with greater depth that are descendants)
 	removeStart := parentIdx + 1
 	removeEnd := removeStart
-	for i := removeStart; i < len(o.dirEntries); i++ {
+	for i := removeStart; i < len(o.state.Entries); i++ {
 		// Stop when we find an entry at the same or lower depth as parent
-		if o.dirEntries[i].Depth <= parentDepth {
+		if o.state.Entries[i].Depth <= parentDepth {
 			break
 		}
 		removeEnd = i + 1
@@ -1095,24 +1102,24 @@ func (o *Orchestrator) collapseDirectory(path string) {
 	if removeEnd > removeStart {
 		// Also mark any nested expanded directories as collapsed
 		for i := removeStart; i < removeEnd; i++ {
-			if o.dirEntries[i].IsDir && o.dirEntries[i].IsExpanded {
-				o.ui.SetExpanded(o.dirEntries[i].Path, false)
+			if o.state.Entries[i].IsDir && o.state.Entries[i].IsExpanded {
+				o.ui.SetExpanded(o.state.Entries[i].Path, false)
 				// Unwatch nested expanded directories
 				if o.watcher != nil {
-					o.watcher.Unwatch(o.dirEntries[i].Path)
+					o.watcher.Unwatch(o.state.Entries[i].Path)
 				}
 			}
 		}
 
-		newEntries := make([]ui.UIEntry, 0, len(o.dirEntries)-(removeEnd-removeStart))
-		newEntries = append(newEntries, o.dirEntries[:removeStart]...)
-		newEntries = append(newEntries, o.dirEntries[removeEnd:]...)
-		o.dirEntries = newEntries
+		newEntries := make([]ui.UIEntry, 0, len(o.state.Entries)-(removeEnd-removeStart))
+		newEntries = append(newEntries, o.state.Entries[:removeStart]...)
+		newEntries = append(newEntries, o.state.Entries[removeEnd:]...)
+		o.state.Entries = newEntries
 	}
 
-	// Update state.Entries to match
-	o.state.Entries = make([]ui.UIEntry, len(o.dirEntries))
-	copy(o.state.Entries, o.dirEntries)
+	// Also update dirEntries to keep them in sync
+	o.dirEntries = make([]ui.UIEntry, len(o.state.Entries))
+	copy(o.dirEntries, o.state.Entries)
 	o.stateMu.Unlock()
 
 	// Unwatch the collapsed directory
