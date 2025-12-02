@@ -200,7 +200,7 @@ Reusable code formatting module for preview pane and markdown code blocks.
     - [ ] Real-time updates
 
 *** TODO Terminal Integration
-    - [ ] "Open Terminal Here" context menu
+    - [X] "Open Terminal Here" context menu (right-click on folder or empty space)
     - [ ] Embedded terminal panel (toggle)
     - [ ] Configurable terminal app
 

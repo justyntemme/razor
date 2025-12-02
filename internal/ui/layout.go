@@ -1991,6 +1991,16 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, state *State, eventOut 
 		r.menuVisible = false
 		*eventOut = UIEvent{Action: ActionOpenInNewTab, Path: r.menuPath}
 	}
+	if r.openTerminalBtn.Clicked(gtx) {
+		r.menuVisible = false
+		// For favorites/drives sidebar, use the clicked item's path
+		// For file list (including background clicks), always use current directory
+		termPath := state.CurrentPath
+		if r.menuIsFav {
+			termPath = r.menuPath
+		}
+		*eventOut = UIEvent{Action: ActionOpenTerminal, Path: termPath}
+	}
 
 	// Background menu (right-click on empty space) shows limited options
 	if r.menuIsBackground {
@@ -2019,6 +2029,17 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, state *State, eventOut 
 						}),
 					)
 				}),
+				// Separator and Open Terminal Here
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						height := gtx.Dp(unit.Dp(1))
+						paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Min.X, height)}.Op())
+						return layout.Dimensions{Size: image.Pt(gtx.Constraints.Min.X, height)}
+					})
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return r.menuItem(gtx, &r.openTerminalBtn, "Open Terminal Here")
+				}),
 			)
 		})
 	}
@@ -2044,6 +2065,10 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, state *State, eventOut 
 					return layout.Dimensions{}
 				}
 				return r.menuItem(gtx, &r.openInNewTabBtn, "Open in New Tab")
+			}),
+			// "Open Terminal Here" - always available
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return r.menuItem(gtx, &r.openTerminalBtn, "Open Terminal Here")
 			}),
 			// "Open file location" only shown when viewing recent files
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {

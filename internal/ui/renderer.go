@@ -101,6 +101,8 @@ const (
 	// Tree view actions
 	ActionExpandDir   // Expand a directory inline (uses Path)
 	ActionCollapseDir // Collapse an expanded directory (uses Path)
+	// Terminal action
+	ActionOpenTerminal // Open terminal in directory (uses Path)
 )
 
 type ClipOp int
@@ -561,6 +563,7 @@ type Renderer struct {
 	favBtn              widget.Clickable
 	openWithBtn         widget.Clickable
 	openInNewTabBtn     widget.Clickable
+	openTerminalBtn     widget.Clickable
 	fileMenuBtn         widget.Clickable
 	fileMenuOpen        bool
 	newWindowBtn        widget.Clickable

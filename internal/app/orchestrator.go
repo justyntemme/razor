@@ -419,6 +419,11 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		if err := platformOpenWith(evt.Path, evt.AppPath); err != nil {
 			log.Printf("Error opening with app: %v", err)
 		}
+	case ui.ActionOpenTerminal:
+		// Open terminal in the specified directory
+		if err := platformOpenTerminal(evt.Path); err != nil {
+			log.Printf("Error opening terminal: %v", err)
+		}
 	case ui.ActionAddFavorite:
 		// Add favorite to config.json
 		name := filepath.Base(evt.Path)

@@ -119,3 +119,9 @@ type AppInfo struct {
 	Name string // Display name
 	Path string // Application bundle path
 }
+
+// platformOpenTerminal opens a terminal in the specified directory.
+// On macOS, this opens Terminal.app which uses the user's login shell.
+func platformOpenTerminal(dir string) error {
+	return exec.Command("open", "-a", "Terminal", dir).Start()
+}

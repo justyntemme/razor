@@ -87,3 +87,37 @@ type AppInfo struct {
 	Name string // Display name
 	Path string // Executable path or desktop file
 }
+
+// platformOpenTerminal opens a terminal emulator in the specified directory.
+// On Linux, this tries common terminal emulators in order of preference.
+func platformOpenTerminal(dir string) error {
+	// List of common terminal emulators to try, in order of preference
+	terminals := []struct {
+		cmd  string
+		args []string
+	}{
+		// Modern terminals with --working-directory support
+		{"gnome-terminal", []string{"--working-directory=" + dir}},
+		{"konsole", []string{"--workdir", dir}},
+		{"xfce4-terminal", []string{"--working-directory=" + dir}},
+		{"mate-terminal", []string{"--working-directory=" + dir}},
+		{"tilix", []string{"--working-directory=" + dir}},
+		{"terminator", []string{"--working-directory=" + dir}},
+		{"alacritty", []string{"--working-directory", dir}},
+		{"kitty", []string{"--directory", dir}},
+		{"wezterm", []string{"start", "--cwd", dir}},
+		// Fallback: x-terminal-emulator (Debian/Ubuntu default)
+		{"x-terminal-emulator", []string{"--working-directory=" + dir}},
+		// Last resort: xterm with cd command
+		{"xterm", []string{"-e", "cd '" + dir + "' && $SHELL -l"}},
+	}
+
+	for _, term := range terminals {
+		if _, err := exec.LookPath(term.cmd); err == nil {
+			return exec.Command(term.cmd, term.args...).Start()
+		}
+	}
+
+	// If no terminal found, try xdg-open on a shell script (unlikely to work well)
+	return exec.Command("xdg-open", dir).Start()
+}

@@ -86,3 +86,17 @@ type AppInfo struct {
 	Name string // Display name
 	Path string // Executable path or identifier
 }
+
+// platformOpenTerminal opens a terminal (cmd.exe or PowerShell) in the specified directory.
+// On Windows, this tries Windows Terminal first, then falls back to cmd.exe.
+func platformOpenTerminal(dir string) error {
+	// Try Windows Terminal first (wt.exe) - available on Windows 10/11
+	if _, err := exec.LookPath("wt.exe"); err == nil {
+		// Windows Terminal with -d flag for starting directory
+		return exec.Command("wt.exe", "-d", dir).Start()
+	}
+
+	// Fallback to cmd.exe with /K to keep window open and cd to directory
+	// Using start command to open in new window
+	return exec.Command("cmd", "/c", "start", "cmd", "/K", "cd", "/d", dir).Start()
+}
