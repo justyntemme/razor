@@ -1,0 +1,84 @@
+* Shared State Architecture Issues
+
+** Current Problem: Multiple Copies of Entry Data
+
+The current architecture has duplicated state that is difficult to keep in sync:
+
+*** Orchestrator Level
+- ~o.rawEntries~ - Raw entries from filesystem (unfiltered)
+- ~o.dirEntries~ - Supposed to be the "canonical" list with tree structure
+- ~o.state.Entries~ - The filtered/displayed list shown to user
+
+*** Per-Tab Level
+- ~tab.DirEntries~ - Cached copy of dirEntries for each tab
+- ~tab.RawEntries~ - Cached copy of rawEntries for each tab
+- ~tab.ExpandedDirs~ - Map of expanded directory paths
+
+*** UI Level
+- ~renderer.expandedDirs~ - Another copy of expanded state
+
+** Why This Is Problematic
+
+1. *Sync Bugs*: When one copy is updated, others may become stale
+   - Example: Expanding a directory updated ~dirEntries~ but ~state.Entries~ had filtered data
+   - This caused dotfiles to appear unexpectedly
+
+2. *Unclear Ownership*: No clear "source of truth" for entry data
+   - Is ~dirEntries~ or ~state.Entries~ canonical?
+   - When should each be updated?
+
+3. *Complex Code Paths*: Multiple places need to update multiple copies
+   - ~handleFSResponse~ updates both ~dirEntries~ and ~rawEntries~
+   - ~expandDirectory~ must update both ~state.Entries~ and ~dirEntries~
+   - Tab switching copies between orchestrator and tab state
+
+4. *Mutex Only Helps Concurrency*: The mutex prevents race conditions but doesn't solve the fundamental duplication problem
+
+** Proposed Clean Architecture
+
+*** Single Source of Truth
+- One canonical ~[]UIEntry~ slice representing current view
+- All other "copies" become computed/derived views
+
+*** Minimal Tab State
+Tabs should store only:
+- ~CurrentPath string~ - The directory path
+- ~ExpandedDirs map[string]bool~ - Which directories are expanded
+- ~ScrollPosition int~ - Where user was scrolled to
+- ~SelectedIndex int~ - Selection state
+
+When switching tabs, rebuild entries from filesystem + expanded state rather than caching copies.
+
+*** On-Demand Filtering
+- Store raw filesystem entries in one place
+- Apply filtering (dotfiles) and sorting on-demand
+- Clear cache when filter settings change
+
+*** Clear Data Flow
+#+begin_src
+Filesystem Read -> rawEntries (source of truth)
+                        |
+                        v
+              applyFilterAndSort()
+                        |
+                        v
+               state.Entries (displayed)
+                        |
+                        v
+              expandDirectory() modifies in-place
+#+end_src
+
+** Refactoring Steps
+
+1. Remove ~dirEntries~ from Orchestrator - redundant with ~state.Entries~
+2. Keep ~rawEntries~ only for re-filtering when dotfiles toggle changes
+3. Tab state stores path + metadata, not entry copies
+4. On tab switch: fetch from filesystem or use ~rawEntries~ if same path
+5. Expanded state lives in one place (UI renderer) not copied to tabs
+
+** Benefits
+
+- Eliminates sync bugs by design
+- Simpler code with clear data ownership
+- Less memory usage (no duplicate slices)
+- Easier to reason about state changes

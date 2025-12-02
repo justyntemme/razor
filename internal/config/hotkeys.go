@@ -240,10 +240,11 @@ type HotkeyMatcher struct {
 	Escape        Hotkey
 
 	// Tabs
-	NewTab   Hotkey
-	CloseTab Hotkey
-	NextTab  Hotkey
-	PrevTab  Hotkey
+	NewTab     Hotkey
+	NewTabHome Hotkey
+	CloseTab   Hotkey
+	NextTab    Hotkey
+	PrevTab    Hotkey
 
 	// Tab switching (direct)
 	Tab1 Hotkey
@@ -281,10 +282,11 @@ func NewHotkeyMatcher(cfg HotkeysConfig) *HotkeyMatcher {
 		Escape:        ParseHotkey(cfg.Escape),
 
 		// Tabs
-		NewTab:   ParseHotkey(cfg.NewTab),
-		CloseTab: ParseHotkey(cfg.CloseTab),
-		NextTab:  ParseHotkey(cfg.NextTab),
-		PrevTab:  ParseHotkey(cfg.PrevTab),
+		NewTab:     ParseHotkey(cfg.NewTab),
+		NewTabHome: ParseHotkey(cfg.NewTabHome),
+		CloseTab:   ParseHotkey(cfg.CloseTab),
+		NextTab:    ParseHotkey(cfg.NextTab),
+		PrevTab:    ParseHotkey(cfg.PrevTab),
 
 		// Tab switching (direct)
 		Tab1: ParseHotkey(cfg.Tab1),

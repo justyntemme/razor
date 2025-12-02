@@ -59,7 +59,8 @@ type HotkeysConfig struct {
 	Escape        string `json:"escape"`
 
 	// Tabs
-	NewTab        string `json:"newTab"`
+	NewTab        string `json:"newTab"`        // New tab in current directory
+	NewTabHome    string `json:"newTabHome"`    // New tab in home directory
 	CloseTab      string `json:"closeTab"`
 	NextTab       string `json:"nextTab"`
 	PrevTab       string `json:"prevTab"`

@@ -2813,7 +2813,8 @@ func (r *Renderer) layoutHotkeysModal(gtx layout.Context) layout.Dimensions {
 		{
 			title: "TABS",
 			entries: []hotkeyEntry{
-				{"New Tab", r.hotkeys.NewTab.String()},
+				{"New Tab (Current)", r.hotkeys.NewTab.String()},
+				{"New Tab (Home)", r.hotkeys.NewTabHome.String()},
 				{"Close Tab", r.hotkeys.CloseTab.String()},
 				{"Next Tab", r.hotkeys.NextTab.String()},
 				{"Previous Tab", r.hotkeys.PrevTab.String()},

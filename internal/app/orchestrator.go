@@ -5,8 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,9 +39,8 @@ type Orchestrator struct {
 	// Shared state (protected by stateMu)
 	stateMu    sync.RWMutex
 	state      ui.State
-	rawEntries []ui.UIEntry // Current display entries (filtered/sorted)
-	dirEntries []ui.UIEntry // Original directory entries (cache)
-	searchGen  atomic.Int64 // Search generation counter
+	stateOwner *StateOwner   // Single source of truth for entries
+	searchGen  atomic.Int64  // Search generation counter
 
 	// Controllers (own their domain-specific state, share deps/state via pointers)
 	searchCtrl *SearchController
@@ -99,14 +96,18 @@ func NewOrchestrator() *Orchestrator {
 		}
 	}
 
+	// Create window first so StateOwner can reference it
+	window := new(app.Window)
+
 	// Create core orchestrator
 	o := &Orchestrator{
-		window:           new(app.Window),
+		window:           window,
 		fs:               fs.NewSystem(),
 		store:            store.NewDB(),
 		config:           cfgMgr,
 		ui:               ui.NewRenderer(),
 		state:            ui.State{SelectedIndex: -1, Favorites: make(map[string]bool)},
+		stateOwner:       NewStateOwner(window, cfg.UI.FileList.ShowDotfiles),
 		sortAsc:          cfg.UI.FileList.SortAscending,
 		showDotfiles:     cfg.UI.FileList.ShowDotfiles,
 		conflictResponse: make(chan ui.ConflictResolution, 1),
@@ -279,9 +280,12 @@ func (o *Orchestrator) resetUIState() {
 // restoreDirectory restores the cached directory entries after a search is cleared.
 // Returns true if entries were restored, false if a re-fetch is needed.
 func (o *Orchestrator) restoreDirectory() bool {
-	if len(o.dirEntries) > 0 {
-		o.rawEntries = o.dirEntries
-		o.applyFilterAndSort()
+	// StateOwner manages raw entries internally - request a refresh
+	snapshot := o.stateOwner.GetSnapshot()
+	if len(snapshot.Entries) > 0 {
+		o.stateMu.Lock()
+		o.state.Entries = snapshot.Entries
+		o.stateMu.Unlock()
 		return true
 	}
 	return false
@@ -428,12 +432,14 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		o.window.Invalidate()
 	case ui.ActionSort:
 		o.sortColumn, o.sortAsc = evt.SortColumn, evt.SortAscending
+		o.stateOwner.SetSort(evt.SortColumn, evt.SortAscending)
 		o.applyFilterAndSort()
 		o.window.Invalidate()
 	case ui.ActionToggleDotfiles:
 		debug.Log(debug.APP, "ActionToggleDotfiles received! ShowDotfiles=%v", evt.ShowDotfiles)
 		o.showDotfiles = evt.ShowDotfiles
 		o.config.SetShowDotfiles(o.showDotfiles)
+		o.stateOwner.ToggleDotfiles(evt.ShowDotfiles)
 		o.applyFilterAndSort()
 		o.window.Invalidate()
 	case ui.ActionCopy:
@@ -470,15 +476,12 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 	case ui.ActionClearSearch:
 		debug.Log(debug.APP, "ClearSearch: cancelling search")
 		o.searchCtrl.CancelSearch(o.setProgress)
-		// Restore from cached directory entries (no disk access needed)
-		if len(o.dirEntries) > 0 {
-			o.rawEntries = o.dirEntries
-			o.applyFilterAndSort()
-			o.window.Invalidate()
-		} else {
-			// Fallback: re-fetch if dirEntries is empty
+		// Restore from StateOwner (no disk access needed if cached)
+		if !o.restoreDirectory() {
+			// Fallback: re-fetch if entries are empty
 			o.navCtrl.RequestDir(o.state.CurrentPath)
 		}
+		o.window.Invalidate()
 	case ui.ActionConflictReplace:
 		o.handleConflictResolution(ui.ConflictReplaceAll)
 	case ui.ActionConflictKeepBoth:
@@ -519,7 +522,9 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		// Navigate to the directory containing the file (with file selection)
 		o.openFileLocation(evt.Path)
 	case ui.ActionNewTab:
-		o.createNewTab()
+		o.createNewTabInCurrentDir()
+	case ui.ActionNewTabHome:
+		o.createNewTabInHome()
 	case ui.ActionCloseTab:
 		o.closeTab(evt.TabIndex)
 	case ui.ActionSwitchTab:
@@ -540,7 +545,7 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		o.ui.FocusSearch()
 	case ui.ActionJumpToLetter:
 		// Jump navigation handled in renderer, just update selection state
-		if evt.NewIndex >= 0 && evt.NewIndex < len(o.dirEntries) {
+		if evt.NewIndex >= 0 && evt.NewIndex < len(o.state.Entries) {
 			o.stateMu.Lock()
 			o.state.SelectedIndex = evt.NewIndex
 			o.stateMu.Unlock()
@@ -703,21 +708,18 @@ func (o *Orchestrator) handleFSResponse(resp fs.Response) {
 		}
 	}
 
-	// Lock state for writing
-	o.stateMu.Lock()
-
 	// Track whether this is a search result or regular directory fetch
+	canBack := o.navCtrl.HistoryIndex > 0
+	canForward := o.navCtrl.HistoryIndex < len(o.navCtrl.History)-1
+
 	if resp.Op == fs.FetchDir {
-		// Directory fetch: store as the canonical directory listing
-		o.dirEntries = entries
-		o.rawEntries = entries
-		o.state.IsSearchResult = false
-		o.state.SearchQuery = ""
-		o.state.CurrentPath = resp.Path
+		// Directory fetch: use StateOwner as single source of truth
+		o.stateOwner.SetEntries(resp.Path, entries, canBack, canForward)
 		debug.Log(debug.APP, "FSResponse: FetchDir complete, %d entries", len(entries))
 
 		// Clear expanded directories when navigating to a new folder
 		o.ui.ClearExpanded()
+		o.stateOwner.ClearExpanded()
 
 		// Update current tab title and path
 		if o.activeTabIndex >= 0 && o.activeTabIndex < len(o.tabs) {
@@ -740,23 +742,28 @@ func (o *Orchestrator) handleFSResponse(resp fs.Response) {
 			}
 		}
 	} else {
-		// Search result: only update rawEntries, keep dirEntries intact
-		o.rawEntries = entries
+		// Search result: update entries but keep expanded state
+		o.stateOwner.SetEntriesKeepExpanded(entries)
 		debug.Log(debug.APP, "FSResponse: SearchDir complete, %d results", len(entries))
 		// IsSearchResult and SearchQuery were already set in doSearch
 	}
 
-	o.applyFilterAndSort()
-
-	parent := filepath.Dir(o.state.CurrentPath)
-	o.state.CanBack = parent != o.state.CurrentPath
-	o.state.CanForward = o.navCtrl.HistoryIndex < len(o.navCtrl.History)-1
-
+	// Sync StateOwner snapshot to o.state for UI rendering
+	snapshot := o.stateOwner.GetSnapshot()
+	o.stateMu.Lock()
+	o.state.Entries = snapshot.Entries
+	o.state.CurrentPath = snapshot.CurrentPath
+	o.state.CanBack = snapshot.CanBack
+	o.state.CanForward = snapshot.CanForward
+	if resp.Op == fs.FetchDir {
+		o.state.IsSearchResult = false
+		o.state.SearchQuery = ""
+	}
 	if o.state.SelectedIndex >= len(o.state.Entries) {
 		o.state.SelectedIndex = -1
 	}
-
 	o.stateMu.Unlock()
+
 	o.window.Invalidate()
 }
 
@@ -785,70 +792,10 @@ func (o *Orchestrator) handleStoreResponse(resp store.Response) {
 }
 
 func (o *Orchestrator) applyFilterAndSort() {
-	// If we have expanded directories, use dirEntries which contains the tree structure
-	// Otherwise use rawEntries
-	sourceEntries := o.rawEntries
-	hasExpandedDirs := len(o.ui.GetExpandedDirs()) > 0
-
-	if hasExpandedDirs && len(o.dirEntries) > 0 {
-		// Use the flattened tree structure - don't re-sort as it would break tree hierarchy
-		entries := make([]ui.UIEntry, 0, len(o.dirEntries))
-		for _, e := range o.dirEntries {
-			if !o.showDotfiles && strings.HasPrefix(e.Name, ".") {
-				continue
-			}
-			entries = append(entries, e)
-		}
-		o.state.Entries = entries
-		return
-	}
-
-	// Pre-allocate with estimated capacity (most entries won't be dotfiles)
-	entries := make([]ui.UIEntry, 0, len(sourceEntries))
-	for _, e := range sourceEntries {
-		if !o.showDotfiles && strings.HasPrefix(e.Name, ".") {
-			continue
-		}
-		entries = append(entries, e)
-	}
-
-	cmp := o.getComparator()
-	sort.SliceStable(entries, func(i, j int) bool {
-		if entries[i].IsDir != entries[j].IsDir {
-			return entries[i].IsDir
-		}
-		less := cmp(entries[i], entries[j])
-		if !o.sortAsc {
-			return !less
-		}
-		return less
-	})
-
-	o.state.Entries = entries
-}
-
-func (o *Orchestrator) getComparator() func(a, b ui.UIEntry) bool {
-	switch o.sortColumn {
-	case ui.SortByDate:
-		return func(a, b ui.UIEntry) bool { return a.ModTime.Before(b.ModTime) }
-	case ui.SortByType:
-		return func(a, b ui.UIEntry) bool {
-			extA, extB := strings.ToLower(filepath.Ext(a.Name)), strings.ToLower(filepath.Ext(b.Name))
-			if extA == extB {
-				return strings.ToLower(a.Name) < strings.ToLower(b.Name)
-			}
-			return extA < extB
-		}
-	case ui.SortBySize:
-		return func(a, b ui.UIEntry) bool {
-			if a.Size == b.Size {
-				return strings.ToLower(a.Name) < strings.ToLower(b.Name)
-			}
-			return a.Size < b.Size
-		}
-	default:
-		return func(a, b ui.UIEntry) bool { return strings.ToLower(a.Name) < strings.ToLower(b.Name) }
-	}
+	// StateOwner handles filtering and sorting internally
+	// Just sync snapshot to state for UI rendering
+	snapshot := o.stateOwner.GetSnapshot()
+	o.state.Entries = snapshot.Entries
 }
 
 func (o *Orchestrator) setProgress(active bool, label string, current, total int64) {
@@ -881,7 +828,9 @@ func (o *Orchestrator) handleRecentFilesResponse(recentFiles []store.RecentFileE
 		})
 	}
 
-	// Update state
+	// Update StateOwner and state
+	o.stateOwner.SetEntries("Recent Files", entries, true, false)
+
 	o.stateMu.Lock()
 	o.state.CurrentPath = "Recent Files"
 	o.state.Entries = entries
@@ -889,7 +838,6 @@ func (o *Orchestrator) handleRecentFilesResponse(recentFiles []store.RecentFileE
 	o.state.IsSearchResult = false
 	o.state.SearchQuery = ""
 	o.state.CanBack = true // Allow going back
-	o.rawEntries = entries
 	o.stateMu.Unlock()
 
 	o.window.Invalidate()
@@ -978,77 +926,14 @@ func (o *Orchestrator) expandDirectory(path string) {
 	// Mark as expanded in the UI
 	o.ui.SetExpanded(path, true)
 
+	// Use StateOwner to expand directory
+	o.stateOwner.ExpandDir(path)
+
+	// Sync to state for UI
+	snapshot := o.stateOwner.GetSnapshot()
 	o.stateMu.Lock()
-	defer o.stateMu.Unlock()
-
-	// Find the index of the parent directory in state.Entries (the displayed/filtered list)
-	parentIdx := -1
-	for i, entry := range o.state.Entries {
-		if entry.Path == path {
-			parentIdx = i
-			break
-		}
-	}
-
-	if parentIdx < 0 {
-		debug.Log(debug.APP, "Directory not found in state.Entries: %s", path)
-		return
-	}
-
-	// Get the depth of the parent
-	parentDepth := o.state.Entries[parentIdx].Depth
-	debug.Log(debug.APP, "Found parent at index %d, depth %d", parentIdx, parentDepth)
-
-	// Read the directory contents
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		debug.Log(debug.APP, "Error reading directory %s: %v", path, err)
-		return
-	}
-
-	// Convert to UIEntry slice
-	childEntries := make([]ui.UIEntry, 0, len(entries))
-	for _, entry := range entries {
-		// Skip dotfiles if not showing them
-		if !o.showDotfiles && strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-
-		childEntry := ui.UIEntry{
-			Name:       entry.Name(),
-			Path:       filepath.Join(path, entry.Name()),
-			IsDir:      entry.IsDir(),
-			Size:       info.Size(),
-			ModTime:    info.ModTime(),
-			Depth:      parentDepth + 1,
-			ParentPath: path,
-			IsExpanded: o.ui.IsExpanded(filepath.Join(path, entry.Name())),
-		}
-		childEntries = append(childEntries, childEntry)
-	}
-
-	// Sort the children (directories first, then by name)
-	o.sortEntries(childEntries)
-	debug.Log(debug.APP, "Adding %d children to expanded directory", len(childEntries))
-
-	// Mark the parent as expanded in state.Entries
-	o.state.Entries[parentIdx].IsExpanded = true
-
-	// Create new slice with children inserted after the parent
-	newEntries := make([]ui.UIEntry, 0, len(o.state.Entries)+len(childEntries))
-	newEntries = append(newEntries, o.state.Entries[:parentIdx+1]...)
-	newEntries = append(newEntries, childEntries...)
-	newEntries = append(newEntries, o.state.Entries[parentIdx+1:]...)
-	o.state.Entries = newEntries
-
-	// Also update dirEntries to keep them in sync (for fsnotify refresh)
-	o.dirEntries = make([]ui.UIEntry, len(o.state.Entries))
-	copy(o.dirEntries, o.state.Entries)
+	o.state.Entries = snapshot.Entries
+	o.stateMu.Unlock()
 
 	// Watch the expanded directory for changes
 	if o.watcher != nil {
@@ -1065,61 +950,13 @@ func (o *Orchestrator) collapseDirectory(path string) {
 	// Mark as collapsed in the UI
 	o.ui.SetExpanded(path, false)
 
+	// Use StateOwner to collapse directory
+	o.stateOwner.CollapseDir(path)
+
+	// Sync to state for UI
+	snapshot := o.stateOwner.GetSnapshot()
 	o.stateMu.Lock()
-
-	// Find the index of the parent directory in state.Entries
-	parentIdx := -1
-	for i, entry := range o.state.Entries {
-		if entry.Path == path {
-			parentIdx = i
-			break
-		}
-	}
-
-	if parentIdx < 0 {
-		debug.Log(debug.APP, "Directory not found in state.Entries: %s", path)
-		o.stateMu.Unlock()
-		return
-	}
-
-	parentDepth := o.state.Entries[parentIdx].Depth
-
-	// Mark the parent as collapsed
-	o.state.Entries[parentIdx].IsExpanded = false
-
-	// Find all children to remove (entries with greater depth that are descendants)
-	removeStart := parentIdx + 1
-	removeEnd := removeStart
-	for i := removeStart; i < len(o.state.Entries); i++ {
-		// Stop when we find an entry at the same or lower depth as parent
-		if o.state.Entries[i].Depth <= parentDepth {
-			break
-		}
-		removeEnd = i + 1
-	}
-
-	// Remove children from the entries slice
-	if removeEnd > removeStart {
-		// Also mark any nested expanded directories as collapsed
-		for i := removeStart; i < removeEnd; i++ {
-			if o.state.Entries[i].IsDir && o.state.Entries[i].IsExpanded {
-				o.ui.SetExpanded(o.state.Entries[i].Path, false)
-				// Unwatch nested expanded directories
-				if o.watcher != nil {
-					o.watcher.Unwatch(o.state.Entries[i].Path)
-				}
-			}
-		}
-
-		newEntries := make([]ui.UIEntry, 0, len(o.state.Entries)-(removeEnd-removeStart))
-		newEntries = append(newEntries, o.state.Entries[:removeStart]...)
-		newEntries = append(newEntries, o.state.Entries[removeEnd:]...)
-		o.state.Entries = newEntries
-	}
-
-	// Also update dirEntries to keep them in sync
-	o.dirEntries = make([]ui.UIEntry, len(o.state.Entries))
-	copy(o.dirEntries, o.state.Entries)
+	o.state.Entries = snapshot.Entries
 	o.stateMu.Unlock()
 
 	// Unwatch the collapsed directory
@@ -1128,18 +965,6 @@ func (o *Orchestrator) collapseDirectory(path string) {
 	}
 
 	o.window.Invalidate()
-}
-
-// sortEntries sorts entries according to current sort settings
-func (o *Orchestrator) sortEntries(entries []ui.UIEntry) {
-	sort.Slice(entries, func(i, j int) bool {
-		// Directories first
-		if entries[i].IsDir != entries[j].IsDir {
-			return entries[i].IsDir
-		}
-		// Then by name (case insensitive)
-		return strings.ToLower(entries[i].Name) < strings.ToLower(entries[j].Name)
-	})
 }
 
 func Main(startPath string) {

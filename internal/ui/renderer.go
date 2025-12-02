@@ -85,7 +85,8 @@ const (
 	ActionShowRecentFiles
 	ActionOpenFileLocation
 	// Tab actions
-	ActionNewTab
+	ActionNewTab      // New tab in current directory
+	ActionNewTabHome  // New tab in home directory
 	ActionCloseTab
 	ActionSwitchTab
 	ActionOpenInNewTab
@@ -1546,6 +1547,10 @@ func (r *Renderer) processGlobalInput(gtx layout.Context, state *State, keyTag e
 			if r.hotkeys.NewTab.Matches(k) {
 				debug.Log(debug.HOTKEY, "NewTab hotkey matched")
 				return UIEvent{Action: ActionNewTab}
+			}
+			if r.hotkeys.NewTabHome.Matches(k) {
+				debug.Log(debug.HOTKEY, "NewTabHome hotkey matched")
+				return UIEvent{Action: ActionNewTabHome}
 			}
 			if r.hotkeys.CloseTab.Matches(k) {
 				debug.Log(debug.HOTKEY, "CloseTab hotkey matched")

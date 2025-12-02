@@ -6,59 +6,44 @@ import (
 	"path/filepath"
 
 	"github.com/justyntemme/razor/internal/debug"
-	"github.com/justyntemme/razor/internal/ui"
 )
 
 // TabState holds the navigation state for a single tab
+// NOTE: Entry data is NOT stored here - it lives in StateOwner
+// Tabs only store metadata needed to restore state when switching
 type TabState struct {
-	ID           string            // Unique identifier
-	CurrentPath  string            // Current directory path
-	History      []string          // Navigation history
-	HistoryIndex int               // Current position in history
-	DirEntries   []ui.UIEntry      // Cached directory entries
-	RawEntries   []ui.UIEntry      // Raw entries (before filter)
-	SelectedIdx  int               // Selected item index
-	ExpandedDirs map[string]bool   // Expanded directories in tree view
+	ID           string          // Unique identifier
+	CurrentPath  string          // Current directory path
+	History      []string        // Navigation history
+	HistoryIndex int             // Current position in history
+	SelectedIdx  int             // Selected item index
+	ExpandedDirs map[string]bool // Expanded directories in tree view
 }
 
-// createNewTab creates a new tab based on config settings
-func (o *Orchestrator) createNewTab() {
+// createNewTabInCurrentDir creates a new tab in the current directory
+func (o *Orchestrator) createNewTabInCurrentDir() {
+	o.createTabAtPath(o.state.CurrentPath)
+}
+
+// createNewTabInHome creates a new tab in the home directory
+func (o *Orchestrator) createNewTabInHome() {
+	o.createTabAtPath(o.sharedDeps.HomePath)
+}
+
+// createTabAtPath creates a new tab at the specified path
+func (o *Orchestrator) createTabAtPath(path string) {
 	// Save current tab state before creating new tab
 	o.saveCurrentTabState()
 
 	o.tabCounter++
 	id := fmt.Sprintf("tab-%d", o.tabCounter)
 
-	// Determine new tab path based on config
-	tabsCfg := o.config.GetTabsConfig()
-	newTabPath := o.state.CurrentPath // default to current
-
-	switch tabsCfg.NewTabLocation {
-	case "home":
-		newTabPath = o.sharedDeps.HomePath
-	case "recent":
-		// For "recent", we'll navigate to recent files view after tab creation
-		newTabPath = o.sharedDeps.HomePath // Start at home, then switch to recent
-	case "current":
-		newTabPath = o.state.CurrentPath
-	default:
-		// Treat as custom path
-		if tabsCfg.NewTabLocation != "" {
-			// Check if it's a valid path
-			if info, err := os.Stat(tabsCfg.NewTabLocation); err == nil && info.IsDir() {
-				newTabPath = tabsCfg.NewTabLocation
-			}
-		}
-	}
-
 	// Create new tab state
 	tab := TabState{
 		ID:           id,
-		CurrentPath:  newTabPath,
-		History:      []string{newTabPath},
+		CurrentPath:  path,
+		History:      []string{path},
 		HistoryIndex: 0,
-		DirEntries:   nil, // Will be populated when we navigate
-		RawEntries:   nil,
 		SelectedIdx:  -1,
 		ExpandedDirs: make(map[string]bool),
 	}
@@ -69,23 +54,17 @@ func (o *Orchestrator) createNewTab() {
 	o.ui.EnableTabs(true)
 
 	// Add to UI
-	title := filepath.Base(newTabPath)
+	title := filepath.Base(path)
 	if title == "" || title == "/" || title == "." {
-		title = newTabPath
+		title = path
 	}
-	newIdx := o.ui.AddTab(id, title, newTabPath)
+	newIdx := o.ui.AddTab(id, title, path)
 	o.ui.SetActiveTab(newIdx)
 	o.activeTabIndex = newIdx
 
-	debug.Log(debug.APP, "Created new tab %s at %s (index %d)", id, newTabPath, newIdx)
+	debug.Log(debug.APP, "Created new tab %s at %s (index %d)", id, path, newIdx)
 
-	// Navigate to the new path (or show recent files)
-	if tabsCfg.NewTabLocation == "recent" {
-		o.showRecentFiles()
-	} else {
-		o.navCtrl.Navigate(newTabPath)
-	}
-
+	o.navCtrl.Navigate(path)
 	o.window.Invalidate()
 }
 
@@ -110,8 +89,6 @@ func (o *Orchestrator) openPathInNewTab(path string) {
 		CurrentPath:  path,
 		History:      []string{path},
 		HistoryIndex: 0,
-		DirEntries:   nil,
-		RawEntries:   nil,
 		SelectedIdx:  -1,
 		ExpandedDirs: make(map[string]bool),
 	}
@@ -246,6 +223,7 @@ func (o *Orchestrator) prevTab() {
 }
 
 // saveCurrentTabState saves the current orchestrator state to the active tab
+// NOTE: Entry data is managed by StateOwner, not stored in tabs
 func (o *Orchestrator) saveCurrentTabState() {
 	if o.activeTabIndex < 0 || o.activeTabIndex >= len(o.tabs) {
 		return
@@ -256,20 +234,17 @@ func (o *Orchestrator) saveCurrentTabState() {
 	tab.History = make([]string, len(o.navCtrl.History))
 	copy(tab.History, o.navCtrl.History)
 	tab.HistoryIndex = o.navCtrl.HistoryIndex
-	tab.DirEntries = make([]ui.UIEntry, len(o.dirEntries))
-	copy(tab.DirEntries, o.dirEntries)
-	tab.RawEntries = make([]ui.UIEntry, len(o.rawEntries))
-	copy(tab.RawEntries, o.rawEntries)
 	tab.SelectedIdx = o.state.SelectedIndex
 
-	// Save expanded directories state
+	// Save expanded directories state from StateOwner
 	tab.ExpandedDirs = make(map[string]bool)
-	for _, path := range o.ui.GetExpandedDirs() {
+	for _, path := range o.stateOwner.GetExpandedDirs() {
 		tab.ExpandedDirs[path] = true
 	}
 }
 
 // loadTabState loads state from the given tab into the orchestrator
+// Entry data will be re-fetched from filesystem via StateOwner
 func (o *Orchestrator) loadTabState(index int) {
 	if index < 0 || index >= len(o.tabs) {
 		return
@@ -282,28 +257,27 @@ func (o *Orchestrator) loadTabState(index int) {
 	copy(o.navCtrl.History, tab.History)
 	o.navCtrl.HistoryIndex = tab.HistoryIndex
 
-	// Restore entries
-	o.dirEntries = make([]ui.UIEntry, len(tab.DirEntries))
-	copy(o.dirEntries, tab.DirEntries)
-	o.rawEntries = make([]ui.UIEntry, len(tab.RawEntries))
-	copy(o.rawEntries, tab.RawEntries)
-
-	// Restore state
-	o.stateMu.Lock()
-	o.state.CurrentPath = tab.CurrentPath
-	o.state.SelectedIndex = tab.SelectedIdx
-	o.applyFilterAndSort()
-	o.state.CanBack = o.navCtrl.HistoryIndex > 0
-	o.state.CanForward = o.navCtrl.HistoryIndex < len(o.navCtrl.History)-1
-	o.stateMu.Unlock()
-
-	// Restore expanded directories state
+	// Clear and restore expanded directories in StateOwner (before fetching dir)
+	o.stateOwner.ClearExpanded()
+	// Also clear and restore expanded dirs in UI renderer
 	o.ui.ClearExpanded()
 	if tab.ExpandedDirs != nil {
 		for path := range tab.ExpandedDirs {
 			o.ui.SetExpanded(path, true)
 		}
 	}
+
+	// Restore state
+	o.stateMu.Lock()
+	o.state.CurrentPath = tab.CurrentPath
+	o.state.SelectedIndex = tab.SelectedIdx
+	o.state.CanBack = o.navCtrl.HistoryIndex > 0
+	o.state.CanForward = o.navCtrl.HistoryIndex < len(o.navCtrl.History)-1
+	o.stateMu.Unlock()
+
+	// Re-fetch directory contents - StateOwner will apply expansions
+	// This ensures we always have fresh data
+	o.navCtrl.RequestDir(tab.CurrentPath)
 
 	// Watch the tab's current directory and expanded directories
 	if o.watcher != nil {
@@ -334,13 +308,12 @@ func (o *Orchestrator) initializeTabs(startPath string) {
 	}
 
 	// Create initial tab state (but keep tab bar hidden)
+	// NOTE: No entry copies - StateOwner manages all entry data
 	o.tabs = []TabState{{
 		ID:           id,
 		CurrentPath:  startPath,
 		History:      []string{startPath},
 		HistoryIndex: 0,
-		DirEntries:   nil,
-		RawEntries:   nil,
 		SelectedIdx:  -1,
 		ExpandedDirs: make(map[string]bool),
 	}}

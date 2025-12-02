@@ -30,10 +30,11 @@ func DefaultHotkeys() HotkeysConfig {
 		Escape:        "Escape",
 
 		// Tabs - vim bindings: Ctrl+H (left) and Ctrl+L (right)
-		NewTab:   "Ctrl+T",
-		CloseTab: "Ctrl+W",
-		NextTab:  "Ctrl+L",         // Vim: right
-		PrevTab:  "Ctrl+H",         // Vim: left
+		NewTab:     "Ctrl+T",           // New tab in current directory
+		NewTabHome: "Ctrl+Shift+T",     // New tab in home directory
+		CloseTab:   "Ctrl+W",
+		NextTab:    "Ctrl+L",           // Vim: right
+		PrevTab:    "Ctrl+H",           // Vim: left
 
 		// Direct tab switching (Ctrl+Shift+1-6)
 		Tab1: "Ctrl+Shift+1",
