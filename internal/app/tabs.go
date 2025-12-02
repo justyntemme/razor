@@ -201,25 +201,24 @@ func (o *Orchestrator) switchToTab(index int) {
 	o.window.Invalidate()
 }
 
-// nextTab switches to the next tab (wraps around)
-func (o *Orchestrator) nextTab() {
+// cycleTab switches to an adjacent tab with wrapping.
+// delta should be +1 for next or -1 for previous.
+func (o *Orchestrator) cycleTab(delta int) {
 	if len(o.tabs) <= 1 {
 		return
 	}
-	nextIdx := (o.activeTabIndex + 1) % len(o.tabs)
-	o.switchToTab(nextIdx)
+	newIdx := (o.activeTabIndex + delta + len(o.tabs)) % len(o.tabs)
+	o.switchToTab(newIdx)
+}
+
+// nextTab switches to the next tab (wraps around)
+func (o *Orchestrator) nextTab() {
+	o.cycleTab(1)
 }
 
 // prevTab switches to the previous tab (wraps around)
 func (o *Orchestrator) prevTab() {
-	if len(o.tabs) <= 1 {
-		return
-	}
-	prevIdx := o.activeTabIndex - 1
-	if prevIdx < 0 {
-		prevIdx = len(o.tabs) - 1
-	}
-	o.switchToTab(prevIdx)
+	o.cycleTab(-1)
 }
 
 // saveCurrentTabState saves the current orchestrator state to the active tab
