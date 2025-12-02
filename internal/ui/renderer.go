@@ -632,10 +632,13 @@ type Renderer struct {
 	conflictStopBtn     widget.Clickable
 	conflictApplyToAll  widget.Bool
 
-	// Column sorting
-	headerBtns    [4]widget.Clickable
-	SortColumn    SortColumn
-	SortAscending bool
+	// Column sorting and resizing
+	headerBtns         [4]widget.Clickable
+	SortColumn         SortColumn
+	SortAscending      bool
+	columnWidths        [4]int         // Column widths in pixels
+	columnWidthsInited  bool
+	columnResizeHandles [3]ResizeHandle // Resize handles between columns (3 dividers for 4 columns)
 
 	// Settings
 	ShowDotfiles      bool
@@ -1753,24 +1756,50 @@ func (r *Renderer) buildHotkeyFilters(keyTag event.Tag) []event.Filter {
 }
 
 func (r *Renderer) renderColumns(gtx layout.Context) (layout.Dimensions, UIEvent) {
+	availWidth := gtx.Constraints.Max.X
+	headerHeight := gtx.Dp(24)
+
+	// Initialize column widths on first render (only first 3 columns - last one is flexible)
+	if !r.columnWidthsInited {
+		r.columnWidths = [4]int{
+			availWidth * 45 / 100, // Name
+			availWidth * 25 / 100, // Date Modified
+			availWidth * 15 / 100, // Type
+			0,                     // Size - calculated dynamically
+		}
+		// Initialize resize handles
+		for i := range r.columnResizeHandles {
+			r.columnResizeHandles[i].Horizontal = true
+			r.columnResizeHandles[i].MinSize = 50
+		}
+		r.columnWidthsInited = true
+	}
+
+	// Calculate the last column width dynamically (like Flexed in preview pane)
+	// Total fixed width = first 3 columns + 3 resize handles (6dp each, matching DefaultResizeHandleStyle)
+	handleWidth := gtx.Dp(6)
+	fixedWidth := r.columnWidths[0] + r.columnWidths[1] + r.columnWidths[2] + handleWidth*3
+	r.columnWidths[3] = availWidth - fixedWidth
+	if r.columnWidths[3] < 50 {
+		r.columnWidths[3] = 50
+	}
+
 	type colDef struct {
 		label string
 		col   SortColumn
-		flex  float32
 		align text.Alignment
 	}
 	cols := []colDef{
-		{"Name", SortByName, 0.5, text.Start},
-		{"Date Modified", SortByDate, 0.25, text.Start},
-		{"Type", SortByType, 0.15, text.Start},
-		{"Size", SortBySize, 0.10, text.End},
+		{"Name", SortByName, text.Start},
+		{"Date Modified", SortByDate, text.Start},
+		{"Type", SortByType, text.Start},
+		{"Size", SortBySize, text.End},
 	}
 
 	var evt UIEvent
-	children := make([]layout.FlexChild, len(cols))
 
+	// Handle header button clicks for sorting
 	for i, c := range cols {
-		i, c := i, c
 		if r.headerBtns[i].Clicked(gtx) {
 			r.onLeftClick()
 			if r.SortColumn == c.col {
@@ -1780,29 +1809,149 @@ func (r *Renderer) renderColumns(gtx layout.Context) (layout.Dimensions, UIEvent
 			}
 			evt = UIEvent{Action: ActionSort, SortColumn: r.SortColumn, SortAscending: r.SortAscending}
 		}
-
-		children[i] = layout.Flexed(c.flex, func(gtx layout.Context) layout.Dimensions {
-			label := c.label
-			if r.SortColumn == c.col {
-				if r.SortAscending {
-					label += " ▲"
-				} else {
-					label += " ▼"
-				}
-			}
-			textColor, weight := colGray, font.Normal
-			if r.SortColumn == c.col {
-				textColor, weight = colBlack, font.Medium
-			}
-			return material.Clickable(gtx, &r.headerBtns[i], func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body2(r.Theme, label)
-				lbl.Color, lbl.Font.Weight, lbl.Alignment = textColor, weight, c.align
-				return lbl.Layout(gtx)
-			})
-		})
 	}
 
-	return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween}.Layout(gtx, children...), evt
+	// Build the header row with resize handles between columns
+	// Layout: [Col0][Handle0][Col1][Handle1][Col2][Handle2][Col3]
+	var children []layout.FlexChild
+
+	// Column 0 (Name)
+	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min.X = r.columnWidths[0]
+		gtx.Constraints.Max.X = r.columnWidths[0]
+		gtx.Constraints.Min.Y = headerHeight
+		gtx.Constraints.Max.Y = headerHeight
+		label := cols[0].label
+		if r.SortColumn == cols[0].col {
+			if r.SortAscending {
+				label += " ▲"
+			} else {
+				label += " ▼"
+			}
+		}
+		textColor, weight := colGray, font.Normal
+		if r.SortColumn == cols[0].col {
+			textColor, weight = colBlack, font.Medium
+		}
+		return material.Clickable(gtx, &r.headerBtns[0], func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(r.Theme, label)
+			lbl.Color, lbl.Font.Weight, lbl.Alignment = textColor, weight, cols[0].align
+			return lbl.Layout(gtx)
+		})
+	}))
+	// Resize handle 0
+	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min.Y = headerHeight
+		gtx.Constraints.Max.Y = headerHeight
+		style := DefaultResizeHandleStyle()
+		dims, newWidth := r.columnResizeHandles[0].Layout(gtx, style, r.columnWidths[0])
+		if newWidth != r.columnWidths[0] {
+			r.columnWidths[0] = newWidth
+			gtx.Execute(op.InvalidateCmd{})
+		}
+		return dims
+	}))
+
+	// Column 1 (Date Modified)
+	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min.X = r.columnWidths[1]
+		gtx.Constraints.Max.X = r.columnWidths[1]
+		gtx.Constraints.Min.Y = headerHeight
+		gtx.Constraints.Max.Y = headerHeight
+		label := cols[1].label
+		if r.SortColumn == cols[1].col {
+			if r.SortAscending {
+				label += " ▲"
+			} else {
+				label += " ▼"
+			}
+		}
+		textColor, weight := colGray, font.Normal
+		if r.SortColumn == cols[1].col {
+			textColor, weight = colBlack, font.Medium
+		}
+		return material.Clickable(gtx, &r.headerBtns[1], func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(r.Theme, label)
+			lbl.Color, lbl.Font.Weight, lbl.Alignment = textColor, weight, cols[1].align
+			return lbl.Layout(gtx)
+		})
+	}))
+	// Resize handle 1
+	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min.Y = headerHeight
+		gtx.Constraints.Max.Y = headerHeight
+		style := DefaultResizeHandleStyle()
+		dims, newWidth := r.columnResizeHandles[1].Layout(gtx, style, r.columnWidths[1])
+		if newWidth != r.columnWidths[1] {
+			r.columnWidths[1] = newWidth
+			gtx.Execute(op.InvalidateCmd{})
+		}
+		return dims
+	}))
+
+	// Column 2 (Type)
+	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min.X = r.columnWidths[2]
+		gtx.Constraints.Max.X = r.columnWidths[2]
+		gtx.Constraints.Min.Y = headerHeight
+		gtx.Constraints.Max.Y = headerHeight
+		label := cols[2].label
+		if r.SortColumn == cols[2].col {
+			if r.SortAscending {
+				label += " ▲"
+			} else {
+				label += " ▼"
+			}
+		}
+		textColor, weight := colGray, font.Normal
+		if r.SortColumn == cols[2].col {
+			textColor, weight = colBlack, font.Medium
+		}
+		return material.Clickable(gtx, &r.headerBtns[2], func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(r.Theme, label)
+			lbl.Color, lbl.Font.Weight, lbl.Alignment = textColor, weight, cols[2].align
+			return lbl.Layout(gtx)
+		})
+	}))
+	// Resize handle 2
+	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min.Y = headerHeight
+		gtx.Constraints.Max.Y = headerHeight
+		style := DefaultResizeHandleStyle()
+		dims, newWidth := r.columnResizeHandles[2].Layout(gtx, style, r.columnWidths[2])
+		if newWidth != r.columnWidths[2] {
+			r.columnWidths[2] = newWidth
+			gtx.Execute(op.InvalidateCmd{})
+		}
+		return dims
+	}))
+
+	// Column 3 (Size) - flexible, takes remaining space
+	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min.X = r.columnWidths[3]
+		gtx.Constraints.Max.X = r.columnWidths[3]
+		gtx.Constraints.Min.Y = headerHeight
+		gtx.Constraints.Max.Y = headerHeight
+		label := cols[3].label
+		if r.SortColumn == cols[3].col {
+			if r.SortAscending {
+				label += " ▲"
+			} else {
+				label += " ▼"
+			}
+		}
+		textColor, weight := colGray, font.Normal
+		if r.SortColumn == cols[3].col {
+			textColor, weight = colBlack, font.Medium
+		}
+		return material.Clickable(gtx, &r.headerBtns[3], func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(r.Theme, label)
+			lbl.Color, lbl.Font.Weight, lbl.Alignment = textColor, weight, cols[3].align
+			return lbl.Layout(gtx)
+		})
+	}))
+
+	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, children...), evt
 }
 
 // renderRow renders a file/folder row. Returns dimensions, left-clicked, right-clicked, click position, rename event, checkbox toggled, and chevron event.
@@ -2024,13 +2173,15 @@ func (r *Renderer) renderRowContent(gtx layout.Context, item *UIEntry, isRenamin
 				)
 			}
 
-			// Name column (adjusted flex weight when checkbox is present)
-			nameWeight := float32(0.5)
-			if showCheckbox {
-				nameWeight = 0.45
-			}
+			// Use stored column widths (in pixels) for consistent alignment with header
+			// Add 6dp spacers between columns to match the resize handle widths in the header
+			colWidths := r.columnWidths
+
+			// Name column
 			children = append(children,
-				layout.Flexed(nameWeight, func(gtx layout.Context) layout.Dimensions {
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Min.X = colWidths[0]
+					gtx.Constraints.Max.X = colWidths[0]
 					if isRenaming {
 						// Show editor for renaming
 						gtx.Execute(key.FocusCmd{Tag: &r.renameEditor})
@@ -2047,24 +2198,33 @@ func (r *Renderer) renderRowContent(gtx layout.Context, item *UIEntry, isRenamin
 					lbl.Color, lbl.Font.Weight, lbl.MaxLines = textColor, weight, 1
 					return lbl.Layout(gtx)
 				}),
-				layout.Flexed(0.25, func(gtx layout.Context) layout.Dimensions {
+				layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout), // Match header resize handle width
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Min.X = colWidths[1]
+					gtx.Constraints.Max.X = colWidths[1]
 					lbl := material.Body2(r.Theme, dateStr)
 					lbl.Color, lbl.MaxLines = colGray, 1
 					return lbl.Layout(gtx)
 				}),
-				layout.Flexed(0.15, func(gtx layout.Context) layout.Dimensions {
+				layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout), // Match header resize handle width
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Min.X = colWidths[2]
+					gtx.Constraints.Max.X = colWidths[2]
 					lbl := material.Body2(r.Theme, typeStr)
 					lbl.Color, lbl.MaxLines = colGray, 1
 					return lbl.Layout(gtx)
 				}),
-				layout.Flexed(0.10, func(gtx layout.Context) layout.Dimensions {
+				layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout), // Match header resize handle width
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Min.X = colWidths[3]
+					gtx.Constraints.Max.X = colWidths[3]
 					lbl := material.Body2(r.Theme, sizeStr)
 					lbl.Color, lbl.Alignment, lbl.MaxLines = colGray, text.End, 1
 					return lbl.Layout(gtx)
 				}),
 			)
 
-			return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween, Alignment: layout.Middle}.Layout(gtx, children...)
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
 		})
 }
 

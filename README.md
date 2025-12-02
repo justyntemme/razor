@@ -321,31 +321,60 @@ Additional data (search history, etc.) is stored in:
 
 ```
 razor/
-├── cmd/razor/           # Application entry point
-│   ├── main.go
-│   ├── console_*.go     # Platform-specific console handling
+├── cmd/razor/                  # Application entry point
+│   ├── main.go                 # CLI flags and app bootstrap
+│   └── console_*.go            # Platform-specific console handling (Windows)
+│
 ├── internal/
-│   ├── app/             # Application orchestrator
-│   │   ├── orchestrator.go
-│   │   ├── debug_on.go  # Debug build logging
-│   │   ├── debug_off.go # Release build (no-op)
-│   │   └── open_*.go    # Platform-specific file opening
-│   ├── fs/              # Filesystem operations
-│   │   └── system.go
-│   ├── search/          # Search query parser
-│   │   └── query.go
-│   ├── store/           # SQLite persistence
-│   │   └── db.go
-│   └── ui/              # Gio UI components
-│       ├── renderer.go
-│       └── layout.go
+│   ├── app/                    # Application layer - business logic
+│   │   ├── orchestrator.go     # Central coordinator, event loop, UI event handling
+│   │   ├── state_owner.go      # Single source of truth for file entries
+│   │   ├── controllers.go      # Shared dependencies and controller types
+│   │   ├── nav_controller.go   # Navigation history, path expansion
+│   │   ├── search_controller.go# Search execution, engine management
+│   │   ├── tabs.go             # Tab state management, create/close/switch
+│   │   ├── file_ops.go         # File operations (copy, paste, delete, rename)
+│   │   ├── conflict.go         # File conflict resolution dialog handling
+│   │   ├── watcher.go          # Directory change watcher (fsnotify)
+│   │   └── platform_*.go       # Platform-specific file opening (darwin/linux/windows)
+│   │
+│   ├── config/                 # Configuration management
+│   │   ├── config.go           # Config file loading, defaults, persistence
+│   │   ├── hotkeys.go          # Hotkey parsing and matching
+│   │   └── hotkeys_*.go        # Platform-specific default hotkeys
+│   │
+│   ├── debug/                  # Debug logging (build tag controlled)
+│   │   ├── debug_on.go         # Debug build: enables logging
+│   │   └── debug_off.go        # Release build: no-op logging
+│   │
+│   ├── fs/                     # Filesystem operations
+│   │   ├── system.go           # Async file operations, search, directory listing
+│   │   └── drives_*.go         # Platform-specific drive enumeration
+│   │
+│   ├── search/                 # Search engine abstraction
+│   │   ├── query.go            # Query parsing (directives: contents:, ext:, size:)
+│   │   └── engine.go           # Engine detection (builtin, ripgrep, ugrep)
+│   │
+│   ├── store/                  # SQLite persistence
+│   │   └── db.go               # Search history, recent files database
+│   │
+│   └── ui/                     # Gio UI components
+│       ├── renderer.go         # Main UI renderer, state types, event handling
+│       ├── layout.go           # Layout functions for all UI components
+│       ├── tabs.go             # Reusable tab bar component
+│       ├── markdown.go         # Markdown parsing and rendering (goldmark)
+│       └── debug_*.go          # UI debug flag
+│
+└── docs/
+    └── screenshots/            # Application screenshots for README
 ```
 
 ## Dependencies
 
-- [Gio](https://gioui.org/) - Immediate mode GUI
-- [go-sqlite3](https://github.com/mattn/go-sqlite3) - SQLite driver
+- [Gio](https://gioui.org/) - Immediate mode GUI framework
+- [go-sqlite3](https://github.com/mattn/go-sqlite3) - SQLite driver for persistence
 - [fastwalk](https://github.com/charlievieth/fastwalk) - Fast parallel directory traversal
+- [fsnotify](https://github.com/fsnotify/fsnotify) - Cross-platform filesystem notifications
 - [goldmark](https://github.com/yuin/goldmark) - Markdown parser for preview rendering
 
 ## License
