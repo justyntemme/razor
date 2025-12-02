@@ -1,0 +1,729 @@
+#+TITLE: Razor Codebase Refactoring Plan
+#+AUTHOR: Development Team
+#+DATE: 2024-12-02
+#+STARTUP: overview
+
+* Overview
+
+This document outlines a comprehensive refactoring plan for the Razor file manager codebase.
+The primary goals are:
+1. Reduce file sizes to improve maintainability and navigation
+2. Separate concerns into logical groupings
+3. Identify candidates for new Go modules
+4. Maintain backward compatibility (no API changes to external consumers)
+
+** Current State Analysis
+
+| File                           | Lines | Size  | Concern                          |
+|--------------------------------+-------+-------+----------------------------------|
+| internal/ui/layout.go          |  3160 | 114KB | All UI layout functions          |
+| internal/ui/renderer.go        |  2332 |  77KB | Renderer struct + state          |
+| internal/app/orchestrator.go   |  1007 |  30KB | Event handling + coordination    |
+| internal/app/state_owner.go    |   643 |  15KB | State management                 |
+| internal/config/config.go      |   551 |   --  | Configuration                    |
+| internal/app/file_ops.go       |   500 |  12KB | File operations                  |
+
+** Refactoring Principles
+
+1. *Single Responsibility*: Each file should have one clear purpose
+2. *Locality*: Related functions should be in the same file
+3. *Discoverability*: File names should clearly indicate contents
+4. *Minimal Churn*: Preserve function signatures; only move code
+5. *Same Package*: Files in same directory share the package namespace
+
+* Phase 1: Split layout.go (ui package)
+:PROPERTIES:
+:EFFORT: Medium
+:PRIORITY: High
+:END:
+
+Split ~layout.go~ (3160 lines) into focused files within the same ~ui~ package.
+All files will have ~package ui~ and share access to unexported types/functions.
+
+** 1.1 Create layout_navbar.go (~450 lines)
+
+*** Functions to Move
+| Function                      | Lines     | Dependencies                    |
+|-------------------------------+-----------+---------------------------------|
+| layoutNavBar                  | 258-488   | navButton, iconButton           |
+| collapseBreadcrumbsForWidth   | 489-567   | BreadcrumbSegment               |
+| layoutBreadcrumb              | 568-644   | state, eventOut                 |
+| iconButton                    | 645-655   | drawIcon                        |
+| drawIcon                      | 656-713   | icon path constants             |
+| navButton                     | 714-729   | iconButton                      |
+
+*** File Structure
+#+begin_src go
+// layout_navbar.go
+package ui
+
+// Navigation bar layout - back/forward buttons, breadcrumb, search
+
+func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout.List, eventOut *UIEvent) layout.Dimensions
+func (r *Renderer) collapseBreadcrumbsForWidth(gtx layout.Context, segments []BreadcrumbSegment) []BreadcrumbSegment
+func (r *Renderer) layoutBreadcrumb(gtx layout.Context, state *State, eventOut *UIEvent) layout.Dimensions
+func (r *Renderer) iconButton(gtx layout.Context, btn *widget.Clickable, iconType string, iconColor color.NRGBA) layout.Dimensions
+func (r *Renderer) drawIcon(ops *op.Ops, iconType string, size int, iconColor color.NRGBA)
+func (r *Renderer) navButton(gtx layout.Context, btn *widget.Clickable, iconType string, enabled bool, action func(), keyTag *layout.List) layout.Dimensions
+#+end_src
+
+*** Implementation Steps
+1. Create ~internal/ui/layout_navbar.go~
+2. Add package declaration and imports (copy relevant imports from layout.go)
+3. Move functions in dependency order: drawIcon -> iconButton -> navButton -> layoutBreadcrumb -> collapseBreadcrumbsForWidth -> layoutNavBar
+4. Remove moved functions from layout.go
+5. Remove unused imports from layout.go
+6. Run ~go build~ to verify
+
+** 1.2 Create layout_search.go (~200 lines)
+
+*** Functions to Move
+| Function                     | Lines     | Dependencies               |
+|------------------------------+-----------+----------------------------|
+| layoutSearchWithHistory      | 730-780   | layoutSearchHistoryOverlay |
+| layoutSearchHistoryOverlay   | 781-802   | layoutSearchHistoryDropdown|
+| layoutSearchHistoryDropdown  | 803-827   | searchHistoryFlexChildren  |
+| searchHistoryFlexChildren    | 828-865   | SearchHistoryEntry         |
+| layoutDirectivePills         | 866-884   | renderDirectivePill        |
+| renderDirectivePill          | 885-957   | DetectedDirective          |
+
+*** File Structure
+#+begin_src go
+// layout_search.go
+package ui
+
+// Search bar layout - search input, history dropdown, directive pills
+
+func (r *Renderer) layoutSearchWithHistory(gtx layout.Context, hasDirectivePrefix, showClearBtn bool) layout.Dimensions
+func (r *Renderer) layoutSearchHistoryOverlay(gtx layout.Context) layout.Dimensions
+func (r *Renderer) layoutSearchHistoryDropdown(gtx layout.Context) layout.Dimensions
+func (r *Renderer) searchHistoryFlexChildren() []layout.FlexChild
+func (r *Renderer) layoutDirectivePills(gtx layout.Context) layout.Dimensions
+func (r *Renderer) renderDirectivePill(gtx layout.Context, d DetectedDirective) layout.Dimensions
+#+end_src
+
+** 1.3 Create layout_sidebar.go (~400 lines)
+
+*** Functions to Move
+| Function                    | Lines      | Dependencies                |
+|-----------------------------+------------+-----------------------------|
+| layoutSidebar               | 958-988    | layoutSidebarTabbed/Stacked |
+| layoutSidebarTabbed         | 989-1072   | layoutFavoritesList, etc    |
+| layoutSidebarStacked        | 1073-1132  | layoutFavoritesList, etc    |
+| layoutFavoritesList         | 1133-1160  | layoutFavoritesListContent  |
+| layoutFavoritesListContent  | 1161-1200  | favorites state             |
+| layoutDrivesList            | 1201-1230  | drives state                |
+| layoutRecentFilesEntry      | 1231-1272  | drawClockIcon               |
+| drawClockIcon               | 1273-1302  | op.Ops                      |
+
+*** File Structure
+#+begin_src go
+// layout_sidebar.go
+package ui
+
+// Sidebar layout - favorites, drives, recent files
+
+func (r *Renderer) layoutSidebar(gtx layout.Context, state *State, eventOut *UIEvent) layout.Dimensions
+func (r *Renderer) layoutSidebarTabbed(gtx layout.Context, state *State, eventOut *UIEvent, sidebarYOffset int) layout.Dimensions
+func (r *Renderer) layoutSidebarStacked(gtx layout.Context, state *State, eventOut *UIEvent, sidebarYOffset int) layout.Dimensions
+func (r *Renderer) layoutFavoritesList(gtx layout.Context, state *State, eventOut *UIEvent, yOffset int) layout.Dimensions
+func (r *Renderer) layoutFavoritesListContent(gtx layout.Context, state *State, eventOut *UIEvent, yOffset int) layout.Dimensions
+func (r *Renderer) layoutDrivesList(gtx layout.Context, state *State, eventOut *UIEvent) layout.Dimensions
+func (r *Renderer) layoutRecentFilesEntry(gtx layout.Context, eventOut *UIEvent) layout.Dimensions
+func (r *Renderer) drawClockIcon(ops *op.Ops, size int, iconColor color.NRGBA)
+#+end_src
+
+** 1.4 Create layout_filelist.go (~300 lines)
+
+*** Functions to Move
+| Function                  | Lines      | Dependencies          |
+|---------------------------+------------+-----------------------|
+| layoutFileList            | 1303-1497  | entry rendering logic |
+| layoutProgressBar         | 1498-1579  | Progress state        |
+| layoutConfigErrorBanner   | 1580-1601  | ConfigError state     |
+
+*** File Structure
+#+begin_src go
+// layout_filelist.go
+package ui
+
+// File list layout - main file/folder display, progress bar, error banner
+
+func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layout.List, eventOut *UIEvent) layout.Dimensions
+func (r *Renderer) layoutProgressBar(gtx layout.Context, state *State) layout.Dimensions
+func (r *Renderer) layoutConfigErrorBanner(gtx layout.Context) layout.Dimensions
+#+end_src
+
+** 1.5 Create layout_menus.go (~400 lines)
+
+*** Functions to Move
+| Function           | Lines      | Dependencies      |
+|--------------------+------------+-------------------|
+| menuShell          | 1602-1665  | clip, paint       |
+| menuItemWithColor  | 1666-1676  | material.Button   |
+| menuItem           | 1677-1681  | menuItemWithColor |
+| menuItemDanger     | 1682-1686  | menuItemWithColor |
+| layoutFileMenu     | 1845-1897  | menuItem, etc     |
+| layoutContextMenu  | 1898-2131  | menuItem, state   |
+
+*** File Structure
+#+begin_src go
+// layout_menus.go
+package ui
+
+// Context menus and file menus
+
+func (r *Renderer) menuShell(gtx layout.Context, width unit.Dp, content layout.Widget) layout.Dimensions
+func (r *Renderer) menuItemWithColor(gtx layout.Context, btn *widget.Clickable, label string, textColor color.NRGBA) layout.Dimensions
+func (r *Renderer) menuItem(gtx layout.Context, btn *widget.Clickable, label string) layout.Dimensions
+func (r *Renderer) menuItemDanger(gtx layout.Context, btn *widget.Clickable, label string) layout.Dimensions
+func (r *Renderer) layoutFileMenu(gtx layout.Context, eventOut *UIEvent) layout.Dimensions
+func (r *Renderer) layoutContextMenu(gtx layout.Context, state *State, eventOut *UIEvent) layout.Dimensions
+#+end_src
+
+** 1.6 Create layout_browser_tabs.go (~200 lines)
+
+*** Functions to Move
+| Function             | Lines      | Dependencies    |
+|----------------------+------------+-----------------|
+| layoutBrowserTabBar  | 1687-1721  | browserTabChildren |
+| browserTabChildren   | 1722-1844  | BrowserTab state   |
+
+*** File Structure
+#+begin_src go
+// layout_browser_tabs.go
+package ui
+
+// Browser tab bar layout
+
+func (r *Renderer) layoutBrowserTabBar(gtx layout.Context, state *State, eventOut *UIEvent) layout.Dimensions
+func (r *Renderer) browserTabChildren(gtx layout.Context, tabHeight, tabMinWidth, tabMaxWidth, closeSize int) []layout.FlexChild
+#+end_src
+
+** 1.7 Create layout_dialogs.go (~350 lines)
+
+*** Functions to Move
+| Function              | Lines      | Dependencies        |
+|-----------------------+------------+---------------------|
+| layoutDeleteConfirm   | 2132-2182  | modalBackdrop, etc  |
+| layoutCreateDialog    | 2183-2260  | modalContentWithClose |
+| layoutConflictDialog  | 2261-2418  | ConflictInfo state  |
+
+*** File Structure
+#+begin_src go
+// layout_dialogs.go
+package ui
+
+// Confirmation and input dialogs
+
+func (r *Renderer) layoutDeleteConfirm(gtx layout.Context, state *State, eventOut *UIEvent) layout.Dimensions
+func (r *Renderer) layoutCreateDialog(gtx layout.Context, state *State, eventOut *UIEvent) layout.Dimensions
+func (r *Renderer) layoutConflictDialog(gtx layout.Context, state *State, eventOut *UIEvent) layout.Dimensions
+#+end_src
+
+** 1.8 Create layout_preview.go (~250 lines)
+
+*** Functions to Move
+| Function               | Lines      | Dependencies      |
+|------------------------+------------+-------------------|
+| layoutPreviewPane      | 2419-2543  | layoutImagePreview, etc |
+| layoutImagePreview     | 2544-2601  | previewImage state |
+| layoutTextPreview      | 2602-2636  | previewText state  |
+| layoutMarkdownPreview  | 2637-2649  | markdown renderer  |
+
+*** File Structure
+#+begin_src go
+// layout_preview.go
+package ui
+
+// File preview pane - images, text, markdown
+
+func (r *Renderer) layoutPreviewPane(gtx layout.Context, state *State) layout.Dimensions
+func (r *Renderer) layoutImagePreview(gtx layout.Context) layout.Dimensions
+func (r *Renderer) layoutTextPreview(gtx layout.Context) layout.Dimensions
+func (r *Renderer) layoutMarkdownPreview(gtx layout.Context) layout.Dimensions
+#+end_src
+
+** 1.9 Create layout_modals.go (~350 lines)
+
+*** Functions to Move
+| Function                   | Lines      | Dependencies           |
+|----------------------------+------------+------------------------|
+| layoutSettingsModal        | 2650-2828  | layoutSearchEngineOptions, etc |
+| layoutHotkeysModal         | 2829-3074  | hotkey sections        |
+| layoutSearchEngineOptions  | 3075-3087  | layoutSearchEngineOption |
+| layoutSearchEngineOption   | 3088-3121  | SearchEngineInfo       |
+| layoutTerminalOptions      | 3122-3141  | layoutTerminalOption   |
+| layoutTerminalOption       | 3142-3160  | TerminalInfo           |
+
+*** File Structure
+#+begin_src go
+// layout_modals.go
+package ui
+
+// Settings and hotkeys modal dialogs
+
+func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) layout.Dimensions
+func (r *Renderer) layoutHotkeysModal(gtx layout.Context) layout.Dimensions
+func (r *Renderer) layoutSearchEngineOptions(gtx layout.Context) layout.Dimensions
+func (r *Renderer) layoutSearchEngineOption(gtx layout.Context, eng SearchEngineInfo) layout.Dimensions
+func (r *Renderer) layoutTerminalOptions(gtx layout.Context, eventOut *UIEvent) layout.Dimensions
+func (r *Renderer) layoutTerminalOption(gtx layout.Context, term TerminalInfo) layout.Dimensions
+#+end_src
+
+** 1.10 Remaining layout.go (~250 lines)
+
+After extraction, layout.go should contain only:
+- Package declaration and shared imports
+- Constants (doubleClickInterval, animationFrameRate)
+- Main ~Layout()~ function (the entry point that calls other layout functions)
+- Any small helper functions used across multiple layout files
+
+* Phase 2: Split orchestrator.go (app package)
+:PROPERTIES:
+:EFFORT: Medium
+:PRIORITY: High
+:END:
+
+Split ~orchestrator.go~ (1007 lines) into focused files.
+
+** 2.1 Create event_handlers.go (~300 lines)
+
+*** Functions to Move
+| Function        | Lines     | Description                              |
+|-----------------+-----------+------------------------------------------|
+| handleUIEvent   | 313-588   | Main UI event switch statement           |
+
+*** File Structure
+#+begin_src go
+// event_handlers.go
+package app
+
+// UI event handling - dispatches UI actions to appropriate handlers
+
+func (o *Orchestrator) handleUIEvent(evt ui.UIEvent)
+#+end_src
+
+*** Rationale
+The ~handleUIEvent~ function is a large switch statement (275 lines) that
+handles all UI actions. Isolating it makes the orchestrator's core loop cleaner
+and makes event handling easier to find and modify.
+
+** 2.2 Create response_handlers.go (~250 lines)
+
+*** Functions to Move
+| Function              | Lines     | Description                    |
+|-----------------------+-----------+--------------------------------|
+| handleDirectoryChange | 637-680   | Directory watcher response     |
+| handleProgress        | 681-703   | Progress updates               |
+| handleFSResponse      | 704-797   | Filesystem operation responses |
+| handleStoreResponse   | 798-821   | Database operation responses   |
+
+*** File Structure
+#+begin_src go
+// response_handlers.go
+package app
+
+// Async response handling - filesystem, store, and watcher events
+
+func (o *Orchestrator) handleDirectoryChange(changedDir string)
+func (o *Orchestrator) handleProgress(p fs.Progress)
+func (o *Orchestrator) handleFSResponse(resp fs.Response)
+func (o *Orchestrator) handleStoreResponse(resp store.Response)
+#+end_src
+
+** 2.3 Create tree_view.go (~100 lines)
+
+*** Functions to Move
+| Function           | Lines     | Description                     |
+|--------------------+-----------+---------------------------------|
+| expandDirectory    | 951-974   | Expand directory in tree view   |
+| collapseDirectory  | 975-1007  | Collapse directory in tree view |
+
+*** File Structure
+#+begin_src go
+// tree_view.go
+package app
+
+// Tree view operations - expand/collapse directories inline
+
+func (o *Orchestrator) expandDirectory(path string)
+func (o *Orchestrator) collapseDirectory(path string)
+#+end_src
+
+** 2.4 Create recent_files.go (~100 lines)
+
+*** Functions to Move
+| Function                   | Lines     | Description                     |
+|----------------------------+-----------+---------------------------------|
+| handleRecentFilesResponse  | 837-874   | Process recent files from DB    |
+| showRecentFiles            | 875-887   | Switch to recent files view     |
+| openFileLocation           | 888-913   | Navigate to file's directory    |
+
+*** File Structure
+#+begin_src go
+// recent_files.go
+package app
+
+// Recent files feature - display and navigation
+
+func (o *Orchestrator) handleRecentFilesResponse(recentFiles []store.RecentFileEntry)
+func (o *Orchestrator) showRecentFiles()
+func (o *Orchestrator) openFileLocation(path string)
+#+end_src
+
+** 2.5 Create selection.go (~50 lines)
+
+*** Functions to Move
+| Function   | Lines     | Description              |
+|------------+-----------+--------------------------|
+| selectAll  | 914-950   | Select all visible items |
+
+*** File Structure
+#+begin_src go
+// selection.go
+package app
+
+// Selection operations
+
+func (o *Orchestrator) selectAll()
+#+end_src
+
+** 2.6 Remaining orchestrator.go (~400 lines)
+
+After extraction, orchestrator.go should contain:
+- Package declaration and imports
+- Orchestrator struct definition
+- NewOrchestrator() constructor
+- Run() main loop
+- processEvents() event loop
+- loadFavoritesFromConfig()
+- refreshDrives()
+- resetUIState()
+- restoreDirectory()
+- openNewWindow()
+- applyFilterAndSort()
+- setProgress()
+
+* Phase 3: Split renderer.go (ui package)
+:PROPERTIES:
+:EFFORT: Medium
+:PRIORITY: Medium
+:END:
+
+Split ~renderer.go~ (2332 lines) into focused files.
+
+** 3.1 Create types.go (~300 lines)
+
+*** Content to Move
+- UIAction enum and all action constants (lines 41-115)
+- UIEvent struct
+- State struct
+- Entry struct
+- All other type definitions (Clipboard, ClipOp, SortColumn, etc.)
+
+*** File Structure
+#+begin_src go
+// types.go
+package ui
+
+// Type definitions for UI state and events
+
+type UIAction int
+
+const (
+    ActionNone UIAction = iota
+    ActionNavigate
+    // ... all action constants
+)
+
+type UIEvent struct { ... }
+type State struct { ... }
+type Entry struct { ... }
+// ... etc
+#+end_src
+
+** 3.2 Create colors.go (~100 lines)
+
+*** Content to Move
+- All color constants (colWhite, colBlack, colGray, etc.)
+- Theme-related color definitions
+
+*** File Structure
+#+begin_src go
+// colors.go
+package ui
+
+// Color constants and theme definitions
+
+var (
+    colWhite     = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+    colBlack     = color.NRGBA{R: 0, G: 0, B: 0, A: 255}
+    // ... etc
+)
+#+end_src
+
+** 3.3 Create renderer_preview.go (~200 lines)
+
+*** Content to Move
+- ShowPreview()
+- HidePreview()
+- loadPreview()
+- Preview-related fields initialization
+
+*** File Structure
+#+begin_src go
+// renderer_preview.go
+package ui
+
+// Preview pane state and loading logic
+
+func (r *Renderer) ShowPreview(path string)
+func (r *Renderer) HidePreview()
+func (r *Renderer) loadPreview()
+#+end_src
+
+** 3.4 Create renderer_input.go (~300 lines)
+
+*** Content to Move
+- Keyboard event handling
+- Mouse event handling
+- Input processing methods
+
+*** File Structure
+#+begin_src go
+// renderer_input.go
+package ui
+
+// Input handling - keyboard and mouse events
+
+func (r *Renderer) handleKeyEvent(gtx layout.Context, evt key.Event, state *State, eventOut *UIEvent)
+func (r *Renderer) handleMouseEvent(...)
+#+end_src
+
+** 3.5 Remaining renderer.go (~1400 lines)
+
+After extraction:
+- Renderer struct definition
+- NewRenderer() constructor
+- Core methods (applyTheme, etc.)
+- Widget state management
+
+* Phase 4: New Modules (Separate Packages)
+:PROPERTIES:
+:EFFORT: High
+:PRIORITY: Low
+:END:
+
+These are candidates for extraction into separate packages with clean interfaces.
+
+** 4.1 internal/clipboard - Clipboard Operations
+
+*** Rationale
+Clipboard operations (copy, cut, paste) have complex logic for handling
+conflicts, progress tracking, and filesystem operations. This is a distinct
+concern from orchestration.
+
+*** Current Location
+- ~internal/app/file_ops.go~: doPaste(), doCopy(), doCopyFile(), doCopyDir()
+
+*** Proposed Interface
+#+begin_src go
+// internal/clipboard/clipboard.go
+package clipboard
+
+type Operation int
+const (
+    Copy Operation = iota
+    Cut
+)
+
+type Clipboard struct {
+    Paths []string
+    Op    Operation
+}
+
+type ProgressFunc func(current, total int64)
+type ConflictFunc func(src, dst string) Resolution
+
+type Manager struct {
+    clipboard *Clipboard
+}
+
+func New() *Manager
+func (m *Manager) Copy(paths []string)
+func (m *Manager) Cut(paths []string)
+func (m *Manager) Paste(dst string, progress ProgressFunc, conflict ConflictFunc) error
+func (m *Manager) Clear()
+func (m *Manager) HasContent() bool
+#+end_src
+
+*** Migration Steps
+1. Create ~internal/clipboard/~ directory
+2. Define clean interface in ~clipboard.go~
+3. Move copy/paste logic from ~file_ops.go~
+4. Update orchestrator to use clipboard.Manager
+5. Remove clipboard fields from ui.State (use Manager instead)
+
+** 4.2 internal/icons - Icon Drawing
+
+*** Rationale
+Icon drawing code (drawIcon, icon path definitions) is purely visual
+and could be reused. Currently embedded in layout code.
+
+*** Current Location
+- ~internal/ui/layout.go~: drawIcon(), drawClockIcon()
+- Icon path definitions scattered in drawIcon switch
+
+*** Proposed Interface
+#+begin_src go
+// internal/icons/icons.go
+package icons
+
+type Icon int
+const (
+    Folder Icon = iota
+    File
+    Back
+    Forward
+    Home
+    Search
+    Settings
+    // ... etc
+)
+
+func Draw(ops *op.Ops, icon Icon, size int, color color.NRGBA)
+func Path(icon Icon) string  // Returns SVG-like path data
+#+end_src
+
+*** Migration Steps
+1. Create ~internal/icons/~ directory
+2. Extract icon path data to constants
+3. Create Draw function
+4. Update layout files to use icons.Draw()
+
+** 4.3 internal/preview - File Preview Generation
+
+*** Rationale
+Preview loading (text, image, markdown) is independent of UI rendering.
+Currently split between renderer.go (state) and orchestrator.go (loading).
+
+*** Current Location
+- ~internal/ui/renderer.go~: ShowPreview(), loadPreview()
+- Preview state fields in Renderer struct
+
+*** Proposed Interface
+#+begin_src go
+// internal/preview/preview.go
+package preview
+
+type Type int
+const (
+    None Type = iota
+    Text
+    Image
+    Markdown
+)
+
+type Preview struct {
+    Type    Type
+    Path    string
+    Text    string
+    Image   image.Image
+    Error   error
+}
+
+type Loader struct {
+    maxTextSize int64
+    // ...
+}
+
+func NewLoader() *Loader
+func (l *Loader) Load(path string) *Preview
+func (l *Loader) CanPreview(path string) bool
+#+end_src
+
+* Phase 5: Implementation Order
+:PROPERTIES:
+:PRIORITY: Critical
+:END:
+
+Execute phases in this order to minimize risk:
+
+** Step 1: layout.go split (Phase 1)
+1. [ ] Create layout_navbar.go
+2. [ ] Create layout_search.go
+3. [ ] Create layout_sidebar.go
+4. [ ] Create layout_filelist.go
+5. [ ] Create layout_menus.go
+6. [ ] Create layout_browser_tabs.go
+7. [ ] Create layout_dialogs.go
+8. [ ] Create layout_preview.go
+9. [ ] Create layout_modals.go
+10. [ ] Verify build succeeds
+11. [ ] Run all tests
+
+** Step 2: orchestrator.go split (Phase 2)
+1. [ ] Create event_handlers.go
+2. [ ] Create response_handlers.go
+3. [ ] Create tree_view.go
+4. [ ] Create recent_files.go
+5. [ ] Create selection.go
+6. [ ] Verify build succeeds
+7. [ ] Run all tests
+
+** Step 3: renderer.go split (Phase 3)
+1. [ ] Create types.go
+2. [ ] Create colors.go
+3. [ ] Create renderer_preview.go
+4. [ ] Create renderer_input.go
+5. [ ] Verify build succeeds
+6. [ ] Run all tests
+
+** Step 4: New modules (Phase 4) - Optional/Future
+1. [ ] Create internal/clipboard package
+2. [ ] Create internal/icons package
+3. [ ] Create internal/preview package
+4. [ ] Update all consumers
+5. [ ] Verify build succeeds
+6. [ ] Run all tests
+
+* Verification Checklist
+
+After each file extraction:
+- [ ] ~go build ./...~ succeeds
+- [ ] ~go test ./...~ passes
+- [ ] ~go vet ./...~ reports no issues
+- [ ] Application runs correctly
+- [ ] No import cycles introduced
+
+* Notes
+
+** Import Management
+When splitting files in the same package, imports are shared. However, each
+new file should only include the imports it needs. Use ~goimports~ to
+automatically manage imports.
+
+** Circular Dependencies
+Watch for circular dependencies when creating new packages (Phase 4).
+The dependency graph should be:
+#+begin_example
+cmd/razor -> internal/app -> internal/ui
+                          -> internal/fs
+                          -> internal/store
+                          -> internal/config
+                          -> internal/search
+#+end_example
+
+New packages should slot in without creating cycles:
+#+begin_example
+internal/app -> internal/clipboard -> (no internal deps)
+internal/ui  -> internal/icons     -> (no internal deps)
+internal/ui  -> internal/preview   -> (no internal deps)
+#+end_example
+
+** Testing
+Currently there are minimal tests. After refactoring, consider adding:
+- Unit tests for clipboard operations
+- Unit tests for preview loading
+- Integration tests for file operations

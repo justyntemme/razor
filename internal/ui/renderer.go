@@ -587,6 +587,7 @@ type Renderer struct {
 	settingsBtn         widget.Clickable
 	settingsOpen        bool
 	settingsCloseBtn    widget.Clickable
+	settingsListState   widget.List
 	hotkeysBtn          widget.Clickable
 	hotkeysOpen         bool
 	hotkeysCloseBtn     widget.Clickable
