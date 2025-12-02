@@ -7,11 +7,18 @@ A fast, lightweight file manager built with Go and [Gio UI](https://gioui.org/).
 ## Features
 
 - **Fast Navigation** - Keyboard-driven with mouse support
+- **Browser Tabs** - Multiple directories in tabs with keyboard shortcuts
 - **Sortable Columns** - Click column headers to sort by name, date, type, or size
+- **Resizable Columns** - Drag column dividers to resize
+- **Breadcrumb Path Bar** - Clickable path segments for quick navigation
 - **Favorites Sidebar** - Quick access to frequently used directories
 - **Advanced Search** - Filename, content, extension, size, and date filtering
-- **File Operations** - Copy, cut, paste, delete with progress tracking
+- **File Preview** - Text, JSON, Markdown, and image preview with resizable pane
+- **File Operations** - Copy, cut, paste, delete, rename with conflict resolution
+- **Multi-Select** - Shift+click for range, Ctrl/Cmd+click for toggle selection
 - **Dotfiles Toggle** - Show/hide hidden files
+- **Recent Files** - Track and quickly access recently opened files
+- **Customizable Hotkeys** - Configure all keyboard shortcuts
 - **Cross-Platform** - Works on Linux, macOS, and Windows
 
 ## Installation
@@ -91,6 +98,8 @@ Use directives for advanced filtering:
 | `ext:` | Filter by extension | `ext:go` or `ext:.go` |
 | `size:` | Filter by file size | `size:>1MB` |
 | `modified:` | Filter by modification date | `modified:>2024-01-01` |
+| `recursive:` | Enable recursive search | `recursive:` or `recursive:5` |
+| `depth:` | Alias for recursive | `depth:3` |
 
 ### Size Operators
 
@@ -126,6 +135,7 @@ ext:md modified:>week       # Markdown files modified in the last week
 size:>1MB ext:log           # Log files larger than 1MB
 *.go size:<100KB            # Small Go files
 contents:password ext:txt   # Text files containing "password"
+recursive: ext:go           # Recursively find all Go files
 ```
 
 ![Search Directives with Preview](https://raw.githubusercontent.com/justyntemme/razor/main/docs/screenshots/razor-screen-2-directives.png)
@@ -149,6 +159,9 @@ ext:py contents:TODO
 
 # Find old log files
 ext:log modified:<2024-01-01 size:>10MB
+
+# Recursively search for Go files containing "error"
+recursive:10 ext:go contents:error
 ```
 
 ## Configuration
@@ -189,6 +202,15 @@ Configuration is stored in `~/.config/razor/config.json` on all platforms. The f
     "restoreLastPath": true,
     "singleClickToSelect": true
   },
+  "preview": {
+    "enabled": true,
+    "position": "right",
+    "widthPercent": 33,
+    "textExtensions": [".txt", ".json", ".csv", ".md", ".log", ".xml", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg"],
+    "imageExtensions": [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".heic"],
+    "maxFileSize": 1048576,
+    "markdownRendered": true
+  },
   "favorites": [
     {"name": "Home", "path": "/Users/you", "icon": "home"},
     {"name": "Documents", "path": "/Users/you/Documents", "icon": "folder"}
@@ -227,10 +249,14 @@ To get the legacy horizontal tab layout, set:
 - `enabled` - Whether preview is enabled (default: `true`)
 - `position` - Position of preview pane: `"right"` | `"bottom"` (default: `"right"`)
 - `widthPercent` - Width as percentage of screen (default: `33` for 1/3)
-- `textExtensions` - File extensions to preview (default: `[".txt", ".json", ".csv", ".md", ".log", ".xml", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg"]`)
+- `textExtensions` - File extensions to preview as text
+- `imageExtensions` - File extensions to preview as images (supports PNG, JPG, GIF, BMP, WebP, HEIC)
 - `maxFileSize` - Maximum file size to preview in bytes (default: `1048576` = 1MB)
+- `markdownRendered` - Whether to render markdown by default (default: `true`)
 
-When you click a file with a supported extension, the preview pane opens on the right. JSON files are automatically formatted with indentation. Press Escape or navigate away to close the preview.
+When you click a file with a supported extension, the preview pane opens on the right. JSON files are automatically formatted with indentation. Markdown files can be toggled between raw and rendered view. Press Escape or navigate away to close the preview.
+
+The preview pane can be resized by dragging the left edge.
 
 ### Keyboard Shortcuts
 
@@ -267,6 +293,14 @@ All keyboard shortcuts are configurable via the `hotkeys` section in config.json
 | Next Tab | Ctrl+L | Ctrl+L |
 | Previous Tab | Ctrl+H | Ctrl+H |
 | Switch to Tab 1-6 | Ctrl+Shift+1-6 | Ctrl+Shift+1-6 |
+
+#### Additional Navigation
+
+- **Arrow Keys** - Move selection up/down in file list
+- **Enter** - Open selected file/folder
+- **Letter Keys** - Quick-jump to files starting with that letter (press again to cycle)
+- **Shift+Click** - Range selection from current to clicked item
+- **Ctrl/Cmd+Click** - Toggle individual item selection
 
 #### Custom Hotkeys
 
@@ -313,7 +347,7 @@ Supported keys: `A-Z`, `0-9`, `F1-F12`, `Delete`, `Backspace`, `Escape`, `Enter`
 
 ### Data Storage
 
-Additional data (search history, etc.) is stored in:
+Additional data (search history, recent files) is stored in:
 
 - All platforms: `~/.config/razor/razor.db` (SQLite)
 
@@ -352,7 +386,7 @@ razor/
 │   │   └── drives_*.go         # Platform-specific drive enumeration
 │   │
 │   ├── search/                 # Search engine abstraction
-│   │   ├── query.go            # Query parsing (directives: contents:, ext:, size:)
+│   │   ├── query.go            # Query parsing (directives: contents:, ext:, size:, etc.)
 │   │   └── engine.go           # Engine detection (builtin, ripgrep, ugrep)
 │   │
 │   ├── store/                  # SQLite persistence
@@ -361,7 +395,7 @@ razor/
 │   └── ui/                     # Gio UI components
 │       ├── renderer.go         # Main UI renderer, state types, event handling
 │       ├── layout.go           # Layout functions for all UI components
-│       ├── tabs.go             # Reusable tab bar component
+│       ├── tabs.go             # Reusable tab bar component (manila, underline, pill styles)
 │       ├── markdown.go         # Markdown parsing and rendering (goldmark)
 │       └── debug_*.go          # UI debug flag
 │
@@ -372,10 +406,11 @@ razor/
 ## Dependencies
 
 - [Gio](https://gioui.org/) - Immediate mode GUI framework
-- [go-sqlite3](https://github.com/mattn/go-sqlite3) - SQLite driver for persistence
+- [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite) - Pure Go SQLite driver for persistence
 - [fastwalk](https://github.com/charlievieth/fastwalk) - Fast parallel directory traversal
 - [fsnotify](https://github.com/fsnotify/fsnotify) - Cross-platform filesystem notifications
 - [goldmark](https://github.com/yuin/goldmark) - Markdown parser for preview rendering
+- [goheif](https://github.com/jdeng/goheif) - HEIC image format support
 
 ## License
 

@@ -1,8 +1,10 @@
 #+TITLE: Razor File Manager - Project Status
 #+AUTHOR: justyntemme
 #+DATE: 2024
+
 * Next
 icons for known filetypes (use whatever icon generation was used in recent files, assume we have a font that supports icons, except windows we may have an issue there)
+
 * Design Philosophies
 
 ** LLM Commandments
@@ -58,15 +60,6 @@ Reusable code formatting module for preview pane and markdown code blocks.
     - github.com/alecthomas/chroma - Full-featured syntax highlighter
     - github.com/yuin/goldmark - Markdown parsing
 
-** DONE Markdown Preview with Toggle
-   CLOSED: [2024-11-30]
-   - [X] Raw/Preview toggle button in preview pane header
-   - [X] Parse markdown with goldmark (github.com/yuin/goldmark)
-   - [X] Walk AST to build richtext spans
-   - [X] Support: headings, bold, italic, code, lists, links, blockquotes
-   - [X] Config setting for default render mode (markdownRendered)
-   - [ ] Code blocks use Syntax Highlighting Module (future enhancement)
-
 ** TODO Recent Files View Improvements
 - [ ] Apply search bar filtering to Recent Files entries
 - [ ] Filter by filename as user types
@@ -87,18 +80,19 @@ Reusable code formatting module for preview pane and markdown code blocks.
     - [ ] Drop to external apps
     Note: Previously on hold due to Gio challenges - needs investigation
 
-*** TODO Multi-Select Improvements
+*** DONE Multi-Select Improvements
+    CLOSED: [2024-12-01]
     Priority: CRITICAL
-    - [ ] Shift+click for range selection
-    - [ ] Ctrl/Cmd+click for toggle selection
-    - [ ] Ctrl/Cmd+A to select all
-    - [ ] Click empty space to deselect all
-    - [ ] Selection count in status bar
+    - [X] Shift+click for range selection
+    - [X] Ctrl/Cmd+click for toggle selection
+    - [X] Ctrl/Cmd+A to select all
+    - [X] Click empty space to deselect all
+    - [X] Selection count in status bar
 
 *** DONE Breadcrumb Path Bar
     CLOSED: [2024-12-01]
     Priority: HIGH
-    - [X] Display path as clickable segments (/ › Users › name › Documents)
+    - [X] Display path as clickable segments (/ > Users > name > Documents)
     - [X] Click any segment to navigate to that directory
     - [X] Overflow handling for long paths (collapse middle with "...")
     - [X] Current directory shown in bold, parent dirs as clickable links
@@ -132,12 +126,13 @@ Reusable code formatting module for preview pane and markdown code blocks.
       - Linux: ~/.local/share/Trash (freedesktop spec)
       - Windows: Recycle Bin API
 
-*** TODO Column Headers and Sorting
+*** DONE Column Headers and Sorting
+    CLOSED: [2024-12-01]
     Priority: MEDIUM
-    - [ ] Clickable column headers (Name, Size, Date, Type)
-    - [ ] Sort indicator (arrow up/down)
-    - [ ] Column resizing by dragging borders
-    - [ ] Column reordering by dragging headers
+    - [X] Clickable column headers (Name, Size, Date, Type)
+    - [X] Sort indicator (arrow up/down)
+    - [X] Resizable columns by dragging dividers
+    - [ ] Column reordering by dragging headers - future
     - [ ] Remember column widths per directory (stretch goal)
 
 *** TODO File Properties Dialog
@@ -151,14 +146,15 @@ Reusable code formatting module for preview pane and markdown code blocks.
     - [ ] Keyboard shortcut: Ctrl/Cmd+I or Alt+Enter
     - [ ] Multiple selection shows combined size
 
-*** TODO Keyboard Navigation
+*** DONE Keyboard Navigation
+    CLOSED: [2024-12-01]
     Priority: MEDIUM
-    - [ ] Arrow keys to move selection
-    - [ ] Enter to open file/folder
-    - [ ] Backspace to go up one level
-    - [ ] Type-to-select (type filename to jump to it)
-    - [ ] Space bar for Quick Look preview
-    - [ ] Tab to cycle focus between panels
+    - [X] Arrow keys to move selection
+    - [X] Enter to open file/folder
+    - [X] Type-to-select (type filename to jump to it)
+    - [X] Tab to cycle focus between panels
+    - [ ] Backspace to go up one level (in progress - conflicts with path editing)
+    - [ ] Space bar for Quick Look preview (future)
 
 ** Tier 2: Expected by Users
 
@@ -220,7 +216,7 @@ Reusable code formatting module for preview pane and markdown code blocks.
 **** Repository Info in Status Bar
      - [ ] Detect if current directory is in a git repo
      - [ ] Show current branch name
-     - [ ] Show ahead/behind count (↑2 ↓3)
+     - [ ] Show ahead/behind count (up2 down3)
      - [ ] Show dirty/clean status indicator
 
 **** Git Context Menu Actions
@@ -281,7 +277,17 @@ Reusable code formatting module for preview pane and markdown code blocks.
    - [X] Images scaled to fit preview pane
    - [X] Resizable preview pane with drag handle
    - [X] File size limits (configurable)
+   - [X] JSON auto-formatting
    - [ ] File metadata display (not implemented)
+
+** DONE Markdown Preview with Toggle
+   CLOSED: [2024-11-30]
+   - [X] Raw/Preview toggle button in preview pane header
+   - [X] Parse markdown with goldmark (github.com/yuin/goldmark)
+   - [X] Walk AST to build richtext spans
+   - [X] Support: headings, bold, italic, code, lists, links, blockquotes
+   - [X] Config setting for default render mode (markdownRendered)
+   - [ ] Code blocks use Syntax Highlighting Module (future enhancement)
 
 ** DONE Orchestrator Refactor
    CLOSED: [2024-11-30]
@@ -374,8 +380,6 @@ Reusable code formatting module for preview pane and markdown code blocks.
    - [X] Icon-only buttons for back/forward/home
    - [X] Programmatic icon drawing with clip.Path
 
-* Other Planned Features
-
 ** DONE Browser Tabs
    CLOSED: [2024-11-30]
    - [X] Tab bar for multiple directories (appears when 2+ tabs)
@@ -384,8 +388,32 @@ Reusable code formatting module for preview pane and markdown code blocks.
    - [X] Tab state preservation (path, history, selection)
    - [X] Configurable new tab location (home, current, recent, custom path)
    - [X] "Open in New Tab" context menu for folders
-   - [ ] Ctrl+T / Ctrl+W keyboard shortcuts (not yet implemented)
+   - [X] Ctrl+T / Ctrl+W keyboard shortcuts
+   - [X] Ctrl+H / Ctrl+L for tab navigation (vim-style)
+   - [X] Ctrl+Shift+1-6 for direct tab switching
    - [ ] Drag tabs to reorder (not yet implemented)
+
+** DONE Customizable Keyboard Shortcuts
+   CLOSED: [2024-12-01]
+   - [X] Configurable via config.json hotkeys section
+   - [X] Support for Ctrl, Shift, Alt, Cmd modifiers
+   - [X] File operations: Copy, Cut, Paste, Delete, Rename, NewFile, NewFolder, SelectAll
+   - [X] Navigation: Back, Forward, Up, Home, Refresh
+   - [X] UI: FocusSearch (Ctrl+F), TogglePreview, ToggleHidden, Escape
+   - [X] Tabs: NewTab, NewTabHome, CloseTab, NextTab, PrevTab, Tab1-6
+   - [X] Platform-specific defaults (macOS uses Cmd for nav, Windows/Linux use Alt)
+   - [ ] Settings UI to rebind shortcuts (future)
+   - [ ] Import/export shortcut configs (future)
+   - [ ] Preset profiles (Default, Vim, Emacs) (future)
+
+** DONE File Conflict Resolution
+   CLOSED: [2024-11-30]
+   - [X] Dialog for copy/paste conflicts
+   - [X] Options: Replace, Keep Both, Skip, Stop
+   - [X] Apply to All checkbox for batch operations
+   - [X] Shows file sizes and modification times
+
+* Other Planned Features
 
 ** TODO Favorites Management
 *** TODO Favorites Folders (Dropdown Groups)
@@ -404,18 +432,6 @@ Reusable code formatting module for preview pane and markdown code blocks.
    - [ ] dd for delete
    - [ ] yy/p for copy/paste
    - [ ] Configurable in settings
-
-** DONE Customizable Keyboard Shortcuts
-   CLOSED: [2024-12-01]
-   - [X] Configurable via config.json hotkeys section
-   - [X] Support for Ctrl, Shift, Alt, Cmd modifiers
-   - [X] File operations: Copy, Cut, Paste, Delete, Rename, NewFile, NewFolder, SelectAll
-   - [X] Navigation: Back, Forward, Up, Home, Refresh
-   - [X] UI: FocusSearch (Ctrl+F), TogglePreview, ToggleHidden, Escape
-   - [X] Tabs: NewTab, CloseTab, NextTab, PrevTab
-   - [ ] Settings UI to rebind shortcuts (future)
-   - [ ] Import/export shortcut configs (future)
-   - [ ] Preset profiles (Default, Vim, Emacs) (future)
 
 ** TODO Network/Remote Access
    - [ ] SFTP connection support
