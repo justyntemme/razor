@@ -18,6 +18,9 @@ import (
 
 type UIAction int
 
+// FileDragMIME is the MIME type for internal drag-and-drop file transfers
+const FileDragMIME = "application/x-razor-file-paths"
+
 const (
 	ActionNone UIAction = iota
 	ActionNavigate
@@ -40,6 +43,7 @@ const (
 	ActionCopy
 	ActionCut
 	ActionPaste
+	ActionMove // Drag-and-drop move: Paths=sources, Path=destination
 	ActionDelete
 	ActionConfirmDelete
 	ActionCancelDelete
@@ -421,7 +425,9 @@ type UIEntry struct {
 	Size          int64
 	ModTime       time.Time
 	Clickable     widget.Clickable
-	Checkbox      widget.Bool // For multi-select mode
+	Draggable     widget.Draggable // For drag-and-drop (child of this entry)
+	DropTag       int              // Tag for drop target registration (directories only)
+	Checkbox      widget.Bool      // For multi-select mode
 	RightClickTag int
 	LastClick     time.Time
 	// Tree view fields

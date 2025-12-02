@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"io"
 	"path/filepath"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
+	"gioui.org/io/transfer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -200,8 +202,8 @@ func (r *Renderer) renderColumns(gtx layout.Context) (layout.Dimensions, UIEvent
 	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, children...), evt
 }
 
-// renderRow renders a file/folder row. Returns dimensions, left-clicked, right-clicked, click position, rename event, checkbox toggled, and chevron event.
-func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selected bool, isRenaming bool, isChecked bool, showCheckbox bool) (layout.Dimensions, bool, bool, bool, image.Point, *UIEvent, bool, *UIEvent) {
+// renderRow renders a file/folder row. Returns dimensions, left-clicked, right-clicked, click position, rename event, checkbox toggled, chevron event, and drop event.
+func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selected bool, isRenaming bool, isChecked bool, showCheckbox bool) (layout.Dimensions, bool, bool, bool, image.Point, *UIEvent, bool, *UIEvent, *UIEvent) {
 	// Check for left-click BEFORE layout (Gio pattern)
 	leftClicked := item.Clickable.Clicked(gtx)
 
@@ -280,6 +282,44 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 	// In single-select mode, use the primary selection
 	showSelected := isChecked
 
+	// Handle drag data request from this item's Draggable
+	// This must be called to provide data when a drop target requests it
+	item.Draggable.Type = FileDragMIME
+	if mime, ok := item.Draggable.Update(gtx); ok && mime == FileDragMIME {
+		// Provide the file path as drag data
+		item.Draggable.Offer(gtx, mime, io.NopCloser(strings.NewReader(item.Path)))
+	}
+
+	// Handle drop events for directories (they are drop targets)
+	var dropEvent *UIEvent
+	if item.IsDir {
+		// Check for drop events on this directory
+		for {
+			ev, ok := gtx.Event(transfer.TargetFilter{Target: &item.DropTag, Type: FileDragMIME})
+			if !ok {
+				break
+			}
+			if e, ok := ev.(transfer.DataEvent); ok && e.Type == FileDragMIME {
+				// Read the dropped file path
+				reader := e.Open()
+				data, err := io.ReadAll(reader)
+				reader.Close()
+				if err == nil {
+					sourcePath := string(data)
+					// Don't allow dropping on self or parent
+					if sourcePath != item.Path && filepath.Dir(sourcePath) != item.Path {
+						dropEvent = &UIEvent{
+							Action: ActionMove,
+							Paths:  []string{sourcePath}, // Source paths
+							Path:   item.Path,            // Destination directory
+						}
+						debug.Log(debug.UI, "Drop event: moving %s to %s", sourcePath, item.Path)
+					}
+				}
+			}
+		}
+	}
+
 	// Layout the clickable row (but not if renaming - we handle clicks differently)
 	var dims layout.Dimensions
 	cornerRadius := gtx.Dp(4)
@@ -301,25 +341,62 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 
 		dims = contentDims
 	} else {
-		dims = material.Clickable(gtx, &item.Clickable, func(gtx layout.Context) layout.Dimensions {
-			// Register right-click handler on this row's area
-			defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
-			event.Op(gtx.Ops, &item.RightClickTag)
+		// Use Draggable.Layout to wrap the clickable content
+		// The Draggable only activates after pointer movement exceeds 3dp threshold,
+		// so clicks still work normally through the Clickable inside
+		dims = item.Draggable.Layout(gtx,
+			// Normal content - the clickable row
+			func(gtx layout.Context) layout.Dimensions {
+				return material.Clickable(gtx, &item.Clickable, func(gtx layout.Context) layout.Dimensions {
+					// Register right-click handler on this row's area
+					defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
+					event.Op(gtx.Ops, &item.RightClickTag)
 
-			// Draw selection background with rounded corners
-			if showSelected {
+					// Register drop target for directories
+					if item.IsDir {
+						event.Op(gtx.Ops, &item.DropTag)
+					}
+
+					// Draw selection background with rounded corners
+					// Also highlight if this is the current drop target
+					isDropTarget := item.IsDir && r.dropTargetPath == item.Path
+					if showSelected || isDropTarget {
+						bgColor := colSelected
+						if isDropTarget {
+							bgColor = color.NRGBA{R: 180, G: 220, B: 255, A: 255} // Light blue for drop target
+						}
+						rr := clip.RRect{
+							Rect: image.Rect(0, 0, gtx.Constraints.Max.X, gtx.Constraints.Max.Y),
+							NE:   cornerRadius, NW: cornerRadius, SE: cornerRadius, SW: cornerRadius,
+						}
+						paint.FillShape(gtx.Ops, bgColor, rr.Op(gtx.Ops))
+					}
+
+					return r.renderRowContent(gtx, item, false, showCheckbox, isChecked)
+				})
+			},
+			// Drag appearance - simplified visual during drag
+			func(gtx layout.Context) layout.Dimensions {
+				// Show a semi-transparent version of the item being dragged
+				cornerRadius := gtx.Dp(4)
 				rr := clip.RRect{
-					Rect: image.Rect(0, 0, gtx.Constraints.Max.X, gtx.Constraints.Max.Y),
+					Rect: image.Rect(0, 0, gtx.Constraints.Max.X, gtx.Dp(32)),
 					NE:   cornerRadius, NW: cornerRadius, SE: cornerRadius, SW: cornerRadius,
 				}
-				paint.FillShape(gtx.Ops, colSelected, rr.Op(gtx.Ops))
-			}
+				paint.FillShape(gtx.Ops, color.NRGBA{R: 200, G: 220, B: 255, A: 200}, rr.Op(gtx.Ops))
 
-			return r.renderRowContent(gtx, item, false, showCheckbox, isChecked)
-		})
+				return layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(6), Left: unit.Dp(12)}.Layout(gtx,
+					func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(r.Theme, item.Name)
+						lbl.Color = colBlack
+						lbl.MaxLines = 1
+						return lbl.Layout(gtx)
+					})
+			},
+		)
 	}
 
-	return dims, leftClicked, rightClicked, shiftHeld, clickPos, renameEvent, checkboxToggled, chevronEvent
+	return dims, leftClicked, rightClicked, shiftHeld, clickPos, renameEvent, checkboxToggled, chevronEvent, dropEvent
 }
 
 // renderRowContent renders the content of a row (shared between normal and rename mode)

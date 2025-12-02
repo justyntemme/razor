@@ -508,6 +508,11 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		if o.state.Clipboard != nil {
 			go o.doPaste()
 		}
+	case ui.ActionMove:
+		// Drag-and-drop move: evt.Paths are sources, evt.Path is destination
+		if len(evt.Paths) > 0 && evt.Path != "" {
+			go o.doMove(evt.Paths, evt.Path)
+		}
 	case ui.ActionConfirmDelete:
 		// Support deleting multiple files
 		if len(evt.Paths) > 0 {

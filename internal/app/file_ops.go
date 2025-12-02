@@ -138,6 +138,51 @@ func (o *Orchestrator) doCreateFolder(name string) {
 	o.refreshCurrentDir()
 }
 
+// doMove moves files/folders to a destination directory (drag-and-drop)
+func (o *Orchestrator) doMove(sourcePaths []string, destDir string) {
+	if len(sourcePaths) == 0 || destDir == "" {
+		return
+	}
+
+	// Verify destination is a directory
+	destInfo, err := os.Stat(destDir)
+	if err != nil || !destInfo.IsDir() {
+		log.Printf("Move error: destination is not a directory: %s", destDir)
+		return
+	}
+
+	for _, src := range sourcePaths {
+		if src == "" || !pathExists(src) {
+			continue
+		}
+
+		// Get the base name of the source
+		baseName := filepath.Base(src)
+		destPath := filepath.Join(destDir, baseName)
+
+		// Don't move onto itself
+		if src == destPath {
+			continue
+		}
+
+		// Check if destination already exists
+		if pathExists(destPath) {
+			log.Printf("Move skipped: destination already exists: %s", destPath)
+			continue
+		}
+
+		// Perform the move
+		if err := os.Rename(src, destPath); err != nil {
+			log.Printf("Error moving %s to %s: %v", src, destPath, err)
+			continue
+		}
+
+		log.Printf("Moved %s to %s", src, destPath)
+	}
+
+	o.refreshCurrentDir()
+}
+
 // doRename renames a file or folder
 func (o *Orchestrator) doRename(oldPath, newPath string) {
 	if oldPath == "" || newPath == "" || oldPath == newPath {

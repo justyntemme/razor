@@ -111,7 +111,7 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 					showCheckbox := r.multiSelectMode
 
 					// Render row and capture right-click event
-					rowDims, leftClicked, rightClicked, shiftHeld, _, renameEvt, checkboxToggled, chevronEvt := r.renderRow(gtx, item, i, i == state.SelectedIndex, isRenaming, isChecked, showCheckbox)
+					rowDims, leftClicked, rightClicked, shiftHeld, _, renameEvt, checkboxToggled, chevronEvt, dropEvt := r.renderRow(gtx, item, i, i == state.SelectedIndex, isRenaming, isChecked, showCheckbox)
 
 					// Handle chevron click (expand/collapse directory)
 					chevronClicked := false
@@ -119,6 +119,11 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 						debug.Log(debug.UI, "Chevron event received in layout, Action=%d Path=%s", chevronEvt.Action, chevronEvt.Path)
 						*eventOut = *chevronEvt
 						chevronClicked = true
+					}
+
+					// Handle drop event (file dropped onto directory)
+					if dropEvt != nil {
+						*eventOut = *dropEvt
 					}
 
 					// Handle checkbox toggle (only visible in multi-select mode)
