@@ -3,7 +3,8 @@
 #+DATE: 2024
 
 * Next
-icons for known filetypes (use whatever icon generation was used in recent files, assume we have a font that supports icons, except windows we may have an issue there)
+review this library and compare how it does gio development and what lessons/refactors we could learn form it https://github.com/oligo/gioview/blob/main/example/basic/file-explorer.go
+  icons for known filetypes (use whatever icon generation was used in recent files, assume we have a font that supports icons, except windows we may have an issue there)
 
 * Design Philosophies
 
