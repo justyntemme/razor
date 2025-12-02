@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode"
 
+	"gioui.org/f32"
 	"gioui.org/font"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
@@ -96,6 +97,9 @@ const (
 	ActionRefresh
 	ActionFocusSearch
 	ActionJumpToLetter // Jump to file starting with letter (uses NewIndex for target)
+	// Tree view actions
+	ActionExpandDir   // Expand a directory inline (uses Path)
+	ActionCollapseDir // Collapse an expanded directory (uses Path)
 )
 
 type ClipOp int
@@ -426,6 +430,11 @@ type UIEntry struct {
 	Checkbox      widget.Bool // For multi-select mode
 	RightClickTag int
 	LastClick     time.Time
+	// Tree view fields
+	Depth      int              // Indentation level (0 = root level)
+	IsExpanded bool             // Whether this directory is expanded inline
+	ExpandBtn  widget.Clickable // Clickable for chevron expand/collapse button
+	ParentPath string           // Path of parent directory (empty for root level)
 }
 
 type FavoriteItem struct {
@@ -589,6 +598,10 @@ type Renderer struct {
 	lastJumpTime  time.Time // Time of last jump key press
 	lastJumpIndex int       // Index we jumped to (for cycling)
 
+	// Tree view (inline directory expansion)
+	expandedDirs map[string]bool // Tracks which directories are expanded by path
+	treeIndent   int             // Indentation width in dp per level (default 20)
+
 	// Background click pending (to detect if click was on row or empty space)
 	bgRightClickPending bool
 	bgRightClickPos     image.Point
@@ -727,6 +740,8 @@ var (
 func NewRenderer() *Renderer {
 	r := &Renderer{Theme: material.NewTheme(), SortAscending: true, DefaultDepth: 2, renameIndex: -1, lastClickIndex: -1}
 	r.listState.Axis = layout.Vertical
+	r.expandedDirs = make(map[string]bool)
+	r.treeIndent = 20 // 20dp per indentation level
 	r.favState.Axis = layout.Vertical
 	r.driveState.Axis = layout.Vertical
 	r.sidebarScroll.Axis = layout.Vertical
@@ -1183,6 +1198,34 @@ func (r *Renderer) SetMultiSelectMode(enabled bool) {
 	r.multiSelectMode = enabled
 }
 
+// IsExpanded returns whether a directory path is expanded in tree view
+func (r *Renderer) IsExpanded(path string) bool {
+	return r.expandedDirs[path]
+}
+
+// SetExpanded sets the expansion state of a directory path
+func (r *Renderer) SetExpanded(path string, expanded bool) {
+	if expanded {
+		r.expandedDirs[path] = true
+	} else {
+		delete(r.expandedDirs, path)
+	}
+}
+
+// GetExpandedDirs returns a copy of all expanded directory paths
+func (r *Renderer) GetExpandedDirs() []string {
+	paths := make([]string, 0, len(r.expandedDirs))
+	for path := range r.expandedDirs {
+		paths = append(paths, path)
+	}
+	return paths
+}
+
+// ClearExpanded clears all expanded directories (e.g., when navigating to new folder)
+func (r *Renderer) ClearExpanded() {
+	r.expandedDirs = make(map[string]bool)
+}
+
 // FocusSearch sets a flag to focus the search editor on next layout
 func (r *Renderer) FocusSearch() {
 	r.searchFocusRequested = true
@@ -1302,6 +1345,65 @@ func (r *Renderer) modalContent(gtx layout.Context, title string, titleColor col
 			layout.Rigid(body),
 			layout.Rigid(layout.Spacer{Height: unit.Dp(20)}.Layout),
 			layout.Rigid(buttons),
+		)
+	})
+}
+
+// modalContentWithClose renders modal content with title, close button (X with divider), body, and optional button row
+func (r *Renderer) modalContentWithClose(gtx layout.Context, title string, titleColor color.NRGBA, closeBtn *widget.Clickable, body layout.Widget, buttons layout.Widget) layout.Dimensions {
+	return layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			// Header row with title and close button
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					// Title (takes remaining space)
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						h6 := material.H6(r.Theme, title)
+						h6.Color = titleColor
+						return h6.Layout(gtx)
+					}),
+					// Divider line
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						height := gtx.Dp(20)
+						return layout.Inset{Left: unit.Dp(12), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(1, height)}.Op())
+							return layout.Dimensions{Size: image.Pt(1, height)}
+						})
+					}),
+					// Close button (X)
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						closeSize := gtx.Dp(24)
+						return material.Clickable(gtx, closeBtn, func(gtx layout.Context) layout.Dimensions {
+							// Draw X
+							centerX := float32(closeSize) / 2
+							centerY := float32(closeSize) / 2
+							armLen := float32(closeSize) / 4
+
+							xColor := colGray
+							var p clip.Path
+							p.Begin(gtx.Ops)
+							p.MoveTo(f32.Pt(centerX-armLen, centerY-armLen))
+							p.LineTo(f32.Pt(centerX+armLen, centerY+armLen))
+							p.MoveTo(f32.Pt(centerX+armLen, centerY-armLen))
+							p.LineTo(f32.Pt(centerX-armLen, centerY+armLen))
+							paint.FillShape(gtx.Ops, xColor, clip.Stroke{Path: p.End(), Width: 1.5}.Op())
+
+							return layout.Dimensions{Size: image.Pt(closeSize, closeSize)}
+						})
+					}),
+				)
+			}),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+			layout.Rigid(body),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				if buttons != nil {
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+						layout.Rigid(layout.Spacer{Height: unit.Dp(20)}.Layout),
+						layout.Rigid(buttons),
+					)
+				}
+				return layout.Dimensions{}
+			}),
 		)
 	})
 }
@@ -1697,8 +1799,8 @@ func (r *Renderer) renderColumns(gtx layout.Context) (layout.Dimensions, UIEvent
 	return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween}.Layout(gtx, children...), evt
 }
 
-// renderRow renders a file/folder row. Returns dimensions, left-clicked, right-clicked, click position, and rename event.
-func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selected bool, isRenaming bool, isChecked bool, showCheckbox bool) (layout.Dimensions, bool, bool, bool, image.Point, *UIEvent, bool) {
+// renderRow renders a file/folder row. Returns dimensions, left-clicked, right-clicked, click position, rename event, checkbox toggled, and chevron event.
+func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selected bool, isRenaming bool, isChecked bool, showCheckbox bool) (layout.Dimensions, bool, bool, bool, image.Point, *UIEvent, bool, *UIEvent) {
 	// Check for left-click BEFORE layout (Gio pattern)
 	leftClicked := item.Clickable.Clicked(gtx)
 
@@ -1709,6 +1811,16 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 	checkboxToggled := false
 	if showCheckbox && item.Checkbox.Update(gtx) {
 		checkboxToggled = true
+	}
+
+	// Check for chevron click (expand/collapse directory)
+	var chevronEvent *UIEvent
+	if item.IsDir && item.ExpandBtn.Clicked(gtx) {
+		if item.IsExpanded {
+			chevronEvent = &UIEvent{Action: ActionCollapseDir, Path: item.Path}
+		} else {
+			chevronEvent = &UIEvent{Action: ActionExpandDir, Path: item.Path}
+		}
 	}
 
 	// Check for right-click and capture position
@@ -1803,7 +1915,7 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 		})
 	}
 
-	return dims, leftClicked, rightClicked, shiftHeld, clickPos, renameEvent, checkboxToggled
+	return dims, leftClicked, rightClicked, shiftHeld, clickPos, renameEvent, checkboxToggled, chevronEvent
 }
 
 // renderRowContent renders the content of a row (shared between normal and rename mode)
@@ -1825,9 +1937,56 @@ func (r *Renderer) renderRowContent(gtx layout.Context, item *UIEntry, isRenamin
 	// Sync checkbox state with selection state
 	item.Checkbox.Value = isChecked
 
+	// Calculate indentation based on depth
+	indentWidth := unit.Dp(float32(item.Depth * r.treeIndent))
+
 	return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
 		func(gtx layout.Context) layout.Dimensions {
 			var children []layout.FlexChild
+
+			// Add indentation for tree view
+			if item.Depth > 0 {
+				children = append(children,
+					layout.Rigid(layout.Spacer{Width: indentWidth}.Layout),
+				)
+			}
+
+			// Add chevron for directories (expand/collapse button)
+			if item.IsDir {
+				children = append(children,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						chevronSize := gtx.Dp(16)
+						return material.Clickable(gtx, &item.ExpandBtn, func(gtx layout.Context) layout.Dimensions {
+							iconType := "chevron-right"
+							if item.IsExpanded {
+								iconType = "chevron-down"
+							}
+							r.drawIcon(gtx.Ops, iconType, chevronSize, colGray)
+							return layout.Dimensions{Size: image.Pt(chevronSize, chevronSize)}
+						})
+					}),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
+					// Small divider between chevron and directory name
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						dividerHeight := gtx.Dp(unit.Dp(12))
+						dividerWidth := gtx.Dp(unit.Dp(1))
+						// Center the divider vertically
+						return layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx,
+							func(gtx layout.Context) layout.Dimensions {
+								size := image.Pt(dividerWidth, dividerHeight)
+								paint.FillShape(gtx.Ops, color.NRGBA{R: 200, G: 200, B: 200, A: 180},
+									clip.Rect{Max: size}.Op())
+								return layout.Dimensions{Size: size}
+							})
+					}),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+				)
+			} else {
+				// For files, add spacer to align with directories that have chevrons + divider
+				children = append(children,
+					layout.Rigid(layout.Spacer{Width: unit.Dp(27)}.Layout), // chevron width + spacing + divider + spacing
+				)
+			}
 
 			// Add checkbox if in multi-select mode
 			if showCheckbox {

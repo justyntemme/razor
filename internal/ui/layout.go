@@ -245,11 +245,11 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutFileMenu(gtx, &eventOut) }),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutContextMenu(gtx, state, &eventOut) }),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutSearchHistoryOverlay(gtx) }),
-		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutSettingsModal(gtx, &eventOut) }),
-		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutHotkeysModal(gtx) }),
-		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutDeleteConfirm(gtx, state, &eventOut) }),
-		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutCreateDialog(gtx, state, &eventOut) }),
-		layout.Stacked(func(gtx layout.Context) layout.Dimensions { return r.layoutConflictDialog(gtx, state, &eventOut) }),
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions { return r.layoutSettingsModal(gtx, &eventOut) }),
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions { return r.layoutHotkeysModal(gtx) }),
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions { return r.layoutDeleteConfirm(gtx, state, &eventOut) }),
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions { return r.layoutCreateDialog(gtx, state, &eventOut) }),
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions { return r.layoutConflictDialog(gtx, state, &eventOut) }),
 	)
 
 	return eventOut
@@ -691,6 +691,20 @@ func (r *Renderer) drawIcon(ops *op.Ops, iconType string, size int, iconColor co
 		path.LineTo(f32.Pt(s*0.25, s*0.82))
 		path.LineTo(f32.Pt(s*0.75, s*0.82))
 		path.LineTo(f32.Pt(s*0.75, s*0.48))
+		path.Close()
+
+	case "chevron-right":
+		// Small right-pointing triangle for collapsed directories
+		path.MoveTo(f32.Pt(s*0.35, s*0.2))
+		path.LineTo(f32.Pt(s*0.75, s*0.5))
+		path.LineTo(f32.Pt(s*0.35, s*0.8))
+		path.Close()
+
+	case "chevron-down":
+		// Small down-pointing triangle for expanded directories
+		path.MoveTo(f32.Pt(s*0.2, s*0.35))
+		path.LineTo(f32.Pt(s*0.5, s*0.75))
+		path.LineTo(f32.Pt(s*0.8, s*0.35))
 		path.Close()
 	}
 
@@ -1372,7 +1386,12 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 				showCheckbox := r.multiSelectMode
 
 				// Render row and capture right-click event
-				rowDims, leftClicked, rightClicked, shiftHeld, _, renameEvt, checkboxToggled := r.renderRow(gtx, item, i, i == state.SelectedIndex, isRenaming, isChecked, showCheckbox)
+				rowDims, leftClicked, rightClicked, shiftHeld, _, renameEvt, checkboxToggled, chevronEvt := r.renderRow(gtx, item, i, i == state.SelectedIndex, isRenaming, isChecked, showCheckbox)
+
+				// Handle chevron click (expand/collapse directory)
+				if chevronEvt != nil {
+					*eventOut = *chevronEvt
+				}
 
 				// Handle checkbox toggle (only visible in multi-select mode)
 				if checkboxToggled && r.multiSelectMode {
@@ -2636,102 +2655,100 @@ func (r *Renderer) layoutSettingsModal(gtx layout.Context, eventOut *UIEvent) la
 
 	return r.modalBackdrop(gtx, 350, &r.settingsCloseBtn, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min.Y = gtx.Dp(420)
-		return layout.UniformInset(unit.Dp(20)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					h6 := material.H6(r.Theme, "Settings")
-					h6.Color = colBlack
-					return h6.Layout(gtx)
-				}),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(20)}.Layout),
-				// Section: Appearance
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Caption(r.Theme, "APPEARANCE")
-					lbl.Color = colGray
-					lbl.Font.Weight = font.Bold
-					return lbl.Layout(gtx)
-				}),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					cb := material.CheckBox(r.Theme, &r.showDotfilesCheck, "Show dotfiles")
-					cb.Color = colBlack
-					return cb.Layout(gtx)
-				}),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					cb := material.CheckBox(r.Theme, &r.darkModeCheck, "Dark mode")
-					cb.Color = colBlack
-					return cb.Layout(gtx)
-				}),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
-				// Divider
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, gtx.Dp(1))}.Op())
-					return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(1))}
-				}),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
-				// Section: Search
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Caption(r.Theme, "SEARCH")
-					lbl.Color = colGray
-					lbl.Font.Weight = font.Bold
-					return lbl.Layout(gtx)
-				}),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body2(r.Theme, "Default Recursive Depth")
-					lbl.Color = colBlack
-					return lbl.Layout(gtx)
-				}),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							btn := material.Button(r.Theme, &r.depthDecBtn, "-")
-							btn.Inset = layout.UniformInset(unit.Dp(8))
-							if r.DefaultDepth <= 1 {
-								btn.Background = colLightGray
-								btn.Color = colDisabled
-							}
-							return btn.Layout(gtx)
-						}),
-						layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							lbl := material.H6(r.Theme, fmt.Sprintf("%d", r.DefaultDepth))
-							lbl.Color = colBlack
-							return lbl.Layout(gtx)
-						}),
-						layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							btn := material.Button(r.Theme, &r.depthIncBtn, "+")
-							btn.Inset = layout.UniformInset(unit.Dp(8))
-							if r.DefaultDepth >= 20 {
-								btn.Background = colLightGray
-								btn.Color = colDisabled
-							}
-							return btn.Layout(gtx)
-						}),
-					)
-				}),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Caption(r.Theme, "Used when recursive: has no value")
-					lbl.Color = colGray
-					return lbl.Layout(gtx)
-				}),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body2(r.Theme, "Content Search Engine")
-					lbl.Color = colBlack
-					return lbl.Layout(gtx)
-				}),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-				// Render each search engine as a radio button
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return r.layoutSearchEngineOptions(gtx)
-				}),
-			)
-		})
+		return r.modalContentWithClose(gtx, "Settings", colBlack, &r.settingsCloseBtn,
+			// Body content
+			func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					// Section: Appearance
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Caption(r.Theme, "APPEARANCE")
+						lbl.Color = colGray
+						lbl.Font.Weight = font.Bold
+						return lbl.Layout(gtx)
+					}),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						cb := material.CheckBox(r.Theme, &r.showDotfilesCheck, "Show dotfiles")
+						cb.Color = colBlack
+						return cb.Layout(gtx)
+					}),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						cb := material.CheckBox(r.Theme, &r.darkModeCheck, "Dark mode")
+						cb.Color = colBlack
+						return cb.Layout(gtx)
+					}),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+					// Divider
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						paint.FillShape(gtx.Ops, colLightGray, clip.Rect{Max: image.Pt(gtx.Constraints.Max.X, gtx.Dp(1))}.Op())
+						return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(1))}
+					}),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+					// Section: Search
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Caption(r.Theme, "SEARCH")
+						lbl.Color = colGray
+						lbl.Font.Weight = font.Bold
+						return lbl.Layout(gtx)
+					}),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(r.Theme, "Default Recursive Depth")
+						lbl.Color = colBlack
+						return lbl.Layout(gtx)
+					}),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								btn := material.Button(r.Theme, &r.depthDecBtn, "-")
+								btn.Inset = layout.UniformInset(unit.Dp(8))
+								if r.DefaultDepth <= 1 {
+									btn.Background = colLightGray
+									btn.Color = colDisabled
+								}
+								return btn.Layout(gtx)
+							}),
+							layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								lbl := material.H6(r.Theme, fmt.Sprintf("%d", r.DefaultDepth))
+								lbl.Color = colBlack
+								return lbl.Layout(gtx)
+							}),
+							layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								btn := material.Button(r.Theme, &r.depthIncBtn, "+")
+								btn.Inset = layout.UniformInset(unit.Dp(8))
+								if r.DefaultDepth >= 20 {
+									btn.Background = colLightGray
+									btn.Color = colDisabled
+								}
+								return btn.Layout(gtx)
+							}),
+						)
+					}),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Caption(r.Theme, "Used when recursive: has no value")
+						lbl.Color = colGray
+						return lbl.Layout(gtx)
+					}),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(r.Theme, "Content Search Engine")
+						lbl.Color = colBlack
+						return lbl.Layout(gtx)
+					}),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+					// Render each search engine as a radio button
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return r.layoutSearchEngineOptions(gtx)
+					}),
+				)
+			},
+			nil, // No button row for settings
+		)
 	})
 }
 

@@ -1,0 +1,123 @@
+* Dropdown Directory Tree Feature Implementation Plan
+
+** Overview
+Add inline directory expansion (like macOS Finder's List view) with chevron icons that allow users to expand directories in-place without navigating away from the current view.
+
+** UI Behavior
+- Each directory row shows a chevron icon (▶) on the left side
+- Clicking the chevron expands the directory inline, showing children indented below
+- Expanded directories show a downward chevron (▼)
+- Children are indented based on their depth level
+- Clicking the chevron again collapses the directory
+- Double-clicking the directory name still navigates into it (existing behavior)
+- Each expanded directory gets its own fsnotify watcher for live updates
+
+** Data Structure Changes
+
+*** UIEntry (internal/ui/renderer.go)
+Add new fields:
+- ~Depth int~ - indentation level (0 = root level entries)
+- ~IsExpanded bool~ - whether this directory is currently expanded
+- ~ExpandBtn widget.Clickable~ - clickable for the chevron button
+- ~ParentPath string~ - path of parent directory (for hierarchy tracking)
+
+*** Renderer (internal/ui/renderer.go)
+Add new fields:
+- ~expandedDirs map[string]bool~ - tracks which directory paths are expanded
+- ~expandedChildren map[string][]UIEntry~ - cached children for expanded directories
+
+*** State changes
+- Entries list becomes a flattened tree (parent followed by indented children)
+- Need to rebuild flattened list when directories are expanded/collapsed
+
+** New Actions (internal/ui/renderer.go)
+- ~ActionExpandDir~ - expand a directory inline (triggered by chevron click)
+- ~ActionCollapseDir~ - collapse an expanded directory
+
+** Icon Changes (internal/ui/layout.go)
+Add two new icon types in ~drawNavIcon~:
+- "chevron-right" (▶) - for collapsed directories
+- "chevron-down" (▼) - for expanded directories
+
+** Implementation Steps
+
+*** Step 1: Add chevron icons
+File: ~internal/ui/layout.go~
+- Add "chevron-right" and "chevron-down" cases to ~drawNavIcon~ function
+- Small triangular icons, sized appropriately for row height
+
+*** Step 2: Extend UIEntry struct
+File: ~internal/ui/renderer.go~
+- Add Depth, IsExpanded, ExpandBtn, ParentPath fields
+- Initialize ExpandBtn for directory entries
+
+*** Step 3: Add expansion state tracking
+File: ~internal/ui/renderer.go~
+- Add expandedDirs map to Renderer
+- Add expandedChildren map to cache loaded children
+- Add helper methods: IsExpanded(path), SetExpanded(path, bool)
+
+*** Step 4: Modify row rendering
+File: ~internal/ui/layout.go~ - ~renderRowContent~ function
+- Add chevron button to the left of directory rows (before checkbox area)
+- Add left padding based on entry.Depth for indentation
+- Handle chevron click events separately from row click
+- Return chevron click state from renderRow
+
+*** Step 5: Add new UI actions
+File: ~internal/ui/renderer.go~
+- Add ActionExpandDir and ActionCollapseDir constants
+- Update UIEvent to include directory path for expand/collapse
+
+*** Step 6: Handle expand/collapse in orchestrator
+File: ~internal/app/orchestrator.go~
+- Add case handlers for ActionExpandDir and ActionCollapseDir
+- On expand: fetch children, insert into entries list after parent
+- On collapse: remove children from entries list
+- Update fsnotify watchers for expanded directories
+
+*** Step 7: Implement entry list flattening
+File: ~internal/app/orchestrator.go~
+- Create helper to rebuild flattened entry list from expansion state
+- Maintain correct depth levels for all entries
+- Preserve selection state during rebuild
+
+*** Step 8: Add fsnotify for expanded directories
+File: ~internal/app/orchestrator.go~
+- Watch expanded directories for changes
+- On change, refresh that subtree only
+- Unwatch when directory is collapsed
+
+*** Step 9: Configuration (optional)
+File: ~internal/config/config.go~
+- Add ~ui.tree_view.enabled~ config option (default: true)
+- Add ~ui.tree_view.indent_width~ config option (default: 20dp)
+
+** File Changes Summary
+
+| File | Changes |
+|------|---------|
+| internal/ui/renderer.go | UIEntry fields, expandedDirs map, new actions |
+| internal/ui/layout.go | Chevron icons, indented row rendering, chevron click handling |
+| internal/app/orchestrator.go | Expand/collapse handlers, entry flattening, fsnotify integration |
+| internal/config/config.go | Optional tree view config |
+
+** Edge Cases to Handle
+- Expanding a directory that has since been deleted
+- File changes in expanded directories (fsnotify refresh)
+- Very deep nesting (consider max depth limit)
+- Performance with many expanded directories
+- Selection state when entries shift due to expand/collapse
+- Keyboard navigation through expanded tree
+
+** Testing Checklist
+- [ ] Chevron appears only on directories
+- [ ] Click chevron expands directory inline
+- [ ] Children appear indented below parent
+- [ ] Click chevron again collapses directory
+- [ ] Double-click directory name navigates (not expands)
+- [ ] Expanded state persists during same session
+- [ ] fsnotify updates expanded directories
+- [ ] Selection works correctly with expanded entries
+- [ ] Keyboard navigation works through tree
+- [ ] Performance acceptable with many expansions

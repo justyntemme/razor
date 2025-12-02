@@ -544,6 +544,10 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 			o.state.SelectedIndex = evt.NewIndex
 			o.stateMu.Unlock()
 		}
+	case ui.ActionExpandDir:
+		o.expandDirectory(evt.Path)
+	case ui.ActionCollapseDir:
+		o.collapseDirectory(evt.Path)
 	}
 }
 
@@ -605,21 +609,35 @@ func (o *Orchestrator) handleDirectoryChange(changedDir string) {
 		return
 	}
 
-	// Check if the changed directory is the one we're viewing
+	// Check if the changed directory is the one we're currently viewing
 	if changedDir == currentPath {
 		debug.Log(debug.APP, "Directory changed, refreshing: %s", changedDir)
 		o.refreshCurrentDir()
-		return
+		// Don't return - also update other tabs viewing this directory
+	} else if o.ui.IsExpanded(changedDir) {
+		// Check if it's an expanded directory in the current view
+		debug.Log(debug.APP, "Expanded directory changed, refreshing subtree: %s", changedDir)
+		o.refreshExpandedDir(changedDir)
+		// Don't return - also update other tabs with this expanded directory
 	}
 
-	// Also check if it's any of our other tabs' directories
-	// (they'll refresh when switched to, but we update their cached state)
+	// Update ALL other tabs that are viewing the changed directory
 	for i, tab := range o.tabs {
-		if tab.CurrentPath == changedDir && i != o.activeTabIndex {
-			debug.Log(debug.APP, "Tab %d directory changed: %s (will refresh on switch)", i, changedDir)
-			// Mark tab as needing refresh (clear cached entries)
-			o.tabs[i].DirEntries = nil
-			o.tabs[i].RawEntries = nil
+		if i == o.activeTabIndex {
+			continue
+		}
+
+		// Check if this tab's current directory changed
+		if tab.CurrentPath == changedDir {
+			debug.Log(debug.APP, "Tab %d directory changed: %s (refreshing cached entries)", i, changedDir)
+			o.refreshTabEntries(i)
+			// Don't continue - also check expanded dirs
+		}
+
+		// Check if an expanded directory within this tab changed
+		if tab.ExpandedDirs != nil && tab.ExpandedDirs[changedDir] {
+			debug.Log(debug.APP, "Tab %d expanded directory changed: %s (refreshing cached entries)", i, changedDir)
+			o.refreshTabExpandedDir(i, changedDir)
 		}
 	}
 }
@@ -695,6 +713,9 @@ func (o *Orchestrator) handleFSResponse(resp fs.Response) {
 		o.state.CurrentPath = resp.Path
 		debug.Log(debug.APP, "FSResponse: FetchDir complete, %d entries", len(entries))
 
+		// Clear expanded directories when navigating to a new folder
+		o.ui.ClearExpanded()
+
 		// Update current tab title and path
 		if o.activeTabIndex >= 0 && o.activeTabIndex < len(o.tabs) {
 			title := filepath.Base(resp.Path)
@@ -761,9 +782,27 @@ func (o *Orchestrator) handleStoreResponse(resp store.Response) {
 }
 
 func (o *Orchestrator) applyFilterAndSort() {
+	// If we have expanded directories, use dirEntries which contains the tree structure
+	// Otherwise use rawEntries
+	sourceEntries := o.rawEntries
+	hasExpandedDirs := len(o.ui.GetExpandedDirs()) > 0
+
+	if hasExpandedDirs && len(o.dirEntries) > 0 {
+		// Use the flattened tree structure - don't re-sort as it would break tree hierarchy
+		entries := make([]ui.UIEntry, 0, len(o.dirEntries))
+		for _, e := range o.dirEntries {
+			if !o.showDotfiles && strings.HasPrefix(e.Name, ".") {
+				continue
+			}
+			entries = append(entries, e)
+		}
+		o.state.Entries = entries
+		return
+	}
+
 	// Pre-allocate with estimated capacity (most entries won't be dotfiles)
-	entries := make([]ui.UIEntry, 0, len(o.rawEntries))
-	for _, e := range o.rawEntries {
+	entries := make([]ui.UIEntry, 0, len(sourceEntries))
+	for _, e := range sourceEntries {
 		if !o.showDotfiles && strings.HasPrefix(e.Name, ".") {
 			continue
 		}
@@ -891,7 +930,8 @@ func (o *Orchestrator) openFileLocation(path string) {
 	}()
 }
 
-// selectAll selects all entries in the current view
+// selectAll toggles selection of all entries in the current view
+// If all are selected, deselects all. Otherwise, selects all.
 func (o *Orchestrator) selectAll() {
 	o.stateMu.Lock()
 	defer o.stateMu.Unlock()
@@ -900,14 +940,199 @@ func (o *Orchestrator) selectAll() {
 		return
 	}
 
-	// Enter multi-select mode and select all
-	o.state.SelectedIndices = make(map[int]bool)
-	for i := range o.state.Entries {
-		o.state.SelectedIndices[i] = true
+	// Check if all entries are already selected
+	allSelected := len(o.state.SelectedIndices) == len(o.state.Entries)
+	if allSelected {
+		for i := range o.state.SelectedIndices {
+			if !o.state.SelectedIndices[i] {
+				allSelected = false
+				break
+			}
+		}
 	}
-	o.state.SelectedIndex = 0 // Primary selection at first item
-	o.ui.SetMultiSelectMode(true)
+
+	if allSelected {
+		// Deselect all
+		o.state.SelectedIndices = nil
+		o.state.SelectedIndex = -1
+		o.ui.SetMultiSelectMode(false)
+	} else {
+		// Select all
+		o.state.SelectedIndices = make(map[int]bool)
+		for i := range o.state.Entries {
+			o.state.SelectedIndices[i] = true
+		}
+		o.state.SelectedIndex = 0 // Primary selection at first item
+		o.ui.SetMultiSelectMode(true)
+	}
 	o.window.Invalidate()
+}
+
+// expandDirectory expands a directory inline in the tree view
+func (o *Orchestrator) expandDirectory(path string) {
+	debug.Log(debug.APP, "Expanding directory: %s", path)
+
+	// Mark as expanded in the UI
+	o.ui.SetExpanded(path, true)
+
+	// Find the index of the parent directory in the entries
+	parentIdx := -1
+	for i, entry := range o.dirEntries {
+		if entry.Path == path {
+			parentIdx = i
+			break
+		}
+	}
+
+	if parentIdx < 0 {
+		debug.Log(debug.APP, "Directory not found in entries: %s", path)
+		return
+	}
+
+	// Get the depth of the parent
+	parentDepth := o.dirEntries[parentIdx].Depth
+
+	// Read the directory contents
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		debug.Log(debug.APP, "Error reading directory %s: %v", path, err)
+		return
+	}
+
+	// Convert to UIEntry slice
+	childEntries := make([]ui.UIEntry, 0, len(entries))
+	for _, entry := range entries {
+		// Skip dotfiles if not showing them
+		if !o.showDotfiles && strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		childEntry := ui.UIEntry{
+			Name:       entry.Name(),
+			Path:       filepath.Join(path, entry.Name()),
+			IsDir:      entry.IsDir(),
+			Size:       info.Size(),
+			ModTime:    info.ModTime(),
+			Depth:      parentDepth + 1,
+			ParentPath: path,
+			IsExpanded: o.ui.IsExpanded(filepath.Join(path, entry.Name())),
+		}
+		childEntries = append(childEntries, childEntry)
+	}
+
+	// Sort the children (directories first, then by name)
+	o.sortEntries(childEntries)
+
+	// Insert children after the parent
+	o.stateMu.Lock()
+	// Mark the parent as expanded
+	o.dirEntries[parentIdx].IsExpanded = true
+
+	// Create new slice with children inserted
+	newEntries := make([]ui.UIEntry, 0, len(o.dirEntries)+len(childEntries))
+	newEntries = append(newEntries, o.dirEntries[:parentIdx+1]...)
+	newEntries = append(newEntries, childEntries...)
+	newEntries = append(newEntries, o.dirEntries[parentIdx+1:]...)
+	o.dirEntries = newEntries
+
+	// Update state.Entries to match
+	o.state.Entries = make([]ui.UIEntry, len(o.dirEntries))
+	copy(o.state.Entries, o.dirEntries)
+	o.stateMu.Unlock()
+
+	// Watch the expanded directory for changes
+	if o.watcher != nil {
+		o.watcher.Watch(path)
+	}
+
+	o.window.Invalidate()
+}
+
+// collapseDirectory collapses an expanded directory in the tree view
+func (o *Orchestrator) collapseDirectory(path string) {
+	debug.Log(debug.APP, "Collapsing directory: %s", path)
+
+	// Mark as collapsed in the UI
+	o.ui.SetExpanded(path, false)
+
+	// Find the index of the parent directory
+	parentIdx := -1
+	for i, entry := range o.dirEntries {
+		if entry.Path == path {
+			parentIdx = i
+			break
+		}
+	}
+
+	if parentIdx < 0 {
+		debug.Log(debug.APP, "Directory not found in entries: %s", path)
+		return
+	}
+
+	parentDepth := o.dirEntries[parentIdx].Depth
+
+	o.stateMu.Lock()
+	// Mark the parent as collapsed
+	o.dirEntries[parentIdx].IsExpanded = false
+
+	// Find all children to remove (entries with greater depth that are descendants)
+	removeStart := parentIdx + 1
+	removeEnd := removeStart
+	for i := removeStart; i < len(o.dirEntries); i++ {
+		// Stop when we find an entry at the same or lower depth as parent
+		if o.dirEntries[i].Depth <= parentDepth {
+			break
+		}
+		removeEnd = i + 1
+	}
+
+	// Remove children from the entries slice
+	if removeEnd > removeStart {
+		// Also mark any nested expanded directories as collapsed
+		for i := removeStart; i < removeEnd; i++ {
+			if o.dirEntries[i].IsDir && o.dirEntries[i].IsExpanded {
+				o.ui.SetExpanded(o.dirEntries[i].Path, false)
+				// Unwatch nested expanded directories
+				if o.watcher != nil {
+					o.watcher.Unwatch(o.dirEntries[i].Path)
+				}
+			}
+		}
+
+		newEntries := make([]ui.UIEntry, 0, len(o.dirEntries)-(removeEnd-removeStart))
+		newEntries = append(newEntries, o.dirEntries[:removeStart]...)
+		newEntries = append(newEntries, o.dirEntries[removeEnd:]...)
+		o.dirEntries = newEntries
+	}
+
+	// Update state.Entries to match
+	o.state.Entries = make([]ui.UIEntry, len(o.dirEntries))
+	copy(o.state.Entries, o.dirEntries)
+	o.stateMu.Unlock()
+
+	// Unwatch the collapsed directory
+	if o.watcher != nil {
+		o.watcher.Unwatch(path)
+	}
+
+	o.window.Invalidate()
+}
+
+// sortEntries sorts entries according to current sort settings
+func (o *Orchestrator) sortEntries(entries []ui.UIEntry) {
+	sort.Slice(entries, func(i, j int) bool {
+		// Directories first
+		if entries[i].IsDir != entries[j].IsDir {
+			return entries[i].IsDir
+		}
+		// Then by name (case insensitive)
+		return strings.ToLower(entries[i].Name) < strings.ToLower(entries[j].Name)
+	})
 }
 
 func Main(startPath string) {

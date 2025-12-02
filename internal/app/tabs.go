@@ -11,13 +11,14 @@ import (
 
 // TabState holds the navigation state for a single tab
 type TabState struct {
-	ID           string       // Unique identifier
-	CurrentPath  string       // Current directory path
-	History      []string     // Navigation history
-	HistoryIndex int          // Current position in history
-	DirEntries   []ui.UIEntry // Cached directory entries
-	RawEntries   []ui.UIEntry // Raw entries (before filter)
-	SelectedIdx  int          // Selected item index
+	ID           string            // Unique identifier
+	CurrentPath  string            // Current directory path
+	History      []string          // Navigation history
+	HistoryIndex int               // Current position in history
+	DirEntries   []ui.UIEntry      // Cached directory entries
+	RawEntries   []ui.UIEntry      // Raw entries (before filter)
+	SelectedIdx  int               // Selected item index
+	ExpandedDirs map[string]bool   // Expanded directories in tree view
 }
 
 // createNewTab creates a new tab based on config settings
@@ -59,6 +60,7 @@ func (o *Orchestrator) createNewTab() {
 		DirEntries:   nil, // Will be populated when we navigate
 		RawEntries:   nil,
 		SelectedIdx:  -1,
+		ExpandedDirs: make(map[string]bool),
 	}
 
 	o.tabs = append(o.tabs, tab)
@@ -111,6 +113,7 @@ func (o *Orchestrator) openPathInNewTab(path string) {
 		DirEntries:   nil,
 		RawEntries:   nil,
 		SelectedIdx:  -1,
+		ExpandedDirs: make(map[string]bool),
 	}
 
 	o.tabs = append(o.tabs, tab)
@@ -149,8 +152,10 @@ func (o *Orchestrator) closeTab(index int) {
 
 	debug.Log(debug.APP, "Closing tab %d", index)
 
-	// Get the path of the closing tab for watcher cleanup
-	closingPath := o.tabs[index].CurrentPath
+	// Get the paths of the closing tab for watcher cleanup
+	closingTab := o.tabs[index]
+	closingPath := closingTab.CurrentPath
+	closingExpandedDirs := closingTab.ExpandedDirs
 
 	// Remove from our state
 	o.tabs = append(o.tabs[:index], o.tabs[index+1:]...)
@@ -169,18 +174,29 @@ func (o *Orchestrator) closeTab(index int) {
 		o.loadTabState(newActiveIdx)
 	}
 
-	// Unwatch the closed tab's directory if no other tab is viewing it
-	if o.watcher != nil && closingPath != "" {
-		stillWatching := false
+	// Unwatch the closed tab's directories if no other tab is viewing them
+	if o.watcher != nil {
+		// Collect all paths that are still being watched by other tabs
+		stillWatched := make(map[string]bool)
 		for _, tab := range o.tabs {
-			if tab.CurrentPath == closingPath {
-				stillWatching = true
-				break
+			stillWatched[tab.CurrentPath] = true
+			for path := range tab.ExpandedDirs {
+				stillWatched[path] = true
 			}
 		}
-		if !stillWatching {
+
+		// Unwatch the main path if not used by other tabs
+		if closingPath != "" && !stillWatched[closingPath] {
 			o.watcher.Unwatch(closingPath)
 			debug.Log(debug.APP, "Unwatched directory (tab closed): %s", closingPath)
+		}
+
+		// Unwatch expanded directories if not used by other tabs
+		for path := range closingExpandedDirs {
+			if !stillWatched[path] {
+				o.watcher.Unwatch(path)
+				debug.Log(debug.APP, "Unwatched expanded directory (tab closed): %s", path)
+			}
 		}
 	}
 
@@ -245,6 +261,12 @@ func (o *Orchestrator) saveCurrentTabState() {
 	tab.RawEntries = make([]ui.UIEntry, len(o.rawEntries))
 	copy(tab.RawEntries, o.rawEntries)
 	tab.SelectedIdx = o.state.SelectedIndex
+
+	// Save expanded directories state
+	tab.ExpandedDirs = make(map[string]bool)
+	for _, path := range o.ui.GetExpandedDirs() {
+		tab.ExpandedDirs[path] = true
+	}
 }
 
 // loadTabState loads state from the given tab into the orchestrator
@@ -275,6 +297,24 @@ func (o *Orchestrator) loadTabState(index int) {
 	o.state.CanForward = o.navCtrl.HistoryIndex < len(o.navCtrl.History)-1
 	o.stateMu.Unlock()
 
+	// Restore expanded directories state
+	o.ui.ClearExpanded()
+	if tab.ExpandedDirs != nil {
+		for path := range tab.ExpandedDirs {
+			o.ui.SetExpanded(path, true)
+		}
+	}
+
+	// Watch the tab's current directory and expanded directories
+	if o.watcher != nil {
+		o.watcher.Watch(tab.CurrentPath)
+		if tab.ExpandedDirs != nil {
+			for path := range tab.ExpandedDirs {
+				o.watcher.Watch(path)
+			}
+		}
+	}
+
 	// Update tab title in UI
 	title := filepath.Base(tab.CurrentPath)
 	if title == "" || title == "/" || title == "." {
@@ -302,6 +342,7 @@ func (o *Orchestrator) initializeTabs(startPath string) {
 		DirEntries:   nil,
 		RawEntries:   nil,
 		SelectedIdx:  -1,
+		ExpandedDirs: make(map[string]bool),
 	}}
 	o.activeTabIndex = 0
 

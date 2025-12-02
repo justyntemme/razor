@@ -1,3 +1,9 @@
+ensure fsnotify works for all tabs
+add the draggable window element to the header entries (name, date modified... etc)
+delete confirmation doesnt use edpanded modal window (we should also not just expand entirely but look to center the window with a shadow behind it)
+round modal edges and add shadows to make it look cleaner
+write an orgmode parser that just creates the AST from the doc and not html
+
 add org support
 maybe increase limit for double click 
 ⏺ Gio Workarounds Applied

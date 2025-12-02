@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 
 	"github.com/charlievieth/fastwalk"
+	"github.com/justyntemme/razor/internal/debug"
 	"github.com/justyntemme/razor/internal/ui"
 )
 
@@ -59,6 +60,225 @@ func (o *Orchestrator) newProgressWriter(w io.Writer) io.Writer {
 // refreshCurrentDir refreshes the current directory view.
 func (o *Orchestrator) refreshCurrentDir() {
 	o.navCtrl.RequestDir(o.state.CurrentPath)
+}
+
+// refreshExpandedDir refreshes an expanded directory's entries in the current view
+func (o *Orchestrator) refreshExpandedDir(path string) {
+	// Find the expanded directory in our entries
+	parentIdx := -1
+	parentDepth := 0
+	for i, entry := range o.dirEntries {
+		if entry.Path == path {
+			parentIdx = i
+			parentDepth = entry.Depth
+			break
+		}
+	}
+
+	if parentIdx < 0 {
+		return
+	}
+
+	// Read the updated directory contents
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		debug.Log(debug.APP, "Error refreshing expanded directory %s: %v", path, err)
+		return
+	}
+
+	// Convert to UIEntry slice
+	childEntries := make([]ui.UIEntry, 0, len(entries))
+	for _, entry := range entries {
+		if !o.showDotfiles && strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		childEntry := ui.UIEntry{
+			Name:       entry.Name(),
+			Path:       filepath.Join(path, entry.Name()),
+			IsDir:      entry.IsDir(),
+			Size:       info.Size(),
+			ModTime:    info.ModTime(),
+			Depth:      parentDepth + 1,
+			ParentPath: path,
+			IsExpanded: o.ui.IsExpanded(filepath.Join(path, entry.Name())),
+		}
+		childEntries = append(childEntries, childEntry)
+	}
+
+	// Sort the children
+	o.sortEntries(childEntries)
+
+	// Find all existing children to remove
+	o.stateMu.Lock()
+	removeStart := parentIdx + 1
+	removeEnd := removeStart
+	for i := removeStart; i < len(o.dirEntries); i++ {
+		if o.dirEntries[i].Depth <= parentDepth {
+			break
+		}
+		// Only remove direct children (not nested expanded dirs)
+		if o.dirEntries[i].ParentPath == path {
+			removeEnd = i + 1
+		} else if o.dirEntries[i].Depth == parentDepth+1 {
+			// This is a direct child from a different parent, stop here
+			break
+		}
+	}
+
+	// Replace old children with new ones
+	newEntries := make([]ui.UIEntry, 0, len(o.dirEntries)-removeEnd+removeStart+len(childEntries))
+	newEntries = append(newEntries, o.dirEntries[:removeStart]...)
+	newEntries = append(newEntries, childEntries...)
+	if removeEnd < len(o.dirEntries) {
+		newEntries = append(newEntries, o.dirEntries[removeEnd:]...)
+	}
+	o.dirEntries = newEntries
+
+	// Update state.Entries
+	o.state.Entries = make([]ui.UIEntry, len(o.dirEntries))
+	copy(o.state.Entries, o.dirEntries)
+	o.stateMu.Unlock()
+
+	o.window.Invalidate()
+}
+
+// refreshTabEntries refreshes the cached entries for a specific tab
+func (o *Orchestrator) refreshTabEntries(tabIndex int) {
+	if tabIndex < 0 || tabIndex >= len(o.tabs) {
+		return
+	}
+
+	tab := &o.tabs[tabIndex]
+
+	// Read the directory
+	entries, err := os.ReadDir(tab.CurrentPath)
+	if err != nil {
+		debug.Log(debug.APP, "Error refreshing tab %d entries: %v", tabIndex, err)
+		return
+	}
+
+	// Convert to UIEntry slice
+	uiEntries := make([]ui.UIEntry, 0, len(entries))
+	for _, entry := range entries {
+		if !o.showDotfiles && strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		uiEntry := ui.UIEntry{
+			Name:    entry.Name(),
+			Path:    filepath.Join(tab.CurrentPath, entry.Name()),
+			IsDir:   entry.IsDir(),
+			Size:    info.Size(),
+			ModTime: info.ModTime(),
+		}
+		uiEntries = append(uiEntries, uiEntry)
+	}
+
+	// Sort entries
+	o.sortEntries(uiEntries)
+
+	// Update tab's cached entries
+	tab.DirEntries = uiEntries
+	tab.RawEntries = uiEntries
+}
+
+// refreshTabExpandedDir refreshes an expanded directory within a tab's cached entries
+func (o *Orchestrator) refreshTabExpandedDir(tabIndex int, path string) {
+	if tabIndex < 0 || tabIndex >= len(o.tabs) {
+		return
+	}
+
+	tab := &o.tabs[tabIndex]
+	if tab.DirEntries == nil {
+		return
+	}
+
+	// Find the expanded directory
+	parentIdx := -1
+	parentDepth := 0
+	for i, entry := range tab.DirEntries {
+		if entry.Path == path {
+			parentIdx = i
+			parentDepth = entry.Depth
+			break
+		}
+	}
+
+	if parentIdx < 0 {
+		return
+	}
+
+	// Read the updated directory contents
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		debug.Log(debug.APP, "Error refreshing tab %d expanded directory %s: %v", tabIndex, path, err)
+		return
+	}
+
+	// Convert to UIEntry slice
+	childEntries := make([]ui.UIEntry, 0, len(entries))
+	for _, entry := range entries {
+		if !o.showDotfiles && strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		childPath := filepath.Join(path, entry.Name())
+		childEntry := ui.UIEntry{
+			Name:       entry.Name(),
+			Path:       childPath,
+			IsDir:      entry.IsDir(),
+			Size:       info.Size(),
+			ModTime:    info.ModTime(),
+			Depth:      parentDepth + 1,
+			ParentPath: path,
+			IsExpanded: tab.ExpandedDirs[childPath],
+		}
+		childEntries = append(childEntries, childEntry)
+	}
+
+	// Sort the children
+	o.sortEntries(childEntries)
+
+	// Find all existing direct children to remove
+	removeStart := parentIdx + 1
+	removeEnd := removeStart
+	for i := removeStart; i < len(tab.DirEntries); i++ {
+		if tab.DirEntries[i].Depth <= parentDepth {
+			break
+		}
+		if tab.DirEntries[i].ParentPath == path {
+			removeEnd = i + 1
+		} else if tab.DirEntries[i].Depth == parentDepth+1 {
+			break
+		}
+	}
+
+	// Replace old children with new ones
+	newEntries := make([]ui.UIEntry, 0, len(tab.DirEntries)-removeEnd+removeStart+len(childEntries))
+	newEntries = append(newEntries, tab.DirEntries[:removeStart]...)
+	newEntries = append(newEntries, childEntries...)
+	if removeEnd < len(tab.DirEntries) {
+		newEntries = append(newEntries, tab.DirEntries[removeEnd:]...)
+	}
+
+	tab.DirEntries = newEntries
+	tab.RawEntries = newEntries
 }
 
 // ============================================================================
