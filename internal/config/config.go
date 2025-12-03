@@ -268,7 +268,7 @@ func DefaultConfig() *Config {
 			TextExtensions:   []string{".txt", ".json", ".csv", ".md", ".org", ".log", ".xml", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg"},
 			ImageExtensions:  []string{".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".heic", ".heif"},
 			MaxFileSize:      1024 * 1024, // 1MB default limit
-			MarkdownRendered: true,
+			MarkdownRendered: false,
 		},
 		Terminal: TerminalConfig{
 			App: "", // Empty means use platform default

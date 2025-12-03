@@ -99,6 +99,7 @@ func (r *Renderer) SetPreviewConfig(textExtensions, imageExtensions []string, ma
 	r.previewMaxSize = maxSize
 	r.previewWidthPct = widthPct
 	r.previewMarkdownRender = markdownRendered
+	r.previewOrgmodeRender = markdownRendered // Use same default for orgmode
 }
 
 // SetTrashView sets whether the trash view is active

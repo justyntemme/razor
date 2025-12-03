@@ -216,6 +216,12 @@ type Renderer struct {
 	previewMarkdownBlocks []MarkdownBlock  // Parsed markdown blocks
 	previewMdToggleBtn    widget.Clickable // Toggle button for raw/rendered
 
+	// Orgmode preview state
+	previewIsOrgmode     bool            // Whether previewing an org-mode file
+	previewOrgmodeRender bool            // True = render orgmode, False = show raw
+	previewOrgmodeBlocks []MarkdownBlock // Parsed org blocks (reuses MarkdownBlock)
+	previewOrgToggleBtn  widget.Clickable // Toggle button for raw/rendered
+
 	// Recent files state
 	recentFilesBtn    widget.Clickable // Button to show recent files
 	openLocationBtn   widget.Clickable // Context menu item to open file location
@@ -260,7 +266,7 @@ func NewRenderer() *Renderer {
 	r.SelectedEngine = "builtin"
 
 	// Default preview config (will be overridden by SetPreviewConfig)
-	r.previewExtensions = []string{".txt", ".json", ".csv", ".md", ".log"}
+	r.previewExtensions = []string{".txt", ".json", ".csv", ".md", ".org", ".log"}
 	r.previewMaxSize = 1024 * 1024 // 1MB
 	r.previewWidthPct = 33
 	r.previewWidth = 0 // Will be initialized from percentage on first layout

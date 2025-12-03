@@ -10,7 +10,6 @@ import (
 
 	"gioui.org/op/paint"
 
-	"github.com/jdeng/goheif"
 	"github.com/justyntemme/razor/internal/debug"
 )
 
@@ -102,11 +101,18 @@ func (r *Renderer) loadImagePreview(path string) error {
 
 	var img image.Image
 
-	// Check if it's a HEIC/HEIF file (goheif doesn't register with image.Decode)
+	// Check if it's a HEIC/HEIF file
 	ext := strings.ToLower(filepath.Ext(path))
 	if ext == ".heic" || ext == ".heif" {
+		if !heicSupported() {
+			debug.Log(debug.UI, "loadImagePreview: HEIC not supported on this platform")
+			r.previewError = "HEIC preview not supported on this platform"
+			r.previewVisible = true
+			r.previewIsImage = false
+			return fmt.Errorf("HEIC not supported")
+		}
 		debug.Log(debug.UI, "loadImagePreview: decoding HEIC/HEIF")
-		img, err = goheif.Decode(file)
+		img, err = decodeHEIC(file)
 		if err != nil {
 			debug.Log(debug.UI, "loadImagePreview: HEIC decode error: %v", err)
 			r.previewError = fmt.Sprintf("Cannot decode HEIC: %v", err)
@@ -152,6 +158,7 @@ func (r *Renderer) loadTextPreview(path, ext string) error {
 	r.previewIsImage = false
 	r.previewIsJSON = ext == ".json"
 	r.previewIsMarkdown = ext == ".md" || ext == ".markdown"
+	r.previewIsOrgmode = ext == ".org"
 
 	// Format JSON with indentation
 	if r.previewIsJSON {
@@ -174,8 +181,12 @@ func (r *Renderer) loadTextPreview(path, ext string) error {
 	if r.previewIsMarkdown {
 		r.previewMarkdownBlocks = ParseMarkdown(string(data))
 		// previewMarkdownRender is already set from config via SetPreviewConfig
+	} else if r.previewIsOrgmode {
+		r.previewOrgmodeBlocks = ParseOrgMode(string(data))
+		// previewOrgmodeRender is already set from config via SetPreviewConfig
 	} else {
 		r.previewMarkdownBlocks = nil
+		r.previewOrgmodeBlocks = nil
 	}
 
 	r.previewVisible = true
@@ -193,6 +204,8 @@ func (r *Renderer) HidePreview() {
 	r.previewImageSize = image.Point{}
 	r.previewIsMarkdown = false
 	r.previewMarkdownBlocks = nil
+	r.previewIsOrgmode = false
+	r.previewOrgmodeBlocks = nil
 }
 
 // IsPreviewVisible returns whether the preview pane is currently shown

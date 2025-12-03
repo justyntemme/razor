@@ -937,6 +937,7 @@ func (o *Orchestrator) showTrash() {
 		log.Printf("Error loading trash: %v", err)
 		items = nil
 	}
+	debug.Log(debug.APP, "Trash list returned %d items", len(items))
 
 	// Convert trash items to UI entries
 	entries := make([]ui.UIEntry, len(items))
@@ -949,6 +950,7 @@ func (o *Orchestrator) showTrash() {
 			ModTime: item.DeletedAt,
 		}
 	}
+	debug.Log(debug.APP, "Created %d UI entries for trash", len(entries))
 
 	// Use StateOwner as single source of truth
 	o.stateOwner.SetEntries(trash.DisplayName(), entries, true, false)

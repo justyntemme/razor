@@ -39,6 +39,12 @@ func (r *Renderer) layoutPreviewPane(gtx layout.Context, state *State) layout.Di
 		r.previewMarkdownRender = !r.previewMarkdownRender
 	}
 
+	// Handle orgmode toggle click
+	if r.previewOrgToggleBtn.Clicked(gtx) {
+		r.onLeftClick()
+		r.previewOrgmodeRender = !r.previewOrgmodeRender
+	}
+
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		// Header with filename, toggle (for markdown), and close button
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -52,15 +58,25 @@ func (r *Renderer) layoutPreviewPane(gtx layout.Context, state *State) layout.Di
 							lbl.MaxLines = 1
 							return lbl.Layout(gtx)
 						}),
-						// Markdown Raw/Preview toggle (only for markdown files)
+						// Raw/Preview toggle (for markdown and orgmode files)
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							if !r.previewIsMarkdown {
+							if !r.previewIsMarkdown && !r.previewIsOrgmode {
 								return layout.Dimensions{}
 							}
-							return material.Clickable(gtx, &r.previewMdToggleBtn, func(gtx layout.Context) layout.Dimensions {
+							// Determine which toggle button and state to use
+							var toggleBtn *widget.Clickable
+							var renderMode bool
+							if r.previewIsMarkdown {
+								toggleBtn = &r.previewMdToggleBtn
+								renderMode = r.previewMarkdownRender
+							} else {
+								toggleBtn = &r.previewOrgToggleBtn
+								renderMode = r.previewOrgmodeRender
+							}
+							return material.Clickable(gtx, toggleBtn, func(gtx layout.Context) layout.Dimensions {
 								label := "Raw"
 								bgColor := colLightGray
-								if r.previewMarkdownRender {
+								if renderMode {
 									label = "Preview"
 									bgColor = colAccent
 								}
@@ -80,7 +96,7 @@ func (r *Renderer) layoutPreviewPane(gtx layout.Context, state *State) layout.Di
 												return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx,
 													func(gtx layout.Context) layout.Dimensions {
 														lbl := material.Body2(r.Theme, label)
-														if r.previewMarkdownRender {
+														if renderMode {
 															lbl.Color = colWhite
 														}
 														return lbl.Layout(gtx)
@@ -92,7 +108,7 @@ func (r *Renderer) layoutPreviewPane(gtx layout.Context, state *State) layout.Di
 						}),
 						// Spacer between toggle and close button
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							if !r.previewIsMarkdown {
+							if !r.previewIsMarkdown && !r.previewIsOrgmode {
 								return layout.Dimensions{}
 							}
 							return layout.Spacer{Width: unit.Dp(8)}.Layout(gtx)
@@ -137,6 +153,10 @@ func (r *Renderer) layoutPreviewPane(gtx layout.Context, state *State) layout.Di
 			// Render markdown if enabled and this is a markdown file
 			if r.previewIsMarkdown && r.previewMarkdownRender {
 				return r.layoutMarkdownPreview(gtx)
+			}
+			// Render orgmode if enabled and this is an org file
+			if r.previewIsOrgmode && r.previewOrgmodeRender {
+				return r.layoutOrgmodePreview(gtx)
 			}
 			return r.layoutTextPreview(gtx)
 		}),
@@ -246,6 +266,21 @@ func (r *Renderer) layoutMarkdownPreview(gtx layout.Context) layout.Dimensions {
 		func(gtx layout.Context) layout.Dimensions {
 			return r.previewScroll.Layout(gtx, len(r.previewMarkdownBlocks), func(gtx layout.Context, i int) layout.Dimensions {
 				return r.LayoutMarkdownBlock(gtx, r.previewMarkdownBlocks[i])
+			})
+		})
+}
+
+// layoutOrgmodePreview renders parsed org-mode content
+func (r *Renderer) layoutOrgmodePreview(gtx layout.Context) layout.Dimensions {
+	if len(r.previewOrgmodeBlocks) == 0 {
+		return layout.Dimensions{}
+	}
+
+	return layout.Inset{Top: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12), Bottom: unit.Dp(8)}.Layout(gtx,
+		func(gtx layout.Context) layout.Dimensions {
+			return r.previewScroll.Layout(gtx, len(r.previewOrgmodeBlocks), func(gtx layout.Context, i int) layout.Dimensions {
+				// Reuse LayoutMarkdownBlock since we use the same block types
+				return r.LayoutMarkdownBlock(gtx, r.previewOrgmodeBlocks[i])
 			})
 		})
 }

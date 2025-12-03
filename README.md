@@ -206,10 +206,10 @@ Configuration is stored in `~/.config/razor/config.json` on all platforms. The f
     "enabled": true,
     "position": "right",
     "widthPercent": 33,
-    "textExtensions": [".txt", ".json", ".csv", ".md", ".log", ".xml", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg"],
+    "textExtensions": [".txt", ".json", ".csv", ".md", ".org", ".log", ".xml", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg"],
     "imageExtensions": [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".heic"],
     "maxFileSize": 1048576,
-    "markdownRendered": true
+    "markdownRendered": false
   },
   "favorites": [
     {"name": "Home", "path": "/Users/you", "icon": "home"},
@@ -252,7 +252,7 @@ To get the legacy horizontal tab layout, set:
 - `textExtensions` - File extensions to preview as text
 - `imageExtensions` - File extensions to preview as images (supports PNG, JPG, GIF, BMP, WebP, HEIC)
 - `maxFileSize` - Maximum file size to preview in bytes (default: `1048576` = 1MB)
-- `markdownRendered` - Whether to render markdown by default (default: `true`)
+- `markdownRendered` - Whether to render markdown/orgmode by default (default: `false`)
 
 When you click a file with a supported extension, the preview pane opens on the right. JSON files are automatically formatted with indentation. Markdown files can be toggled between raw and rendered view. Press Escape or navigate away to close the preview.
 

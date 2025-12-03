@@ -1,6 +1,6 @@
 module github.com/justyntemme/razor
 
-go 1.24.0
+go 1.25.4
 
 require (
 	gioui.org v0.9.0
@@ -16,6 +16,7 @@ require (
 	github.com/go-text/typesetting v0.3.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/jdeng/goheif v0.0.0-20251001174315-babb64285736 // indirect
+	github.com/justyntemme/organelle v0.0.0-20251202160832-7c93df124207 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
