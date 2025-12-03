@@ -19,12 +19,6 @@ import (
 func (r *Renderer) ShowPreview(path string) error {
 	debug.Log(debug.UI, "ShowPreview called for: %s", path)
 
-	// In grid view, thumbnails serve as previews - don't show preview pane
-	if r.viewMode == ViewModeGrid {
-		r.HidePreview()
-		return nil
-	}
-
 	// Check file extension
 	ext := strings.ToLower(filepath.Ext(path))
 	debug.Log(debug.UI, "ShowPreview: ext=%s, textExts=%v, imageExts=%v", ext, r.previewExtensions, r.previewImageExts)
@@ -48,6 +42,12 @@ func (r *Renderer) ShowPreview(path string) error {
 	}
 
 	debug.Log(debug.UI, "ShowPreview: isText=%v, isImage=%v", isText, isImage)
+
+	// In grid view, thumbnails serve as image previews - only show text previews in preview pane
+	if r.viewMode == ViewModeGrid && isImage {
+		r.HidePreview()
+		return nil
+	}
 
 	if !isText && !isImage {
 		debug.Log(debug.UI, "ShowPreview: hiding preview (not text or image)")

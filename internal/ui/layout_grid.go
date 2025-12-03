@@ -3,11 +3,15 @@ package ui
 import (
 	"image"
 	"image/color"
+	"io"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"gioui.org/io/event"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
+	"gioui.org/io/transfer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -45,10 +49,20 @@ func (r *Renderer) layoutFileGrid(gtx layout.Context, state *State, keyTag *layo
 	// Reset visible image paths for thumbnail caching
 	r.visibleImagePaths = r.visibleImagePaths[:0]
 
+	// Reset drag hover candidates for this frame
+	r.dragHoverCandidates = r.dragHoverCandidates[:0]
+
+	// Track if any item is being dragged
+	anyDragging := false
+
 	return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return r.listState.Layout(gtx, rows, func(gtx layout.Context, rowIdx int) layout.Dimensions {
+		// Track cumulative Y position for row bounds
+		cumulativeY := 0
+
+		dims := r.listState.Layout(gtx, rows, func(gtx layout.Context, rowIdx int) layout.Dimensions {
 			// Build row of grid items
 			var children []layout.FlexChild
+			rowHeight := 0
 
 			startIdx := rowIdx * cols
 			endIdx := startIdx + cols
@@ -56,18 +70,52 @@ func (r *Renderer) layoutFileGrid(gtx layout.Context, state *State, keyTag *layo
 				endIdx = numItems
 			}
 
+			// Track X position within row
+			cumulativeX := 0
+
 			for i := startIdx; i < endIdx; i++ {
 				idx := i
 				item := &state.Entries[idx]
+				itemX := cumulativeX // Capture for closure
 
 				// Track visible images for thumbnail caching
 				if !item.IsDir {
 					r.trackVisibleImage(item.Path)
 				}
 
+				// Track if this item is being dragged
+				if item.Touch.Dragging() {
+					anyDragging = true
+					dragPos := item.Touch.CurrentPos()
+					r.dragCurrentX = r.fileListOffset.X + itemX + int(dragPos.X)
+					r.dragCurrentY = cumulativeY + int(dragPos.Y)
+					r.dragWindowY = r.fileListOffset.Y + cumulativeY + int(dragPos.Y) - r.listState.Position.Offset
+					r.dragSourcePath = item.Path
+					r.dragSourcePaths = []string{item.Path}
+				}
+
 				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return r.layoutGridItem(gtx, state, item, idx, itemSize, keyTag, eventOut)
+					itemDims := r.layoutGridItem(gtx, state, item, idx, itemSize, keyTag, eventOut)
+					if itemDims.Size.Y > rowHeight {
+						rowHeight = itemDims.Size.Y
+					}
+
+					// Track this item as drop target candidate if it's a valid directory
+					if item.IsDir && r.dragSourcePath != "" &&
+						r.dragSourcePath != item.Path &&
+						filepath.Dir(r.dragSourcePath) != item.Path {
+						r.dragHoverCandidates = append(r.dragHoverCandidates, dragHoverCandidate{
+							Path: item.Path,
+							MinX: itemX,
+							MaxX: itemX + itemSize,
+							MinY: cumulativeY,
+							MaxY: cumulativeY + itemDims.Size.Y,
+						})
+					}
+
+					return itemDims
 				}))
+				cumulativeX += itemSize
 			}
 
 			// Pad remaining columns if row isn't full
@@ -77,8 +125,30 @@ func (r *Renderer) layoutFileGrid(gtx layout.Context, state *State, keyTag *layo
 				}))
 			}
 
-			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, children...)
+			rowDims := layout.Flex{Axis: layout.Horizontal}.Layout(gtx, children...)
+			cumulativeY += rowDims.Size.Y
+			return rowDims
 		})
+
+		// Clear drag state if nothing is being dragged
+		if !anyDragging {
+			r.dragSourcePath = ""
+			r.dropTargetPath = ""
+		} else {
+			// Find drop target based on cursor position
+			r.dropTargetPath = ""
+			for _, candidate := range r.dragHoverCandidates {
+				if r.dragCurrentX >= candidate.MinX && r.dragCurrentX < candidate.MaxX &&
+					r.dragCurrentY >= candidate.MinY && r.dragCurrentY < candidate.MaxY {
+					r.dropTargetPath = candidate.Path
+					break
+				}
+			}
+			// Request redraw to keep tracking drag position
+			gtx.Execute(op.InvalidateCmd{})
+		}
+
+		return dims
 	})
 }
 
@@ -91,18 +161,81 @@ func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntr
 		isSelected = state.SelectedIndices[idx]
 	}
 
+	// Check if this item is a drop target
+	isDropTarget := item.IsDir && r.dropTargetPath == item.Path
+
 	totalHeight := iconSize + labelHeight + 10
+
+	// Set MIME type for drag operations - must be set before Update() and Layout()
+	item.Touch.Type = FileDragMIME
+
+	// Handle drop events for directories (they are drop targets)
+	var dropEvent *UIEvent
+	if item.IsDir {
+		// Check for transfer events on this directory
+		for {
+			ev, ok := gtx.Event(transfer.TargetFilter{Target: &item.DropTag, Type: FileDragMIME})
+			if !ok {
+				break
+			}
+			switch e := ev.(type) {
+			case transfer.InitiateEvent:
+				// Drag started and this directory is a potential target
+				// Check if it's a valid drop target (not the source or its parent)
+				if r.dragSourcePath != "" && r.dragSourcePath != item.Path && filepath.Dir(r.dragSourcePath) != item.Path {
+					// We can't set dropTargetPath here because InitiateEvent is sent to ALL potential targets
+					// We need pointer position to determine which one is actually hovered
+				}
+			case transfer.DataEvent:
+				if e.Type == FileDragMIME {
+					// Read the dropped file paths (newline-separated for multi-select)
+					reader := e.Open()
+					data, err := io.ReadAll(reader)
+					reader.Close()
+					if err == nil {
+						pathsData := string(data)
+						sourcePaths := strings.Split(pathsData, "\n")
+						// Filter out invalid paths (self or parent of destination)
+						validPaths := make([]string, 0, len(sourcePaths))
+						for _, p := range sourcePaths {
+							if p != "" && p != item.Path && filepath.Dir(p) != item.Path {
+								validPaths = append(validPaths, p)
+							}
+						}
+						if len(validPaths) > 0 {
+							dropEvent = &UIEvent{
+								Action: ActionMove,
+								Paths:  validPaths, // Source paths
+								Path:   item.Path,  // Destination directory
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 
 	// Layout the touchable widget and handle events
 	dims, touchEvt := item.Touch.Layout(gtx,
 		// Content widget
 		func(gtx layout.Context) layout.Dimensions {
 			return layout.Stack{Alignment: layout.Center}.Layout(gtx,
-				// Selection background
+				// Selection/drop target background
 				layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-					if isSelected {
+					var bgColor color.NRGBA
+					drawBg := false
+
+					if isDropTarget {
+						bgColor = colDropTarget
+						drawBg = true
+					} else if isSelected {
+						bgColor = colSelected
+						drawBg = true
+					}
+
+					if drawBg {
 						rr := gtx.Dp(4)
-						paint.FillShape(gtx.Ops, colSelected,
+						paint.FillShape(gtx.Ops, bgColor,
 							clip.RRect{
 								Rect: image.Rect(0, 0, itemSize, totalHeight),
 								NE:   rr, NW: rr, SE: rr, SW: rr,
@@ -141,8 +274,43 @@ func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntr
 				}),
 			)
 		},
-		// Drag widget (nil for now - no drag support in grid view yet)
-		nil,
+		// Drag appearance - show small icon + name
+		func(gtx layout.Context) layout.Dimensions {
+			dragHeight := gtx.Dp(36)
+			dragWidth := gtx.Dp(160)
+
+			cornerRadius := gtx.Dp(4)
+			rr := clip.RRect{
+				Rect: image.Rect(0, 0, dragWidth, dragHeight),
+				NE:   cornerRadius, NW: cornerRadius, SE: cornerRadius, SW: cornerRadius,
+			}
+			paint.FillShape(gtx.Ops, color.NRGBA{R: 200, G: 220, B: 255, A: 220}, rr.Op(gtx.Ops))
+
+			return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx,
+				func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						// Small icon
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							iconSz := gtx.Dp(24)
+							if item.IsDir {
+								r.drawFolderIcon(gtx.Ops, iconSz, colAccent, colDirBlue)
+							} else {
+								ext := strings.ToLower(filepath.Ext(item.Path))
+								r.drawFileIcon(gtx.Ops, iconSz, ext)
+							}
+							return layout.Dimensions{Size: image.Pt(iconSz, iconSz)}
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+						// Name
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Body2(r.Theme, item.Name)
+							lbl.Color = colBlack
+							lbl.MaxLines = 1
+							return lbl.Layout(gtx)
+						}),
+					)
+				})
+		},
 	)
 
 	// Handle touch events
@@ -172,6 +340,7 @@ func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntr
 				r.lastClickTime = now
 			}
 			gtx.Execute(key.FocusCmd{Tag: keyTag})
+			gtx.Execute(op.InvalidateCmd{})
 
 		case TouchRightClick:
 			r.menuVisible = true
@@ -182,6 +351,31 @@ func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntr
 			r.menuIsBackground = false
 			gtx.Execute(op.InvalidateCmd{})
 		}
+	}
+
+	// Register drop target for directories AFTER Touch.Layout with same dimensions
+	// PassOp is critical: without it, the drop target clip area would block pointer
+	// events from reaching the underlying Touchable, breaking hover detection.
+	// PassOp must wrap the clip area to allow events to "pass through" to lower layers.
+	if item.IsDir {
+		passStack := pointer.PassOp{}.Push(gtx.Ops)
+		stack := clip.Rect{Max: dims.Size}.Push(gtx.Ops)
+		event.Op(gtx.Ops, &item.DropTag)
+		stack.Pop()
+		passStack.Pop()
+	}
+
+	// Handle drag data request - call Update() AFTER Layout() to process transfer events
+	// This receives RequestEvent when a drop happens on a target
+	if mime, ok := item.Touch.Update(gtx); ok && mime == FileDragMIME {
+		// Send all selected paths (for multi-select drag), separated by newlines
+		pathsData := strings.Join(r.dragSourcePaths, "\n")
+		item.Touch.Offer(gtx, mime, io.NopCloser(strings.NewReader(pathsData)))
+	}
+
+	// Handle drop event
+	if dropEvent != nil {
+		*eventOut = *dropEvent
 	}
 
 	return dims

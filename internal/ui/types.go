@@ -467,9 +467,11 @@ type UIEntry struct {
 
 // dragHoverCandidate stores info for a potential drop target during drag
 type dragHoverCandidate struct {
-	Path   string // Path of the directory
-	MinY   int    // Top of row in list-local coordinates
-	MaxY   int    // Bottom of row in list-local coordinates
+	Path string // Path of the directory
+	MinX int    // Left edge in list-local coordinates (0 for list view)
+	MaxX int    // Right edge in list-local coordinates (max for list view)
+	MinY int    // Top of row in list-local coordinates
+	MaxY int    // Bottom of row in list-local coordinates
 }
 
 // FavoriteItemType indicates the type of favorite entry

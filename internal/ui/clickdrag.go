@@ -175,6 +175,11 @@ func (t *Touchable) Layout(gtx layout.Context, w, drag layout.Widget) (layout.Di
 	}
 
 	// Process drag events
+	// Use a larger threshold (8dp) to distinguish intentional drags from
+	// accidental mouse movement during clicks
+	const dragThreshold = 8
+	dragThresholdPx := float32(gtx.Dp(dragThreshold))
+
 	for {
 		e, ok := t.drag.Update(gtx.Metric, gtx.Source, gesture.Both)
 		if !ok {
@@ -188,8 +193,12 @@ func (t *Touchable) Layout(gtx layout.Context, w, drag layout.Widget) (layout.Di
 			t.dragStarted = false
 		case pointer.Drag:
 			if e.PointerID == t.pid {
-				t.dragStarted = true
 				t.dragPos = e.Position.Sub(t.clickPos)
+				// Only consider it a real drag after moving beyond threshold
+				dist := t.dragPos.X*t.dragPos.X + t.dragPos.Y*t.dragPos.Y
+				if dist > dragThresholdPx*dragThresholdPx {
+					t.dragStarted = true
+				}
 			}
 		case pointer.Release, pointer.Cancel:
 			t.dragStarted = false

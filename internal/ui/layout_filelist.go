@@ -175,6 +175,8 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 						filepath.Dir(r.dragSourcePath) != item.Path {
 						r.dragHoverCandidates = append(r.dragHoverCandidates, dragHoverCandidate{
 							Path: item.Path,
+							MinX: 0,
+							MaxX: gtx.Constraints.Max.X,
 							MinY: cumulativeY,
 							MaxY: cumulativeY + rowDims.Size.Y,
 						})
@@ -317,7 +319,9 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 					r.dropTargetPath = ""
 					if dragInFileList {
 						for _, candidate := range r.dragHoverCandidates {
-							if r.dragCurrentY >= candidate.MinY && r.dragCurrentY < candidate.MaxY {
+							// Check both X and Y bounds (X is relevant for grid view)
+							if r.dragCurrentX >= candidate.MinX && r.dragCurrentX < candidate.MaxX &&
+								r.dragCurrentY >= candidate.MinY && r.dragCurrentY < candidate.MaxY {
 								r.dropTargetPath = candidate.Path
 								break
 							}
