@@ -102,10 +102,6 @@ type Renderer struct {
 	expandedDirs map[string]bool // Tracks which directories are expanded by path
 	treeIndent   int             // Indentation width in dp per level (default 20)
 
-	// Drag-and-drop state
-	dropTargetPath  string   // Path of folder being hovered as drop target
-	dragSourcePaths []string // Paths being dragged (for multi-select support)
-
 	// Background click pending (to detect if click was on row or empty space)
 	bgRightClickPending bool
 	bgRightClickPos     image.Point
