@@ -108,8 +108,10 @@ type Renderer struct {
 	bgLeftClickPending  bool // Left-click on background - dismiss menus
 
 	// Drag and drop state
-	dragSourcePath string // Path of item being dragged
-	dropTargetPath string // Path of directory currently being hovered as drop target
+	dragSourcePath      string               // Path of item being dragged
+	dropTargetPath      string               // Path of directory currently being hovered as drop target
+	dragHoverCandidates []dragHoverCandidate // Candidates for drop target hover (rebuilt each frame)
+	listAreaOffset      int                  // Y offset of the list area within the file list (after header)
 
 	// Delete confirmation
 	deleteConfirmOpen bool

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -54,6 +55,9 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 			return dims
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			// Track the list area offset (after header) for drag hover calculation
+			r.listAreaOffset = headerHeight
+
 			// === BACKGROUND CLICK DETECTION ===
 			// Create a hit area filling the entire available space behind the list.
 			// This catches clicks that miss the rows (empty space).
@@ -93,6 +97,13 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 				// Reset drag state at start of each frame - will be set by dragging item
 				anyDragging := false
 
+				// Reset drag hover candidates for this frame
+				r.dragHoverCandidates = r.dragHoverCandidates[:0]
+				r.dropTargetPath = ""
+
+				// Track cumulative Y position for row bounds
+				cumulativeY := 0
+
 				// Layout file list
 				listDims := r.listState.Layout(gtx, len(state.Entries), func(gtx layout.Context, i int) layout.Dimensions {
 					// Track if any item is being dragged
@@ -118,6 +129,19 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 
 					// Render row and capture right-click event
 					rowDims, leftClicked, rightClicked, shiftHeld, _, renameEvt, checkboxToggled, chevronEvt, dropEvt := r.renderRow(gtx, item, i, i == state.SelectedIndex, isRenaming, isChecked, showCheckbox)
+
+					// Track this row as a potential drop target if it's a valid directory
+					// Check validity: is a directory, something is being dragged, not the source, not the source's parent
+					if item.IsDir && r.dragSourcePath != "" &&
+						r.dragSourcePath != item.Path &&
+						filepath.Dir(r.dragSourcePath) != item.Path {
+						r.dragHoverCandidates = append(r.dragHoverCandidates, dragHoverCandidate{
+							Path: item.Path,
+							MinY: cumulativeY,
+							MaxY: cumulativeY + rowDims.Size.Y,
+						})
+					}
+					cumulativeY += rowDims.Size.Y
 
 					// Handle chevron click (expand/collapse directory)
 					chevronClicked := false
@@ -229,6 +253,25 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 				if !anyDragging {
 					r.dragSourcePath = ""
 					r.dropTargetPath = ""
+				} else {
+					// Determine drop target based on mouse position
+					// Convert global mouse position to list-local coordinates
+					// fileListOffset.Y is the top of the file list area (includes sidebar width but not header)
+					// listAreaOffset is the header height within the file list
+					// listState.Position.Offset is the scroll offset
+					listLocalY := r.mousePos.Y - r.fileListOffset.Y - r.listAreaOffset + r.listState.Position.Offset
+
+					// Find which candidate the mouse is over
+					r.dropTargetPath = ""
+					for _, candidate := range r.dragHoverCandidates {
+						if listLocalY >= candidate.MinY && listLocalY < candidate.MaxY {
+							r.dropTargetPath = candidate.Path
+							break
+						}
+					}
+
+					// Always request redraw during drag to keep tracking mouse position
+					gtx.Execute(op.InvalidateCmd{})
 				}
 
 				return listDims

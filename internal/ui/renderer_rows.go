@@ -415,13 +415,15 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 		)
 
 		// Register drop target for directories AFTER Touch.Layout with same dimensions
-		// Use PassOp to allow hover events to pass through to the Touchable underneath
+		// PassOp is critical: without it, the drop target clip area would block pointer
+		// events from reaching the underlying Touchable, breaking hover detection.
+		// PassOp must wrap the clip area to allow events to "pass through" to lower layers.
 		if item.IsDir {
-			stack := clip.Rect{Max: dims.Size}.Push(gtx.Ops)
 			passStack := pointer.PassOp{}.Push(gtx.Ops)
+			stack := clip.Rect{Max: dims.Size}.Push(gtx.Ops)
 			event.Op(gtx.Ops, &item.DropTag)
-			passStack.Pop()
 			stack.Pop()
+			passStack.Pop()
 		}
 
 		// Process touch event from Touchable (handles both left-click and right-click)

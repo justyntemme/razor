@@ -435,6 +435,13 @@ type UIEntry struct {
 	ParentPath string           // Path of parent directory (empty for root level)
 }
 
+// dragHoverCandidate stores info for a potential drop target during drag
+type dragHoverCandidate struct {
+	Path   string // Path of the directory
+	MinY   int    // Top of row in list-local coordinates
+	MaxY   int    // Bottom of row in list-local coordinates
+}
+
 // FavoriteItemType indicates the type of favorite entry
 type FavoriteItemType int
 

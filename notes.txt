@@ -1,3 +1,5 @@
  there is noticable lag when clicking on pictures with a preview, we should cache those after everything else is done loading to ensure we can show those instantly 
 
  when in question look at how widget.Draggable in Gio handles this by checking its source code:
+
+ how can we indicate files in clipboard, maybe showing them as Selected?
