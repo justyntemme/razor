@@ -23,12 +23,26 @@ static NSDragOperation gioView_draggingEntered(id self, SEL _cmd, id<NSDraggingI
 static NSDragOperation gioView_draggingUpdated(id self, SEL _cmd, id<NSDraggingInfo> sender) {
     NSPasteboard *pboard = [sender draggingPasteboard];
     if ([[pboard types] containsObject:NSPasteboardTypeFileURL]) {
-        // Get drag location in view coordinates
-        NSPoint location = [sender draggingLocation];
         NSView *view = (NSView *)self;
-        // Convert to upper-left origin (Gio uses upper-left, AppKit uses lower-left)
+        // draggingLocation returns window coordinates, convert to view coordinates
+        NSPoint windowLocation = [sender draggingLocation];
+        NSPoint viewLocation = [view convertPoint:windowLocation fromView:nil];
+
+        // Get the backing scale factor (Retina displays have scale > 1)
+        CGFloat scale = [[view window] backingScaleFactor];
+
+        // Gio uses upper-left origin, AppKit uses lower-left
+        // The view's bounds height gives us the conversion factor
+        // Gio expects coordinates in scaled pixels (physical pixels on Retina)
         CGFloat height = view.bounds.size.height;
-        razor_onExternalDragUpdate((int)location.x, (int)(height - location.y));
+        int x = (int)(viewLocation.x * scale);
+        int y = (int)((height - viewLocation.y) * scale);
+
+        // Log for debugging
+        NSLog(@"ExtDrag: view=(%f,%f) height=%f scale=%f -> gio=(%d,%d)",
+              viewLocation.x, viewLocation.y,
+              height, scale, x, y);
+        razor_onExternalDragUpdate(x, y);
         return NSDragOperationCopy;
     }
     return NSDragOperationNone;

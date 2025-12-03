@@ -21,6 +21,7 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
+	"github.com/justyntemme/razor/internal/debug"
 	"github.com/justyntemme/razor/internal/platform"
 )
 
@@ -155,20 +156,47 @@ func (r *Renderer) layoutFileGrid(gtx layout.Context, state *State, keyTag *layo
 			// Request redraw to keep tracking drag position
 			gtx.Execute(op.InvalidateCmd{})
 		} else if state.ExternalDragActive {
-			// External drag: convert window coordinates to list-local coordinates
-			// Subtract fileListOffset to get into file list area
-			// Subtract padding (8dp) to account for the layout.Inset
-			// Add scroll offset to convert to content coordinates
+			// External drag: ExternalDragPos is in view coordinates from AppKit
+			// The Gio view fills the entire window content area
+			// AppKit reports (0,0) at view origin which equals window content origin
+			//
+			// Candidates are stored with coordinates relative to grid content:
+			// - X starts at 0 for first column (relative to inside 8dp padding)
+			// - Y starts at 0 for first row (relative to inside 8dp padding)
+			//
+			// Grid content area starts at:
+			// - X: fileListOffset.X + padding (sidebar + divider + padding)
+			// - Y: fileListOffset.Y + padding (navbar + padding)
+			//
+			// So to convert extPos to grid-local:
+			// localX = extPos.X - (fileListOffset.X + padding)
+			// localY = extPos.Y - (fileListOffset.Y + padding) + scroll
 			padding := gtx.Dp(8)
+
 			localX := state.ExternalDragPos.X - r.fileListOffset.X - padding
 			localY := state.ExternalDragPos.Y - r.fileListOffset.Y - padding + r.listState.Position.Offset
 
+			debug.Log(debug.UI, "ExtDrag: extPos=(%d,%d) fileListOffset=(%d,%d) padding=%d scroll=%d -> local=(%d,%d) numCandidates=%d",
+				state.ExternalDragPos.X, state.ExternalDragPos.Y,
+				r.fileListOffset.X, r.fileListOffset.Y,
+				padding, r.listState.Position.Offset,
+				localX, localY, len(r.dragHoverCandidates))
+
 			r.dropTargetPath = ""
+			// Log all candidates once
+			if len(r.dragHoverCandidates) > 0 {
+				debug.Log(debug.UI, "  All %d candidates:", len(r.dragHoverCandidates))
+				for i, c := range r.dragHoverCandidates {
+					debug.Log(debug.UI, "    [%d] %s X=[%d,%d] Y=[%d,%d]",
+						i, filepath.Base(c.Path), c.MinX, c.MaxX, c.MinY, c.MaxY)
+				}
+			}
 			for _, candidate := range r.dragHoverCandidates {
 				if localX >= candidate.MinX && localX < candidate.MaxX &&
 					localY >= candidate.MinY && localY < candidate.MaxY {
 					r.dropTargetPath = candidate.Path
 					platform.SetCurrentDropTarget(candidate.Path)
+					debug.Log(debug.UI, "  -> MATCH: %s at local=(%d,%d)", filepath.Base(candidate.Path), localX, localY)
 					break
 				}
 			}
@@ -214,8 +242,14 @@ func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntr
 	isExternalDropTarget := item.IsDir && state.ExternalDragActive
 
 	// Determine if this item should show as drop target
-	// When not dragging, use regular hover. When dragging, use dropTargetPath match.
-	isDropTarget := (isValidDropTarget || isExternalDropTarget) && (isHovered || r.dropTargetPath == item.Path)
+	// For internal drag: use hover OR dropTargetPath match
+	// For external drag: ONLY use dropTargetPath match (hover is stale during external drag)
+	var isDropTarget bool
+	if state.ExternalDragActive {
+		isDropTarget = isExternalDropTarget && r.dropTargetPath == item.Path
+	} else {
+		isDropTarget = isValidDropTarget && (isHovered || r.dropTargetPath == item.Path)
+	}
 
 	totalHeight := iconSize + labelHeight + 10
 
