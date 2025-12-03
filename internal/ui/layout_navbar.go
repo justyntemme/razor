@@ -38,22 +38,6 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 			}
 			return r.iconButton(gtx, &r.homeBtn, "home", colAccent)
 		}),
-		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-		// View mode toggle button
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if r.viewModeBtn.Clicked(gtx) {
-				r.onLeftClick()
-				// Only emit the event - orchestrator will toggle and persist
-				*eventOut = UIEvent{Action: ActionChangeViewMode}
-				gtx.Execute(key.FocusCmd{Tag: keyTag})
-			}
-			// Show icon for CURRENT mode (what user will switch TO is the opposite)
-			iconType := "grid-view" // Show grid icon when in list mode (click to switch to grid)
-			if r.viewMode == ViewModeGrid {
-				iconType = "list-view" // Show list icon when in grid mode (click to switch to list)
-			}
-			return r.iconButton(gtx, &r.viewModeBtn, iconType, colAccent)
-		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
 
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
@@ -118,7 +102,24 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 			// Build the breadcrumb layout
 			return r.layoutBreadcrumb(gtx, state, eventOut)
 		}),
-		layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+
+		// View mode toggle button (before search box)
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if r.viewModeBtn.Clicked(gtx) {
+				r.onLeftClick()
+				// Only emit the event - orchestrator will toggle and persist
+				*eventOut = UIEvent{Action: ActionChangeViewMode}
+				gtx.Execute(key.FocusCmd{Tag: keyTag})
+			}
+			// Show icon for what clicking will switch TO
+			iconType := "grid-view" // Show grid icon when in list mode (click to switch to grid)
+			if r.viewMode == ViewModeGrid {
+				iconType = "list-view" // Show list icon when in grid mode (click to switch to list)
+			}
+			return r.iconButton(gtx, &r.viewModeBtn, iconType, colAccent)
+		}),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			searchBoxWidth := gtx.Dp(280)

@@ -120,12 +120,14 @@ func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntr
 						}),
 						// Filename label
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							gtx.Constraints.Max.X = itemSize - 4
-							gtx.Constraints.Min.X = itemSize - 4
+							// Use full item width for text
+							gtx.Constraints.Max.X = itemSize
+							gtx.Constraints.Min.X = itemSize
 							return layout.Inset{Top: unit.Dp(4), Left: unit.Dp(2), Right: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								lbl := material.Body2(r.Theme, truncateFilename(item.Name, 15))
+								// Show full name, let Gio handle wrapping
+								lbl := material.Body2(r.Theme, item.Name)
 								lbl.Alignment = text.Middle
-								lbl.MaxLines = 2
+								lbl.MaxLines = 2 // Allow 2 lines for longer names
 								if item.IsDir {
 									lbl.Color = colBlack
 								} else {
@@ -187,8 +189,8 @@ func (r *Renderer) drawGridIcon(gtx layout.Context, item *UIEntry, size int) lay
 	s := float32(size)
 
 	if item.IsDir {
-		// Draw folder icon
-		r.drawFolderIcon(gtx.Ops, size, colDirBlue)
+		// Draw folder icon with blue theme (accent blue inner, darker blue outer)
+		r.drawFolderIcon(gtx.Ops, size, colAccent, colDirBlue)
 	} else {
 		// Check if it's an image file - try to show thumbnail
 		ext := strings.ToLower(filepath.Ext(item.Path))
@@ -203,7 +205,9 @@ func (r *Renderer) drawGridIcon(gtx layout.Context, item *UIEntry, size int) lay
 		if isImage {
 			// Try to get cached thumbnail
 			if thumb, _, ok := r.thumbnailCache.Get(item.Path); ok {
-				// Draw thumbnail
+				// Constrain the image to the icon size
+				gtx.Constraints.Min = image.Pt(size, size)
+				gtx.Constraints.Max = image.Pt(size, size)
 				widget.Image{
 					Src:      thumb,
 					Fit:      widget.Contain,
@@ -220,71 +224,102 @@ func (r *Renderer) drawGridIcon(gtx layout.Context, item *UIEntry, size int) lay
 	return layout.Dimensions{Size: image.Pt(int(s), int(s))}
 }
 
-func (r *Renderer) drawFolderIcon(ops *op.Ops, size int, iconColor color.NRGBA) {
+func (r *Renderer) drawFolderIcon(ops *op.Ops, size int, innerColor, outerColor color.NRGBA) {
 	s := float32(size)
 
-	// Use a simple rectangle for the folder body - Gio-friendly
-	bodyY := int(s * 0.3)
-	bodyH := int(s * 0.55)
-	bodyW := int(s * 0.8)
-	bodyX := int(s * 0.1)
-	paint.FillShape(ops, iconColor, clip.Rect{
+	// Material Design style folder - inner color fill, outer color border/tab
+	bodyY := int(s * 0.28)
+	bodyH := int(s * 0.58)
+	bodyW := int(s * 0.76)
+	bodyX := int(s * 0.12)
+
+	// Light version of inner color for folder body fill
+	lightInner := color.NRGBA{
+		R: uint8(min(255, int(innerColor.R)+180)),
+		G: uint8(min(255, int(innerColor.G)+180)),
+		B: uint8(min(255, int(innerColor.B)+180)),
+		A: 255,
+	}
+	paint.FillShape(ops, lightInner, clip.Rect{
 		Min: image.Pt(bodyX, bodyY),
 		Max: image.Pt(bodyX+bodyW, bodyY+bodyH),
 	}.Op())
 
-	// Tab on top
-	tabW := int(s * 0.25)
-	tabH := int(s * 0.1)
-	paint.FillShape(ops, iconColor, clip.Rect{
+	// Folder outline with outer color
+	borderW := 2
+	// Top
+	paint.FillShape(ops, outerColor, clip.Rect{
+		Min: image.Pt(bodyX, bodyY),
+		Max: image.Pt(bodyX+bodyW, bodyY+borderW),
+	}.Op())
+	// Bottom
+	paint.FillShape(ops, outerColor, clip.Rect{
+		Min: image.Pt(bodyX, bodyY+bodyH-borderW),
+		Max: image.Pt(bodyX+bodyW, bodyY+bodyH),
+	}.Op())
+	// Left
+	paint.FillShape(ops, outerColor, clip.Rect{
+		Min: image.Pt(bodyX, bodyY),
+		Max: image.Pt(bodyX+borderW, bodyY+bodyH),
+	}.Op())
+	// Right
+	paint.FillShape(ops, outerColor, clip.Rect{
+		Min: image.Pt(bodyX+bodyW-borderW, bodyY),
+		Max: image.Pt(bodyX+bodyW, bodyY+bodyH),
+	}.Op())
+
+	// Tab on top (solid outer color - the manila tab)
+	tabW := int(s * 0.30)
+	tabH := int(s * 0.12)
+	paint.FillShape(ops, outerColor, clip.Rect{
 		Min: image.Pt(bodyX, bodyY-tabH),
-		Max: image.Pt(bodyX+tabW, bodyY),
+		Max: image.Pt(bodyX+tabW, bodyY+borderW),
 	}.Op())
 }
 
 func (r *Renderer) drawFileIcon(ops *op.Ops, size int, ext string) {
 	s := float32(size)
 
-	// Simple file icon using rectangles (Gio-friendly)
-	// Main file body
-	fileX := int(s * 0.2)
-	fileY := int(s * 0.1)
-	fileW := int(s * 0.6)
-	fileH := int(s * 0.8)
+	// Material Design style file icon - clean and light
+	// Main file body (centered, slightly smaller)
+	fileX := int(s * 0.22)
+	fileY := int(s * 0.08)
+	fileW := int(s * 0.56)
+	fileH := int(s * 0.78)
 
-	// White background
-	paint.FillShape(ops, color.NRGBA{R: 255, G: 255, B: 255, A: 255}, clip.Rect{
+	// Light accent background (very light blue, Material style)
+	lightAccent := color.NRGBA{R: 227, G: 242, B: 253, A: 255} // Light blue background
+	paint.FillShape(ops, lightAccent, clip.Rect{
 		Min: image.Pt(fileX, fileY),
 		Max: image.Pt(fileX+fileW, fileY+fileH),
 	}.Op())
 
-	// Border (draw as 4 thin rectangles)
-	borderColor := colGray
-	borderW := 1
+	// Accent color border (2px, same as home/nav buttons)
+	borderW := 2
 	// Top
-	paint.FillShape(ops, borderColor, clip.Rect{
+	paint.FillShape(ops, colAccent, clip.Rect{
 		Min: image.Pt(fileX, fileY),
 		Max: image.Pt(fileX+fileW, fileY+borderW),
 	}.Op())
 	// Bottom
-	paint.FillShape(ops, borderColor, clip.Rect{
+	paint.FillShape(ops, colAccent, clip.Rect{
 		Min: image.Pt(fileX, fileY+fileH-borderW),
 		Max: image.Pt(fileX+fileW, fileY+fileH),
 	}.Op())
 	// Left
-	paint.FillShape(ops, borderColor, clip.Rect{
+	paint.FillShape(ops, colAccent, clip.Rect{
 		Min: image.Pt(fileX, fileY),
 		Max: image.Pt(fileX+borderW, fileY+fileH),
 	}.Op())
 	// Right
-	paint.FillShape(ops, borderColor, clip.Rect{
+	paint.FillShape(ops, colAccent, clip.Rect{
 		Min: image.Pt(fileX+fileW-borderW, fileY),
 		Max: image.Pt(fileX+fileW, fileY+fileH),
 	}.Op())
 
-	// Folded corner indicator (small gray square in top-right)
-	cornerSize := int(s * 0.15)
-	paint.FillShape(ops, colLightGray, clip.Rect{
+	// Folded corner indicator (accent colored triangle effect)
+	cornerSize := int(s * 0.12)
+	paint.FillShape(ops, colAccent, clip.Rect{
 		Min: image.Pt(fileX+fileW-cornerSize, fileY),
 		Max: image.Pt(fileX+fileW, fileY+cornerSize),
 	}.Op())
@@ -293,10 +328,10 @@ func (r *Renderer) drawFileIcon(ops *op.Ops, size int, ext string) {
 	if ext != "" && len(ext) <= 5 {
 		ext = strings.TrimPrefix(ext, ".")
 		ext = strings.ToUpper(ext)
-		// Draw colored box for extension
-		boxY := int(s * 0.55)
-		boxH := int(s * 0.25)
-		boxW := int(s * 0.5)
+		// Draw colored badge for extension (centered, rounded look)
+		boxY := int(s * 0.50)
+		boxH := int(s * 0.22)
+		boxW := int(s * 0.44)
 		boxX := int(s*0.5) - boxW/2
 
 		extColor := getExtensionColor(ext)

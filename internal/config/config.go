@@ -60,10 +60,11 @@ type HotkeysConfig struct {
 	Refresh       string `json:"refresh"`
 
 	// UI
-	FocusSearch   string `json:"focusSearch"`
-	TogglePreview string `json:"togglePreview"`
-	ToggleHidden  string `json:"toggleHidden"`
-	Escape        string `json:"escape"`
+	FocusSearch    string `json:"focusSearch"`
+	TogglePreview  string `json:"togglePreview"`
+	ToggleHidden   string `json:"toggleHidden"`
+	ToggleViewMode string `json:"toggleViewMode"` // Toggle between list and grid view
+	Escape         string `json:"escape"`
 
 	// Tabs
 	NewTab        string `json:"newTab"`        // New tab in current directory
