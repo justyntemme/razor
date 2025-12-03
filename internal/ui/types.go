@@ -566,4 +566,7 @@ type State struct {
 	IsSearchResult  bool
 	SearchQuery     string
 	Conflict        ConflictState // File conflict dialog state
+	// External drag state (for drag from Finder/other apps)
+	ExternalDragActive bool        // True when external drag is in progress
+	ExternalDragPos    image.Point // Current external drag position
 }

@@ -120,6 +120,7 @@ type Renderer struct {
 	sidebarOffset          image.Point          // Offset of sidebar in window coordinates
 	sidebarFavContentY     int                  // Y offset within sidebar where favorites content starts
 	sidebarHoverCandidates []dragHoverCandidate // Candidates for sidebar drop target hover
+	externalDragActive     bool                 // True when external drag (from Finder/etc) is in progress
 
 	// Delete confirmation
 	deleteConfirmOpen bool

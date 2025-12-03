@@ -22,6 +22,7 @@ import (
 	"gioui.org/font"
 
 	"github.com/justyntemme/razor/internal/debug"
+	"github.com/justyntemme/razor/internal/platform"
 )
 
 // File list layout - main file/folder display, progress bar, error banner
@@ -169,10 +170,14 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 					rowDims, leftClicked, rightClicked, shiftHeld, _, renameEvt, checkboxToggled, chevronEvt, dropEvt := r.renderRow(gtx, item, i, i == state.SelectedIndex, isRenaming, isChecked, showCheckbox)
 
 					// Track this row as a potential drop target if it's a valid directory
-					// Check validity: is a directory, something is being dragged, not the source, not the source's parent
-					if item.IsDir && r.dragSourcePath != "" &&
+					// For internal drag: check it's not self or parent
+					// For external drag: all directories are valid
+					isInternalDragCandidate := item.IsDir && r.dragSourcePath != "" &&
 						r.dragSourcePath != item.Path &&
-						filepath.Dir(r.dragSourcePath) != item.Path {
+						filepath.Dir(r.dragSourcePath) != item.Path
+					isExternalDragCandidate := item.IsDir && state.ExternalDragActive
+
+					if isInternalDragCandidate || isExternalDragCandidate {
 						r.dragHoverCandidates = append(r.dragHoverCandidates, dragHoverCandidate{
 							Path: item.Path,
 							MinX: 0,
@@ -296,13 +301,14 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 				}
 				r.bgLeftClickPending = false
 
-				// Clear drag state if no item is being dragged
-				if !anyDragging {
+				// Clear drag state if no item is being dragged (internal or external)
+				if !anyDragging && !state.ExternalDragActive {
 					r.dragSourcePath = ""
 					r.dropTargetPath = ""
 					r.sidebarDropTarget = ""
-				} else {
-					// Determine drop target based on drag cursor position
+					platform.SetCurrentDropTarget("")
+				} else if anyDragging {
+					// Internal drag: determine drop target based on drag cursor position
 					// dragCurrentY is already in list coordinates (set when we found the dragging item)
 					// dragCurrentX is in window coordinates - check if within file list bounds
 
@@ -347,6 +353,30 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 						}
 					}
 
+					// Always request redraw during drag to keep tracking position
+					gtx.Execute(op.InvalidateCmd{})
+				} else if state.ExternalDragActive {
+					// External drag: convert window coordinates to list-local coordinates
+					fileListMinX := r.fileListOffset.X
+					fileListMaxX := r.fileListOffset.X + r.fileListSize.X
+					localX := state.ExternalDragPos.X
+					localY := state.ExternalDragPos.Y - r.fileListOffset.Y - r.listAreaOffset + r.listState.Position.Offset
+					dragInFileList := localX >= fileListMinX && localX < fileListMaxX
+
+					r.dropTargetPath = ""
+					if dragInFileList {
+						for _, candidate := range r.dragHoverCandidates {
+							if localY >= candidate.MinY && localY < candidate.MaxY {
+								r.dropTargetPath = candidate.Path
+								platform.SetCurrentDropTarget(candidate.Path)
+								break
+							}
+						}
+					}
+					// Clear target if not over any folder
+					if r.dropTargetPath == "" {
+						platform.SetCurrentDropTarget("")
+					}
 					// Always request redraw during drag to keep tracking position
 					gtx.Execute(op.InvalidateCmd{})
 				}

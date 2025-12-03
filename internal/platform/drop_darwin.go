@@ -17,12 +17,22 @@ import (
 )
 
 // DropHandler is called when files are dropped from an external source (e.g., Finder)
-type DropHandler func(paths []string)
+// The targetDir parameter is the directory that was being hovered when dropped (or empty for current dir)
+type DropHandler func(paths []string, targetDir string)
+
+// DragUpdateHandler is called when external drag position changes (for hover highlighting)
+type DragUpdateHandler func(x, y int)
+
+// DragEndHandler is called when external drag ends (either dropped or cancelled)
+type DragEndHandler func()
 
 var (
-	dropHandler DropHandler
-	dropMu      sync.Mutex
-	pendingDrop []string
+	dropHandler       DropHandler
+	dragUpdateHandler DragUpdateHandler
+	dragEndHandler    DragEndHandler
+	dropMu            sync.Mutex
+	pendingDrop       []string
+	currentDropTarget string // Set by UI based on drag position
 )
 
 // SetDropHandler sets the callback for external file drops
@@ -33,9 +43,37 @@ func SetDropHandler(handler DropHandler) {
 
 	// If there were pending drops before the handler was set, deliver them now
 	if len(pendingDrop) > 0 && handler != nil {
-		handler(pendingDrop)
+		handler(pendingDrop, "")
 		pendingDrop = nil
 	}
+}
+
+// SetDragUpdateHandler sets the callback for external drag position updates
+func SetDragUpdateHandler(handler DragUpdateHandler) {
+	dropMu.Lock()
+	defer dropMu.Unlock()
+	dragUpdateHandler = handler
+}
+
+// SetDragEndHandler sets the callback for when external drag ends
+func SetDragEndHandler(handler DragEndHandler) {
+	dropMu.Lock()
+	defer dropMu.Unlock()
+	dragEndHandler = handler
+}
+
+// SetCurrentDropTarget is called by the UI to set the current drop target directory
+func SetCurrentDropTarget(path string) {
+	dropMu.Lock()
+	defer dropMu.Unlock()
+	currentDropTarget = path
+}
+
+// GetCurrentDropTarget returns the current drop target directory
+func GetCurrentDropTarget() string {
+	dropMu.Lock()
+	defer dropMu.Unlock()
+	return currentDropTarget
 }
 
 // SetupExternalDrop configures the NSView to accept external file drops.
@@ -47,18 +85,51 @@ func SetupExternalDrop(viewPtr uintptr) {
 	C.razor_setupExternalDrop(C.uintptr_t(viewPtr))
 }
 
+//export razor_onExternalDragStart
+func razor_onExternalDragStart() {
+	dropMu.Lock()
+	currentDropTarget = "" // Reset drop target when drag starts
+	dropMu.Unlock()
+}
+
+//export razor_onExternalDragUpdate
+func razor_onExternalDragUpdate(x, y C.int) {
+	dropMu.Lock()
+	handler := dragUpdateHandler
+	dropMu.Unlock()
+
+	if handler != nil {
+		handler(int(x), int(y))
+	}
+}
+
+//export razor_onExternalDragEnd
+func razor_onExternalDragEnd() {
+	dropMu.Lock()
+	handler := dragEndHandler
+	currentDropTarget = ""
+	dropMu.Unlock()
+
+	if handler != nil {
+		handler()
+	}
+}
+
 //export razor_onExternalDrop
 func razor_onExternalDrop(pathCStr *C.char) {
 	path := C.GoString(pathCStr)
 
 	dropMu.Lock()
-	defer dropMu.Unlock()
+	handler := dropHandler
+	target := currentDropTarget
+	dropMu.Unlock()
 
-	if dropHandler != nil {
-		// Deliver immediately
-		dropHandler([]string{path})
+	if handler != nil {
+		// Deliver immediately with target directory
+		handler([]string{path}, target)
 	} else {
-		// Queue for later delivery
+		dropMu.Lock()
 		pendingDrop = append(pendingDrop, path)
+		dropMu.Unlock()
 	}
 }

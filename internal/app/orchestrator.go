@@ -1,6 +1,7 @@
 package app
 
 import (
+	"image"
 	"log"
 	"os"
 	"os/exec"
@@ -276,17 +277,42 @@ func (o *Orchestrator) Run(startPath string) error {
 
 	o.navCtrl.Navigate(startPath)
 
-	// Set up external drop handler (copies files from Finder/external apps to current directory)
-	platform.SetDropHandler(func(paths []string) {
-		debug.Log(debug.APP, "External drop received: %v", paths)
-		// Copy dropped files to current directory
-		o.stateMu.RLock()
-		destDir := o.state.CurrentPath
-		o.stateMu.RUnlock()
+	// Set up external drop handler (copies files from Finder/external apps)
+	platform.SetDropHandler(func(paths []string, targetDir string) {
+		debug.Log(debug.APP, "External drop received: %v -> target: %s", paths, targetDir)
+		// Use target directory if set, otherwise fall back to current directory
+		destDir := targetDir
+		if destDir == "" {
+			o.stateMu.RLock()
+			destDir = o.state.CurrentPath
+			o.stateMu.RUnlock()
+		}
 
 		if destDir != "" && len(paths) > 0 {
 			go o.doCopyExternal(paths, destDir)
 		}
+	})
+
+	// Set up drag update handler to track position
+	// window.Invalidate() is thread-safe and will wake up the event loop
+	platform.SetDragUpdateHandler(func(x, y int) {
+		o.stateMu.Lock()
+		o.state.ExternalDragPos = image.Pt(x, y)
+		o.state.ExternalDragActive = true
+		o.stateMu.Unlock()
+		// Wake up the event loop to process the new drag position
+		go o.window.Invalidate()
+	})
+
+	// Set up drag end handler to clear drag state
+	platform.SetDragEndHandler(func() {
+		o.stateMu.Lock()
+		o.state.ExternalDragActive = false
+		o.state.ExternalDragPos = image.Point{}
+		o.stateMu.Unlock()
+		platform.SetCurrentDropTarget("")
+		// Wake up the event loop to clear drag state
+		go o.window.Invalidate()
 	})
 
 	var ops op.Ops

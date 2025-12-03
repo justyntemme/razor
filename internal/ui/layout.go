@@ -27,6 +27,9 @@ const (
 func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 	defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
 
+	// Track external drag state for row rendering
+	r.externalDragActive = state.ExternalDragActive
+
 	// ===== GLOBAL MOUSE POSITION TRACKING =====
 	// Track mouse position for menu placement
 	// Use PassOp so events pass through to elements underneath

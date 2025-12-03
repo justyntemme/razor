@@ -20,6 +20,8 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
+
+	"github.com/justyntemme/razor/internal/platform"
 )
 
 // Grid view layout for file list
@@ -101,9 +103,14 @@ func (r *Renderer) layoutFileGrid(gtx layout.Context, state *State, keyTag *layo
 					}
 
 					// Track this item as drop target candidate if it's a valid directory
-					if item.IsDir && r.dragSourcePath != "" &&
+					// For internal drag: check it's not self or parent
+					// For external drag: all directories are valid
+					isInternalDragCandidate := item.IsDir && r.dragSourcePath != "" &&
 						r.dragSourcePath != item.Path &&
-						filepath.Dir(r.dragSourcePath) != item.Path {
+						filepath.Dir(r.dragSourcePath) != item.Path
+					isExternalDragCandidate := item.IsDir && state.ExternalDragActive
+
+					if isInternalDragCandidate || isExternalDragCandidate {
 						r.dragHoverCandidates = append(r.dragHoverCandidates, dragHoverCandidate{
 							Path: item.Path,
 							MinX: itemX,
@@ -130,12 +137,13 @@ func (r *Renderer) layoutFileGrid(gtx layout.Context, state *State, keyTag *layo
 			return rowDims
 		})
 
-		// Clear drag state if nothing is being dragged
-		if !anyDragging {
+		// Clear drag state if nothing is being dragged (internal or external)
+		if !anyDragging && !state.ExternalDragActive {
 			r.dragSourcePath = ""
 			r.dropTargetPath = ""
-		} else {
-			// Find drop target based on cursor position
+			platform.SetCurrentDropTarget("")
+		} else if anyDragging {
+			// Internal drag: find drop target based on cursor position
 			r.dropTargetPath = ""
 			for _, candidate := range r.dragHoverCandidates {
 				if r.dragCurrentX >= candidate.MinX && r.dragCurrentX < candidate.MaxX &&
@@ -143,6 +151,27 @@ func (r *Renderer) layoutFileGrid(gtx layout.Context, state *State, keyTag *layo
 					r.dropTargetPath = candidate.Path
 					break
 				}
+			}
+			// Request redraw to keep tracking drag position
+			gtx.Execute(op.InvalidateCmd{})
+		} else if state.ExternalDragActive {
+			// External drag: convert window coordinates to list-local coordinates
+			// and find drop target
+			localX := state.ExternalDragPos.X - r.fileListOffset.X
+			localY := state.ExternalDragPos.Y - r.fileListOffset.Y + r.listState.Position.Offset
+
+			r.dropTargetPath = ""
+			for _, candidate := range r.dragHoverCandidates {
+				if localX >= candidate.MinX && localX < candidate.MaxX &&
+					localY >= candidate.MinY && localY < candidate.MaxY {
+					r.dropTargetPath = candidate.Path
+					platform.SetCurrentDropTarget(candidate.Path)
+					break
+				}
+			}
+			// Clear target if not over any folder
+			if r.dropTargetPath == "" {
+				platform.SetCurrentDropTarget("")
 			}
 			// Request redraw to keep tracking drag position
 			gtx.Execute(op.InvalidateCmd{})
@@ -171,17 +200,19 @@ func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntr
 
 	// Check if this is a valid drop target:
 	// - Must be a directory
-	// - Something must be being dragged (dragSourcePath is set)
-	// - Can't drop on the item being dragged
-	// - Can't drop into parent directory of dragged item (it's already there)
+	// - For internal drag: something must be being dragged, can't drop on self or parent
+	// - For external drag: all directories are valid targets
 	isValidDropTarget := item.IsDir &&
-		r.dragSourcePath != "" &&
-		r.dragSourcePath != item.Path &&
-		filepath.Dir(r.dragSourcePath) != item.Path
+		(r.dragSourcePath != "" &&
+			r.dragSourcePath != item.Path &&
+			filepath.Dir(r.dragSourcePath) != item.Path)
+
+	// For external drags, all directories are valid drop targets
+	isExternalDropTarget := item.IsDir && state.ExternalDragActive
 
 	// Determine if this item should show as drop target
 	// When not dragging, use regular hover. When dragging, use dropTargetPath match.
-	isDropTarget := isValidDropTarget && (isHovered || r.dropTargetPath == item.Path)
+	isDropTarget := (isValidDropTarget || isExternalDropTarget) && (isHovered || r.dropTargetPath == item.Path)
 
 	totalHeight := iconSize + labelHeight + 10
 

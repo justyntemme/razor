@@ -353,18 +353,20 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 
 		// Check if this is a valid drop target:
 		// - Must be a directory
-		// - Something must be being dragged (dragSourcePath is set)
-		// - Can't drop on the item being dragged
-		// - Can't drop into parent directory of dragged item (it's already there)
+		// - For internal drag: something must be being dragged, can't drop on self or parent
+		// - For external drag: all directories are valid targets
 		// For hover detection during drag, we check if this is the current dropTargetPath
 		isValidDropTarget := item.IsDir &&
-			r.dragSourcePath != "" &&
-			r.dragSourcePath != item.Path &&
-			filepath.Dir(r.dragSourcePath) != item.Path
+			(r.dragSourcePath != "" &&
+				r.dragSourcePath != item.Path &&
+				filepath.Dir(r.dragSourcePath) != item.Path)
+
+		// For external drags, all directories are valid drop targets
+		isExternalDropTarget := item.IsDir && r.externalDragActive
 
 		// Determine if this row should show as drop target
 		// When not dragging, use regular hover. When dragging, use dropTargetPath match.
-		isDropTarget := isValidDropTarget && (isHovered || r.dropTargetPath == item.Path)
+		isDropTarget := (isValidDropTarget || isExternalDropTarget) && (isHovered || r.dropTargetPath == item.Path)
 
 		dims, touchEvt = item.Touch.Layout(gtx,
 			// Normal content - the row with selection background
