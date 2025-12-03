@@ -290,7 +290,7 @@ All keyboard shortcuts are configurable via the `hotkeys` section in config.json
 | **UI** | | |
 | Focus Search | Ctrl+F | Ctrl+F |
 | Toggle Preview | Ctrl+P | Ctrl+P |
-| Toggle Hidden | Cmd+Shift+> | Alt+Shift+> |
+| Toggle Hidden | Cmd+Shift+. | Ctrl+. |
 | Escape | Escape | Escape |
 | **Tabs (Vim-style)** | | |
 | New Tab (Current Dir) | Ctrl+T | Ctrl+T |
@@ -330,7 +330,7 @@ Override any shortcut in your config.json:
     "refresh": "F5",
     "focusSearch": "Ctrl+F",
     "togglePreview": "Ctrl+P",
-    "toggleHidden": "Alt+Shift+>",
+    "toggleHidden": "Ctrl+.",
     "escape": "Escape",
     "newTab": "Ctrl+T",
     "newTabHome": "Ctrl+Shift+T",
