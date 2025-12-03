@@ -99,6 +99,7 @@ func NewOrchestrator() *Orchestrator {
 
 	// Create window first so StateOwner can reference it
 	window := new(app.Window)
+	window.Option(app.Title("Razor"))
 
 	// Create core orchestrator
 	o := &Orchestrator{
