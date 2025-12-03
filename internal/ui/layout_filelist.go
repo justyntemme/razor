@@ -117,6 +117,8 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 						r.dragCurrentY = cumulativeY + int(dragPos.Y)
 						// Also track Y in window coordinates for sidebar hover detection
 						r.dragWindowY = r.fileListOffset.Y + r.listAreaOffset + cumulativeY + int(dragPos.Y) - r.listState.Position.Offset
+						debug.Log(debug.UI, "dragWindowY calc: fileListOffset.Y=%d listAreaOffset=%d cumulativeY=%d dragPos.Y=%d scrollOffset=%d -> dragWindowY=%d",
+							r.fileListOffset.Y, r.listAreaOffset, cumulativeY, int(dragPos.Y), r.listState.Position.Offset, r.dragWindowY)
 
 						// Build list of all paths being dragged (for multi-select)
 						// If dragging item is selected in multi-select, include all selected items
@@ -280,6 +282,7 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 				if !anyDragging {
 					r.dragSourcePath = ""
 					r.dropTargetPath = ""
+					r.sidebarDropTarget = ""
 				} else {
 					// Determine drop target based on drag cursor position
 					// dragCurrentY is already in list coordinates (set when we found the dragging item)
@@ -289,6 +292,10 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 					fileListMinX := r.fileListOffset.X
 					fileListMaxX := r.fileListOffset.X + r.fileListSize.X
 					dragInFileList := r.dragCurrentX >= fileListMinX && r.dragCurrentX < fileListMaxX
+					dragInSidebar := r.dragCurrentX < fileListMinX
+
+					debug.Log(debug.UI, "Drag state: dragCurrentX=%d mousePos.X=%d fileListMinX=%d dragInSidebar=%v dragWindowY=%d",
+						r.dragCurrentX, r.mousePos.X, fileListMinX, dragInSidebar, r.dragWindowY)
 
 					// Find which candidate the drag cursor is over (only if within file list)
 					r.dropTargetPath = ""
@@ -296,6 +303,25 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 						for _, candidate := range r.dragHoverCandidates {
 							if r.dragCurrentY >= candidate.MinY && r.dragCurrentY < candidate.MaxY {
 								r.dropTargetPath = candidate.Path
+								break
+							}
+						}
+					}
+
+					// Find which sidebar candidate the drag cursor is over (only if within sidebar)
+					// Sidebar candidates are in favorites-list-local coordinates (cumulativeY starts at 0)
+					// Convert dragWindowY to favorites-local by subtracting the offset where favorites content starts
+					// sidebarFavContentY is set in layoutSidebarStacked to track where favorites rows begin
+					if dragInSidebar {
+						r.sidebarDropTarget = "" // Clear first, then set if we find a match
+						sidebarContentStart := r.sidebarOffset.Y + r.sidebarFavContentY
+						sidebarDragY := r.dragWindowY - sidebarContentStart
+						debug.Log(debug.UI, "Sidebar check: dragWindowY=%d sidebarOffset.Y=%d sidebarFavContentY=%d sidebarDragY=%d numCandidates=%d",
+							r.dragWindowY, r.sidebarOffset.Y, r.sidebarFavContentY, sidebarDragY, len(r.sidebarHoverCandidates))
+						for _, candidate := range r.sidebarHoverCandidates {
+							if sidebarDragY >= candidate.MinY && sidebarDragY < candidate.MaxY {
+								r.sidebarDropTarget = candidate.Path
+								debug.Log(debug.UI, "Sidebar MATCH: %s (sidebarDragY=%d in [%d-%d])", candidate.Path, sidebarDragY, candidate.MinY, candidate.MaxY)
 								break
 							}
 						}

@@ -116,7 +116,10 @@ type Renderer struct {
 	dragCurrentX        int                  // Current X position of drag cursor in window coordinates
 	dragCurrentY        int                  // Current Y position of drag cursor in list coordinates
 	dragWindowY         int                  // Current Y position of drag cursor in window coordinates
-	sidebarDropTarget   string               // Path of sidebar item being hovered as drop target
+	sidebarDropTarget      string               // Path of sidebar item being hovered as drop target
+	sidebarOffset          image.Point          // Offset of sidebar in window coordinates
+	sidebarFavContentY     int                  // Y offset within sidebar where favorites content starts
+	sidebarHoverCandidates []dragHoverCandidate // Candidates for sidebar drop target hover
 
 	// Delete confirmation
 	deleteConfirmOpen bool

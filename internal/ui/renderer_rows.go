@@ -611,7 +611,7 @@ func (r *Renderer) renderRowContent(gtx layout.Context, item *UIEntry, isRenamin
 }
 
 // renderFavoriteRow renders a favorite item. Returns dimensions, left-clicked, right-clicked, click position, and drop event.
-func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem, isDropHover bool) (layout.Dimensions, bool, bool, image.Point, *UIEvent) {
+func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem) (layout.Dimensions, bool, bool, image.Point, *UIEvent) {
 	// Check for left-click BEFORE layout
 	leftClicked := fav.Clickable.Clicked(gtx)
 
@@ -668,6 +668,12 @@ func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem, isDr
 		}
 	}
 
+	// Check if this favorite is being hovered during drag (using previous frame's value)
+	isDropHover := r.dragSourcePath != "" && r.sidebarDropTarget == fav.Path
+	if r.dragSourcePath != "" {
+		debug.Log(debug.UI, "renderFavoriteRow: %s sidebarDropTarget=%s isDropHover=%v", fav.Name, r.sidebarDropTarget, isDropHover)
+	}
+
 	dims := material.Clickable(gtx, &fav.Clickable, func(gtx layout.Context) layout.Dimensions {
 		// Register right-click handler
 		defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
@@ -678,22 +684,9 @@ func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem, isDr
 		event.Op(gtx.Ops, &fav.DropTag)
 		passStack.Pop()
 
-		// Highlight if viewing trash or if being hovered during drag
-		showHighlight := (fav.Type == FavoriteTypeTrash && r.isTrashView) || isDropHover
-		if showHighlight {
-			cornerRadius := gtx.Dp(4)
-			rr := clip.RRect{
-				Rect: image.Rect(0, 0, gtx.Constraints.Max.X, gtx.Constraints.Max.Y),
-				NE:   cornerRadius, NW: cornerRadius, SE: cornerRadius, SW: cornerRadius,
-			}
-			bgColor := colSelected
-			if isDropHover {
-				bgColor = colDropTarget
-			}
-			paint.FillShape(gtx.Ops, bgColor, rr.Op(gtx.Ops))
-		}
-
-		return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
+		// Record content first to get actual dimensions
+		macro := op.Record(gtx.Ops)
+		contentDims := layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
 			func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 					// Icon for trash
@@ -719,6 +712,28 @@ func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem, isDr
 					}),
 				)
 			})
+		call := macro.Stop()
+
+		// Draw background if highlighted (selected or drop target)
+		showHighlight := (fav.Type == FavoriteTypeTrash && r.isTrashView) || isDropHover
+		if showHighlight {
+			cornerRadius := gtx.Dp(4)
+			rr := clip.RRect{
+				Rect: image.Rect(0, 0, contentDims.Size.X, contentDims.Size.Y),
+				NE:   cornerRadius, NW: cornerRadius, SE: cornerRadius, SW: cornerRadius,
+			}
+			bgColor := colSelected
+			if isDropHover {
+				// Use bright red for debugging visibility
+				bgColor = color.NRGBA{R: 255, G: 0, B: 0, A: 255}
+				debug.Log(debug.UI, "DRAWING DROP HIGHLIGHT for %s: size=%v", fav.Name, contentDims.Size)
+			}
+			paint.FillShape(gtx.Ops, bgColor, rr.Op(gtx.Ops))
+		}
+
+		// Replay content on top of background
+		call.Add(gtx.Ops)
+		return contentDims
 	})
 
 	return dims, leftClicked, rightClicked, clickPos, dropEvent

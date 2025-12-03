@@ -11,15 +11,13 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget/material"
-
-	"github.com/justyntemme/razor/internal/debug"
 )
 
 // Sidebar layout - favorites, drives, recent files
 
 func (r *Renderer) layoutSidebar(gtx layout.Context, state *State, eventOut *UIEvent) layout.Dimensions {
-	// Track sidebar vertical offset for context menus
-	sidebarYOffset := gtx.Dp(92)
+	// Track cumulative Y offset within sidebar for favorites hover detection
+	sidebarYOffset := 0
 
 	// Check for clicks on sidebar area to dismiss menus (for non-tabbed layouts)
 	if r.sidebarClick.Clicked(gtx) {
@@ -123,27 +121,39 @@ func (r *Renderer) layoutSidebarTabbedContent(gtx layout.Context, state *State, 
 func (r *Renderer) layoutSidebarStacked(gtx layout.Context, state *State, eventOut *UIEvent, sidebarYOffset int) layout.Dimensions {
 	return invisibleClickable(gtx, &r.sidebarClick, func(gtx layout.Context) layout.Dimensions {
 		return r.sidebarScroll.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+			// Track cumulative Y offset to know where favorites content starts
+			sidebarCumulativeY := 0
+
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				// Recent Files entry (above Favorites)
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return r.layoutRecentFilesEntry(gtx, eventOut)
+					dims := r.layoutRecentFilesEntry(gtx, eventOut)
+					sidebarCumulativeY += dims.Size.Y
+					return dims
 				}),
 				// Separator after Recent Files
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return r.layoutInsetSeparator(gtx, colLightGray, unit.Dp(4), unit.Dp(4))
+					dims := r.layoutInsetSeparator(gtx, colLightGray, unit.Dp(4), unit.Dp(4))
+					sidebarCumulativeY += dims.Size.Y
+					return dims
 				}),
 				// Favorites section header
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(8)}.Layout(gtx,
+					dims := layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4), Left: unit.Dp(8)}.Layout(gtx,
 						func(gtx layout.Context) layout.Dimensions {
 							lbl := material.Body2(r.Theme, "Favorites")
 							lbl.Font.Weight = 600
 							lbl.Color = colGray
 							return lbl.Layout(gtx)
 						})
+					sidebarCumulativeY += dims.Size.Y
+					return dims
 				}),
-				// Favorites list
+				// Favorites list - record offset before this renders
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					// Store the cumulative Y offset where favorites content starts
+					// Add 4dp for the Inset{Top: 4} inside layoutFavoritesListContent
+					r.sidebarFavContentY = sidebarCumulativeY + gtx.Dp(4)
 					return r.layoutFavoritesList(gtx, state, eventOut, sidebarYOffset)
 				}),
 				// Separator
@@ -204,34 +214,29 @@ func (r *Renderer) layoutFavoritesListContent(gtx layout.Context, state *State, 
 			})
 	}
 
-	// Track sidebar row positions for drag hover detection
+	// Reset sidebar hover candidates for this frame
+	r.sidebarHoverCandidates = r.sidebarHoverCandidates[:0]
+
+	// Track cumulative Y position for row bounds in SIDEBAR-LOCAL coordinates
+	// (same approach as file list - simple cumulativeY without window offsets)
 	cumulativeY := 0
 
-	// Standard row height for favorites (matches padding in renderFavoriteRow)
-	// This allows us to calculate hover state BEFORE rendering
-	rowHeight := gtx.Dp(8) + gtx.Dp(8) + gtx.Dp(16) // top padding + bottom padding + content height
-
 	return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return r.favState.Layout(gtx, len(state.FavList), func(gtx layout.Context, i int) layout.Dimensions {
+		dims := r.favState.Layout(gtx, len(state.FavList), func(gtx layout.Context, i int) layout.Dimensions {
 			fav := &state.FavList[i]
 
-			// Calculate drop hover state BEFORE rendering so it can be used for visual feedback
-			isDropHover := false
-			if r.dragSourcePath != "" && fav.Path != r.dragSourcePath {
-				// Check if drag cursor is over sidebar (X < fileListOffset.X)
-				if r.dragCurrentX < r.fileListOffset.X {
-					rowTop := yOffset + cumulativeY
-					rowBottom := rowTop + rowHeight
-					if r.dragWindowY >= rowTop && r.dragWindowY < rowBottom {
-						isDropHover = true
-						r.sidebarDropTarget = fav.Path
-						debug.Log(debug.UI, "Sidebar hover: %s (Y=%d in [%d-%d])", fav.Path, r.dragWindowY, rowTop, rowBottom)
-					}
-				}
-			}
+			// Render row and capture events (uses previous frame's sidebarDropTarget for visual)
+			rowDims, leftClicked, rightClicked, _, dropEvt := r.renderFavoriteRow(gtx, fav)
 
-			// Render row and capture events
-			rowDims, leftClicked, rightClicked, _, dropEvt := r.renderFavoriteRow(gtx, fav, isDropHover)
+			// Track this row as a potential drop target if valid
+			// Store bounds in SIDEBAR-LOCAL coordinates (like file list does)
+			if r.dragSourcePath != "" && fav.Path != r.dragSourcePath {
+				r.sidebarHoverCandidates = append(r.sidebarHoverCandidates, dragHoverCandidate{
+					Path: fav.Path,
+					MinY: cumulativeY,
+					MaxY: cumulativeY + rowDims.Size.Y,
+				})
+			}
 
 			cumulativeY += rowDims.Size.Y
 
@@ -262,6 +267,8 @@ func (r *Renderer) layoutFavoritesListContent(gtx layout.Context, state *State, 
 
 			return rowDims
 		})
+
+		return dims
 	})
 }
 
