@@ -203,6 +203,11 @@ func (t *Touchable) Layout(gtx layout.Context, w, drag layout.Widget) (layout.Di
 	// The clip rect bounds the area where pointer events are registered
 	defer clip.Rect{Max: dims.Size}.Push(gtx.Ops).Pop()
 
+	// Use PassOp to allow pointer events to pass through to nested clickable
+	// elements (like the chevron expand/collapse button) while still receiving
+	// events ourselves for row-level click/drag handling.
+	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+
 	// Register click handler
 	t.click.Add(gtx.Ops)
 

@@ -375,8 +375,13 @@ func (o *Orchestrator) doPaste() {
 			case ui.ConflictAsk:
 				// User clicked Stop or dialog was aborted
 				o.conflictAbort = true
-				break
+				continue
 			}
+		}
+
+		// Check if abort was triggered (by Stop button)
+		if o.conflictAbort {
+			break
 		}
 
 		label := "Copying"
@@ -651,8 +656,13 @@ func (o *Orchestrator) doMove(sources []string, dstDir string) {
 			case ui.ConflictAsk:
 				// User clicked Stop or dialog was aborted
 				o.conflictAbort = true
-				break
+				continue
 			}
+		}
+
+		// Check if abort was triggered (by Stop button)
+		if o.conflictAbort {
+			break
 		}
 
 		// Show progress
