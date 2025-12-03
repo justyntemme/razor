@@ -151,7 +151,13 @@ func (r *Renderer) processGlobalInput(gtx layout.Context, state *State, keyTag e
 				continue
 			}
 			if r.hotkeys.ToggleHidden.Matches(k) {
+				debug.Log(debug.HOTKEY, "ToggleHidden hotkey matched!")
 				return UIEvent{Action: ActionToggleDotfiles}
+			}
+			// Debug: log when we're close to matching ToggleHidden
+			if k.Modifiers.Contain(key.ModCtrl) {
+				debug.Log(debug.HOTKEY, "Ctrl key combo: name=%q mods=0x%x, ToggleHidden expects: key=%q mods=0x%x",
+					k.Name, k.Modifiers, r.hotkeys.ToggleHidden.Key, r.hotkeys.ToggleHidden.Modifiers)
 			}
 			if r.hotkeys.Escape.Matches(k) {
 				if r.previewVisible {

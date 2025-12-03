@@ -27,7 +27,7 @@ func DefaultHotkeys() HotkeysConfig {
 		// UI
 		FocusSearch:   "Ctrl+F",
 		TogglePreview: "Ctrl+P",
-		ToggleHidden:  "Ctrl+.",       // Toggle hidden files
+		ToggleHidden:  "Ctrl+Shift+H", // Toggle hidden files
 		Escape:        "Escape",
 
 		// Tabs - vim bindings: Ctrl+H (left) and Ctrl+L (right)
