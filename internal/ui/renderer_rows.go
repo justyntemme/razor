@@ -611,7 +611,7 @@ func (r *Renderer) renderRowContent(gtx layout.Context, item *UIEntry, isRenamin
 }
 
 // renderFavoriteRow renders a favorite item. Returns dimensions, left-clicked, right-clicked, click position, and drop event.
-func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem) (layout.Dimensions, bool, bool, image.Point, *UIEvent) {
+func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem, isDropHover bool) (layout.Dimensions, bool, bool, image.Point, *UIEvent) {
 	// Check for left-click BEFORE layout
 	leftClicked := fav.Clickable.Clicked(gtx)
 
@@ -667,9 +667,6 @@ func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem) (lay
 			}
 		}
 	}
-
-	// Check if this favorite is being hovered during drag
-	isDropHover := r.dragSourcePath != "" && r.sidebarDropTarget == fav.Path
 
 	dims := material.Clickable(gtx, &fav.Clickable, func(gtx layout.Context) layout.Dimensions {
 		// Register right-click handler

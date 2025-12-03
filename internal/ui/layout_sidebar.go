@@ -11,6 +11,8 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget/material"
+
+	"github.com/justyntemme/razor/internal/debug"
 )
 
 // Sidebar layout - favorites, drives, recent files
@@ -205,25 +207,32 @@ func (r *Renderer) layoutFavoritesListContent(gtx layout.Context, state *State, 
 	// Track sidebar row positions for drag hover detection
 	cumulativeY := 0
 
+	// Standard row height for favorites (matches padding in renderFavoriteRow)
+	// This allows us to calculate hover state BEFORE rendering
+	rowHeight := gtx.Dp(8) + gtx.Dp(8) + gtx.Dp(16) // top padding + bottom padding + content height
+
 	return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return r.favState.Layout(gtx, len(state.FavList), func(gtx layout.Context, i int) layout.Dimensions {
 			fav := &state.FavList[i]
 
-			// Render row and capture events
-			rowDims, leftClicked, rightClicked, _, dropEvt := r.renderFavoriteRow(gtx, fav)
-
-			// Track row bounds for sidebar drag hover detection
-			// Use dragWindowY which is in window coordinates
+			// Calculate drop hover state BEFORE rendering so it can be used for visual feedback
+			isDropHover := false
 			if r.dragSourcePath != "" && fav.Path != r.dragSourcePath {
 				// Check if drag cursor is over sidebar (X < fileListOffset.X)
 				if r.dragCurrentX < r.fileListOffset.X {
 					rowTop := yOffset + cumulativeY
-					rowBottom := rowTop + rowDims.Size.Y
+					rowBottom := rowTop + rowHeight
 					if r.dragWindowY >= rowTop && r.dragWindowY < rowBottom {
+						isDropHover = true
 						r.sidebarDropTarget = fav.Path
+						debug.Log(debug.UI, "Sidebar hover: %s (Y=%d in [%d-%d])", fav.Path, r.dragWindowY, rowTop, rowBottom)
 					}
 				}
 			}
+
+			// Render row and capture events
+			rowDims, leftClicked, rightClicked, _, dropEvt := r.renderFavoriteRow(gtx, fav, isDropHover)
+
 			cumulativeY += rowDims.Size.Y
 
 			// Handle drop event
