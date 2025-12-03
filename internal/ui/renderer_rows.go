@@ -345,8 +345,15 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 		dims, clickEvt = item.ClickDrag.Layout(gtx,
 			// Normal content - the row with selection background
 			func(gtx layout.Context) layout.Dimensions {
+				// First render content to get actual dimensions
+				macro := op.Record(gtx.Ops)
+				contentDims := r.renderRowContent(gtx, item, false, showCheckbox, isChecked)
+				call := macro.Stop()
+
+				// Now set up clip area with ACTUAL content size (not constraints)
+				defer clip.Rect{Max: contentDims.Size}.Push(gtx.Ops).Pop()
+
 				// Register right-click handler on this row's area
-				defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
 				event.Op(gtx.Ops, &item.RightClickTag)
 
 				// Register drop target for directories
@@ -363,13 +370,16 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 						bgColor = color.NRGBA{R: 180, G: 220, B: 255, A: 255} // Light blue for drop target
 					}
 					rr := clip.RRect{
-						Rect: image.Rect(0, 0, gtx.Constraints.Max.X, gtx.Constraints.Max.Y),
+						Rect: image.Rect(0, 0, contentDims.Size.X, contentDims.Size.Y),
 						NE:   cornerRadius, NW: cornerRadius, SE: cornerRadius, SW: cornerRadius,
 					}
 					paint.FillShape(gtx.Ops, bgColor, rr.Op(gtx.Ops))
 				}
 
-				return r.renderRowContent(gtx, item, false, showCheckbox, isChecked)
+				// Replay the content on top of the background
+				call.Add(gtx.Ops)
+
+				return contentDims
 			},
 			// Drag appearance - simplified visual during drag (the shadow)
 			func(gtx layout.Context) layout.Dimensions {

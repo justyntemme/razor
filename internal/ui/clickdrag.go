@@ -114,7 +114,8 @@ func (c *ClickAndDraggable) Layout(gtx layout.Context, w, drag layout.Widget) (l
 
 	var clickEvent *ClickEvent
 
-	// Process click events first
+	// Process click events BEFORE layout (Gio pattern)
+	// Events are delivered based on previous frame's hit area registration
 	for {
 		e, ok := c.click.Update(gtx.Source)
 		if !ok {
@@ -157,22 +158,16 @@ func (c *ClickAndDraggable) Layout(gtx layout.Context, w, drag layout.Widget) (l
 		}
 	}
 
-	// Render the normal widget
+	// Render the widget content
 	dims := w(gtx)
 
-	// Set up the hit area for both gestures
-	stack := clip.Rect{Max: dims.Size}.Push(gtx.Ops)
-
-	// Add click handler first (lower priority)
+	// Set up hit area for gesture handlers (for next frame's events)
+	// The clip rect bounds the area where pointer events are registered
+	// Using defer ensures the clip is properly scoped
+	defer clip.Rect{Max: dims.Size}.Push(gtx.Ops).Pop()
 	c.click.Add(gtx.Ops)
-
-	// Add drag handler (will grab pointer after threshold)
 	c.drag.Add(gtx.Ops)
-
-	// Register for events (hover, transfer requests)
 	event.Op(gtx.Ops, c)
-
-	stack.Pop()
 
 	// Render the drag shadow if dragging
 	if drag != nil && c.drag.Pressed() && c.dragStarted {
