@@ -34,7 +34,7 @@
     - Consider filename/URL metadata needs (discussed in PR)
     - Multiple file drops generate separate events per file
 
-** TODO Size Column Display Bug
+** DONE Size Column Display Bug
    :PROPERTIES:
    :PRIORITY: B
    :END:
@@ -45,7 +45,6 @@
     - File size display truncates unit suffix (e.g., "1.2 M" instead of "1.2 MB")
     - Column width may not be adequate for larger size values
 
-*** Tasks
-    - [ ] Investigate size column width calculation
-    - [ ] Ensure adequate space for all size units (B, KB, MB, GB)
-    - [ ] Test with files of varying sizes
+*** Resolution
+    - Increased minimum size column width from 50px to 70px to fit "999.9 GB"
+    - File: internal/ui/renderer_rows.go:118-120

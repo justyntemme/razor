@@ -115,8 +115,9 @@ func (r *Renderer) renderColumns(gtx layout.Context) (layout.Dimensions, UIEvent
 	rowInsetPx := gtx.Dp(24) // 12dp left + 12dp right inset from renderRowContent
 	usedWidth := r.columnWidths[0] + r.columnWidths[1] + r.columnWidths[2] + handleWidth*3
 	r.columnWidths[3] = availWidth - usedWidth - rowInsetPx
-	if r.columnWidths[3] < 50 {
-		r.columnWidths[3] = 50
+	// Minimum width needs to fit "999.9 GB" (~70px at Body2 font size)
+	if r.columnWidths[3] < 70 {
+		r.columnWidths[3] = 70
 	}
 
 	type colDef struct {
