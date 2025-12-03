@@ -1,20 +1,3 @@
-add a start shell here right click command on folders, and in the whitespace of a directorh (cwd for path) and path in the selected folder as the path argment to login shell value
+ there is noticable lag when clicking on pictures with a preview, we should cache those after everything else is done loading to ensure we can show those instantly 
 
-tab opens (in same directory, in home directory) = make hotkeys for both, cmd t = one and cmd shift t equals the other, but enable them to be confiruable
-add the draggable window element to the header entries (name, date modified... etc)
-delete confirmation doesnt use edpanded modal window (we should also not just expand entirely but look to center the window with a shadow behind it)
-round modal edges and add shadows to make it look cleaner
-write an orgmode parser that just creates the AST from the doc and not html
-
-add org support
-maybe increase limit for double click 
-⏺ Gio Workarounds Applied
-
-  1. key.NameInsert not defined - Gio doesn't export this constant. Workaround: use key.Name("Insert") as a string-based key name
-  (internal/config/hotkeys.go:112).
-  2. Editor has no Focus() method - Can't programmatically focus a widget.Editor. Workaround: set a flag (searchEditorFocused), then issue
-  gtx.Execute(key.FocusCmd{Tag: &r.searchEditor}) during the next layout pass.
-  3. PassOp for background click detection - Coordinate-based bounds checking failed due to nested transformation stacks. Workaround: trust Gio's event
-  consumption pattern - any right-click reaching the global handler after row processing is on empty space.
-  4. Global mouse position tracking - Pointer positions are relative to current clip area, not window. Workaround: capture mouse position at top-level
-  layout before any transformations apply.
+ when in question look at how widget.Draggable in Gio handles this by checking its source code:

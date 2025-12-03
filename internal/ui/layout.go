@@ -38,7 +38,7 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 
 	// Process mouse move events to track position
 	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: &r.mouseTag, Kinds: pointer.Move | pointer.Press})
+		ev, ok := gtx.Event(pointer.Filter{Target: &r.mouseTag, Kinds: pointer.Move | pointer.Press | pointer.Drag})
 		if !ok {
 			break
 		}

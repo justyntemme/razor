@@ -268,38 +268,42 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 	// In single-select mode, use the primary selection
 	showSelected := isChecked
 
-	// Handle drag data request from this item's Touch
-	// This must be called to provide data when a drop target requests it
+	// Set MIME type for drag operations - must be set before Update() and Layout()
 	item.Touch.Type = FileDragMIME
-	if mime, ok := item.Touch.Update(gtx); ok && mime == FileDragMIME {
-		// Provide the file path as drag data
-		item.Touch.Offer(gtx, mime, io.NopCloser(strings.NewReader(item.Path)))
-	}
 
 	// Handle drop events for directories (they are drop targets)
 	var dropEvent *UIEvent
 	if item.IsDir {
-		// Check for drop events on this directory
+		// Check for transfer events on this directory
 		for {
 			ev, ok := gtx.Event(transfer.TargetFilter{Target: &item.DropTag, Type: FileDragMIME})
 			if !ok {
 				break
 			}
-			if e, ok := ev.(transfer.DataEvent); ok && e.Type == FileDragMIME {
-				// Read the dropped file path
-				reader := e.Open()
-				data, err := io.ReadAll(reader)
-				reader.Close()
-				if err == nil {
-					sourcePath := string(data)
-					// Don't allow dropping on self or parent
-					if sourcePath != item.Path && filepath.Dir(sourcePath) != item.Path {
-						dropEvent = &UIEvent{
-							Action: ActionMove,
-							Paths:  []string{sourcePath}, // Source paths
-							Path:   item.Path,            // Destination directory
+			switch e := ev.(type) {
+			case transfer.InitiateEvent:
+				// Drag started and this directory is a potential target
+				// Check if it's a valid drop target (not the source or its parent)
+				if r.dragSourcePath != "" && r.dragSourcePath != item.Path && filepath.Dir(r.dragSourcePath) != item.Path {
+					// We can't set dropTargetPath here because InitiateEvent is sent to ALL potential targets
+					// We need pointer position to determine which one is actually hovered
+				}
+			case transfer.DataEvent:
+				if e.Type == FileDragMIME {
+					// Read the dropped file path
+					reader := e.Open()
+					data, err := io.ReadAll(reader)
+					reader.Close()
+					if err == nil {
+						sourcePath := string(data)
+						// Don't allow dropping on self or parent
+						if sourcePath != item.Path && filepath.Dir(sourcePath) != item.Path {
+							dropEvent = &UIEvent{
+								Action: ActionMove,
+								Paths:  []string{sourcePath}, // Source paths
+								Path:   item.Path,            // Destination directory
+							}
 						}
-						debug.Log(debug.UI, "Drop event: moving %s to %s", sourcePath, item.Path)
 					}
 				}
 			}
@@ -331,7 +335,7 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 		// This allows click/double-click, right-click, AND drag with visual shadow
 		var touchEvt *TouchEvent
 
-		// Check hover state for this item
+		// Check hover state for this item (works when not dragging)
 		isHovered := item.Touch.Hovered()
 
 		// Track if this item is being dragged
@@ -341,15 +345,18 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 
 		// Check if this is a valid drop target:
 		// - Must be a directory
-		// - Must be hovered
-		// - Something else must be being dragged (dragSourcePath is set)
+		// - Something must be being dragged (dragSourcePath is set)
 		// - Can't drop on the item being dragged
 		// - Can't drop into parent directory of dragged item (it's already there)
-		isDropTarget := item.IsDir &&
-			isHovered &&
+		// For hover detection during drag, we check if this is the current dropTargetPath
+		isValidDropTarget := item.IsDir &&
 			r.dragSourcePath != "" &&
 			r.dragSourcePath != item.Path &&
 			filepath.Dir(r.dragSourcePath) != item.Path
+
+		// Determine if this row should show as drop target
+		// When not dragging, use regular hover. When dragging, use dropTargetPath match.
+		isDropTarget := isValidDropTarget && (isHovered || r.dropTargetPath == item.Path)
 
 		dims, touchEvt = item.Touch.Layout(gtx,
 			// Normal content - the row with selection background
@@ -358,14 +365,6 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 				macro := op.Record(gtx.Ops)
 				contentDims := r.renderRowContent(gtx, item, false, showCheckbox, isChecked)
 				call := macro.Stop()
-
-				// Now set up clip area with ACTUAL content size (not constraints)
-				defer clip.Rect{Max: contentDims.Size}.Push(gtx.Ops).Pop()
-
-				// Register drop target for directories
-				if item.IsDir {
-					event.Op(gtx.Ops, &item.DropTag)
-				}
 
 				// Draw background based on state (priority: selected > drop target > hover)
 				var bgColor color.NRGBA
@@ -415,6 +414,16 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 			},
 		)
 
+		// Register drop target for directories AFTER Touch.Layout with same dimensions
+		// Use PassOp to allow hover events to pass through to the Touchable underneath
+		if item.IsDir {
+			stack := clip.Rect{Max: dims.Size}.Push(gtx.Ops)
+			passStack := pointer.PassOp{}.Push(gtx.Ops)
+			event.Op(gtx.Ops, &item.DropTag)
+			passStack.Pop()
+			stack.Pop()
+		}
+
 		// Process touch event from Touchable (handles both left-click and right-click)
 		if touchEvt != nil {
 			switch touchEvt.Type {
@@ -426,6 +435,12 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 				rightClicked = true
 				clickPos = touchEvt.Position
 			}
+		}
+
+		// Handle drag data request - call Update() AFTER Layout() to process transfer events
+		// This receives RequestEvent when a drop happens on a target
+		if mime, ok := item.Touch.Update(gtx); ok && mime == FileDragMIME {
+			item.Touch.Offer(gtx, mime, io.NopCloser(strings.NewReader(item.Path)))
 		}
 	}
 

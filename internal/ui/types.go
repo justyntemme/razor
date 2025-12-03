@@ -425,7 +425,7 @@ type UIEntry struct {
 	Size       int64
 	ModTime    time.Time
 	Touch      Touchable   // Combined click, right-click, and drag handling
-	DropTag    int         // Tag for drop target registration (directories only)
+	DropTag    struct{}    // Unique tag for drop target registration (address is unique per entry)
 	Checkbox   widget.Bool // For multi-select mode
 	LastClick  time.Time
 	// Tree view fields

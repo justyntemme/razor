@@ -75,8 +75,13 @@ func (t *Touchable) Update(gtx layout.Context) (mime string, requested bool) {
 		if !ok {
 			break
 		}
-		if e, ok := ev.(transfer.RequestEvent); ok {
+		switch e := ev.(type) {
+		case transfer.RequestEvent:
 			return e.Type, true
+		case transfer.InitiateEvent:
+			// Drag initiated - we're a source
+		case transfer.CancelEvent:
+			// Drag cancelled
 		}
 	}
 	return "", false
