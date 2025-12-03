@@ -67,6 +67,19 @@ func (t *Touchable) Pos() f32.Point {
 	return t.dragPos
 }
 
+// StartPos returns the position where the drag started (in local coordinates).
+func (t *Touchable) StartPos() f32.Point {
+	return t.clickPos
+}
+
+// CurrentPos returns the current absolute position during drag (start + offset).
+func (t *Touchable) CurrentPos() f32.Point {
+	return f32.Point{
+		X: t.clickPos.X + t.dragPos.X,
+		Y: t.clickPos.Y + t.dragPos.Y,
+	}
+}
+
 // Update processes drag events and returns the MIME type if a drag data request was made.
 // Call this before Layout to handle transfer.RequestEvent.
 func (t *Touchable) Update(gtx layout.Context) (mime string, requested bool) {

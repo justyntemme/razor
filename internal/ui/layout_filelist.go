@@ -97,18 +97,22 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 				// Reset drag state at start of each frame - will be set by dragging item
 				anyDragging := false
 
-				// Reset drag hover candidates for this frame
+				// Reset drag hover candidates for this frame (but NOT dropTargetPath -
+				// we need the previous frame's value for rendering, then update after)
 				r.dragHoverCandidates = r.dragHoverCandidates[:0]
-				r.dropTargetPath = ""
 
 				// Track cumulative Y position for row bounds
 				cumulativeY := 0
 
 				// Layout file list
 				listDims := r.listState.Layout(gtx, len(state.Entries), func(gtx layout.Context, i int) layout.Dimensions {
-					// Track if any item is being dragged
+					// Track if any item is being dragged and capture its current position
 					if state.Entries[i].Touch.Dragging() {
 						anyDragging = true
+						// Capture drag cursor position in list coordinates
+						// cumulativeY is the top of this row, add the current drag Y position within the row
+						dragPos := state.Entries[i].Touch.CurrentPos()
+						r.dragCurrentY = cumulativeY + int(dragPos.Y)
 					}
 					item := &state.Entries[i]
 					isRenaming := r.renameIndex == i
@@ -254,23 +258,19 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 					r.dragSourcePath = ""
 					r.dropTargetPath = ""
 				} else {
-					// Determine drop target based on mouse position
-					// Convert global mouse position to list-local coordinates
-					// fileListOffset.Y is the top of the file list area (includes sidebar width but not header)
-					// listAreaOffset is the header height within the file list
-					// listState.Position.Offset is the scroll offset
-					listLocalY := r.mousePos.Y - r.fileListOffset.Y - r.listAreaOffset + r.listState.Position.Offset
+					// Determine drop target based on drag cursor position
+					// dragCurrentY is already in list coordinates (set when we found the dragging item)
 
-					// Find which candidate the mouse is over
+					// Find which candidate the drag cursor is over
 					r.dropTargetPath = ""
 					for _, candidate := range r.dragHoverCandidates {
-						if listLocalY >= candidate.MinY && listLocalY < candidate.MaxY {
+						if r.dragCurrentY >= candidate.MinY && r.dragCurrentY < candidate.MaxY {
 							r.dropTargetPath = candidate.Path
 							break
 						}
 					}
 
-					// Always request redraw during drag to keep tracking mouse position
+					// Always request redraw during drag to keep tracking position
 					gtx.Execute(op.InvalidateCmd{})
 				}
 

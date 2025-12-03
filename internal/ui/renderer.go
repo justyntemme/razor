@@ -112,6 +112,7 @@ type Renderer struct {
 	dropTargetPath      string               // Path of directory currently being hovered as drop target
 	dragHoverCandidates []dragHoverCandidate // Candidates for drop target hover (rebuilt each frame)
 	listAreaOffset      int                  // Y offset of the list area within the file list (after header)
+	dragCurrentY        int                  // Current Y position of drag cursor in list coordinates
 
 	// Delete confirmation
 	deleteConfirmOpen bool
