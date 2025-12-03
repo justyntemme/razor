@@ -1,6 +1,12 @@
-# Razor
+<p align="center">
+  <img src="assets/icon.svg" width="128" height="128" alt="Razor">
+</p>
 
-A fast, lightweight file manager built with Go and [Gio UI](https://gioui.org/).
+<h1 align="center">Razor</h1>
+
+<p align="center">
+  A fast, lightweight file manager built with Go and <a href="https://gioui.org/">Gio UI</a>
+</p>
 
 ![Razor Screenshot](https://raw.githubusercontent.com/justyntemme/razor/main/docs/screenshots/razor-screen-1.png)
 
