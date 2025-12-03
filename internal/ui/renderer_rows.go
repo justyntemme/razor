@@ -366,7 +366,13 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 
 		// Determine if this row should show as drop target
 		// When not dragging, use regular hover. When dragging, use dropTargetPath match.
-		isDropTarget := (isValidDropTarget || isExternalDropTarget) && (isHovered || r.dropTargetPath == item.Path)
+		// During external drag, only use dropTargetPath (hover state is stale)
+		var isDropTarget bool
+		if r.externalDragActive {
+			isDropTarget = isExternalDropTarget && r.dropTargetPath == item.Path
+		} else {
+			isDropTarget = isValidDropTarget && (isHovered || r.dropTargetPath == item.Path)
+		}
 
 		dims, touchEvt = item.Touch.Layout(gtx,
 			// Normal content - the row with selection background
@@ -386,7 +392,8 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 				} else if isDropTarget {
 					bgColor = colDropTarget
 					drawBg = true
-				} else if isHovered {
+				} else if isHovered && !r.externalDragActive {
+					// Don't show hover during external drag (only drop targets should highlight)
 					bgColor = colHover
 					drawBg = true
 				}

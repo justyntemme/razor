@@ -111,7 +111,8 @@ func razor_onExternalDragEnd() {
 	dropMu.Unlock()
 
 	if handler != nil {
-		handler()
+		// Run in goroutine to avoid blocking the main thread
+		go handler()
 	}
 }
 
@@ -125,8 +126,8 @@ func razor_onExternalDrop(pathCStr *C.char) {
 	dropMu.Unlock()
 
 	if handler != nil {
-		// Deliver immediately with target directory
-		handler([]string{path}, target)
+		// Run in goroutine to avoid blocking the main thread
+		go handler([]string{path}, target)
 	} else {
 		dropMu.Lock()
 		pendingDrop = append(pendingDrop, path)
