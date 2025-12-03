@@ -1,0 +1,35 @@
+#+TITLE: Razor 1.0 Release Checklist
+#+AUTHOR: Razor Team
+#+DATE: 2024
+
+* 1.0 Release Blockers
+
+** TODO External Drag and Drop Support
+   :PROPERTIES:
+   :PRIORITY: A
+   :END:
+
+   Support for dragging files from outside the application (Finder, Explorer, etc.) into Razor.
+
+*** Implementation Reference
+    - Gio PR: https://github.com/gioui/gio/pull/111
+    - Status: PR still open, macOS implementation exists but Windows/Linux pending
+
+*** Technical Details
+    - Uses Gio's =io/transfer= package
+    - Register drop targets with =transfer.TargetOp= and desired MIME type
+    - Receive =transfer.DataEvent= with MIME type and =Open()= function for file access
+    - Each dropped file generates individual event
+    - macOS implementation in =app/os_macos.go= and =app/os_macos.m=
+
+*** Tasks
+    - [ ] Wait for Gio PR to be merged or implement using fork
+    - [ ] Implement drop target registration in main file list area
+    - [ ] Handle =transfer.DataEvent= to copy/move files to current directory
+    - [ ] Add visual feedback during drag hover
+    - [ ] Test on macOS, Windows, Linux
+
+*** Notes
+    - May need to use a Gio fork if PR is not merged
+    - Consider filename/URL metadata needs (discussed in PR)
+    - Multiple file drops generate separate events per file

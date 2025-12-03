@@ -246,6 +246,8 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions { return r.layoutDeleteConfirm(gtx, state, &eventOut) }),
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions { return r.layoutCreateDialog(gtx, state, &eventOut) }),
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions { return r.layoutConflictDialog(gtx, state, &eventOut) }),
+		// Toast notifications (always on top)
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions { return r.layoutToast(gtx, r.Theme) }),
 	)
 
 	return eventOut

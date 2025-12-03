@@ -104,13 +104,13 @@ func (o *Orchestrator) doCreateFile(name string) {
 
 	path := filepath.Join(o.state.CurrentPath, name)
 	if pathExists(path) {
-		log.Printf("File already exists: %s", path)
+		o.ui.ShowError("File already exists: " + name)
 		return
 	}
 
 	file, err := os.Create(path)
 	if err != nil {
-		log.Printf("Error creating file: %v", err)
+		o.ui.ShowError("Error creating file: " + err.Error())
 		return
 	}
 	file.Close()
@@ -126,12 +126,12 @@ func (o *Orchestrator) doCreateFolder(name string) {
 
 	path := filepath.Join(o.state.CurrentPath, name)
 	if pathExists(path) {
-		log.Printf("Folder already exists: %s", path)
+		o.ui.ShowError("Folder already exists: " + name)
 		return
 	}
 
 	if err := os.Mkdir(path, DirPermission); err != nil {
-		log.Printf("Error creating folder: %v", err)
+		o.ui.ShowError("Error creating folder: " + err.Error())
 		return
 	}
 
@@ -145,12 +145,12 @@ func (o *Orchestrator) doRename(oldPath, newPath string) {
 	}
 
 	if pathExists(newPath) {
-		log.Printf("Cannot rename: destination already exists: %s", newPath)
+		o.ui.ShowError("Cannot rename: a file with that name already exists")
 		return
 	}
 
 	if err := os.Rename(oldPath, newPath); err != nil {
-		log.Printf("Error renaming %s to %s: %v", oldPath, newPath, err)
+		o.ui.ShowError("Error renaming: " + err.Error())
 		return
 	}
 
@@ -161,7 +161,7 @@ func (o *Orchestrator) doRename(oldPath, newPath string) {
 // doDelete moves a file or folder to trash (or permanently deletes if trash unavailable)
 func (o *Orchestrator) doDelete(path string) {
 	if !pathExists(path) {
-		log.Printf("Delete error: path does not exist: %s", path)
+		o.ui.ShowError("Delete error: file does not exist")
 		return
 	}
 
@@ -176,7 +176,7 @@ func (o *Orchestrator) doDelete(path string) {
 	o.setProgress(false, "", 0, 0)
 
 	if err != nil {
-		log.Printf("Delete error: %v", err)
+		o.ui.ShowError("Delete error: " + err.Error())
 		return
 	}
 
@@ -201,9 +201,10 @@ func (o *Orchestrator) doDeleteMultiple(paths []string) {
 	deletedPaths := make([]string, 0, total)
 	useTrash := trash.IsAvailable()
 
+	var errorCount int
 	for i, path := range paths {
 		if !pathExists(path) {
-			log.Printf("Delete error: path does not exist: %s", path)
+			errorCount++
 			continue
 		}
 
@@ -221,9 +222,13 @@ func (o *Orchestrator) doDeleteMultiple(paths []string) {
 
 		if err != nil {
 			log.Printf("Delete error for %s: %v", path, err)
+			errorCount++
 		} else {
 			deletedPaths = append(deletedPaths, path)
 		}
+	}
+	if errorCount > 0 {
+		o.ui.ShowError(fmt.Sprintf("Failed to delete %d of %d items", errorCount, total))
 	}
 	o.setProgress(false, "", 0, 0)
 
@@ -245,7 +250,7 @@ func (o *Orchestrator) doDeleteMultiple(paths []string) {
 // doPermanentDelete permanently deletes a file or folder (bypassing trash)
 func (o *Orchestrator) doPermanentDelete(path string) {
 	if !pathExists(path) {
-		log.Printf("Permanent delete error: path does not exist: %s", path)
+		o.ui.ShowError("Delete error: file does not exist")
 		return
 	}
 
@@ -254,7 +259,7 @@ func (o *Orchestrator) doPermanentDelete(path string) {
 	o.setProgress(false, "", 0, 0)
 
 	if err != nil {
-		log.Printf("Permanent delete error: %v", err)
+		o.ui.ShowError("Delete error: " + err.Error())
 		return
 	}
 
@@ -278,9 +283,10 @@ func (o *Orchestrator) doPermanentDeleteMultiple(paths []string) {
 	total := len(paths)
 	deletedPaths := make([]string, 0, total)
 
+	var errorCount int
 	for i, path := range paths {
 		if !pathExists(path) {
-			log.Printf("Permanent delete error: path does not exist: %s", path)
+			errorCount++
 			continue
 		}
 
@@ -290,11 +296,15 @@ func (o *Orchestrator) doPermanentDeleteMultiple(paths []string) {
 
 		if err != nil {
 			log.Printf("Permanent delete error for %s: %v", path, err)
+			errorCount++
 		} else {
 			deletedPaths = append(deletedPaths, path)
 		}
 	}
 	o.setProgress(false, "", 0, 0)
+	if errorCount > 0 {
+		o.ui.ShowError(fmt.Sprintf("Failed to delete %d of %d items", errorCount, total))
+	}
 
 	// Remove deleted entries from StateOwner (preserves expansion state)
 	o.stateOwner.RemoveEntries(deletedPaths)
@@ -337,7 +347,7 @@ func (o *Orchestrator) doPaste() {
 
 		srcInfo, err := os.Stat(src)
 		if err != nil {
-			log.Printf("Paste error for %s: %v", src, err)
+			o.ui.ShowError("Cannot access: " + filepath.Base(src))
 			lastErr = err
 			continue
 		}
@@ -358,7 +368,8 @@ func (o *Orchestrator) doPaste() {
 			case ui.ConflictReplaceAll:
 				// Replace - delete destination first (skip if same file)
 				if sameFile {
-					continue // Can't replace a file with itself
+					o.ui.ShowError("Cannot replace a file with itself")
+					continue
 				}
 				deleteItem(dst)
 			case ui.ConflictKeepBothAll:
@@ -406,16 +417,15 @@ func (o *Orchestrator) doPaste() {
 		}
 
 		if err != nil {
-			log.Printf("Paste error for %s: %v", src, err)
+			o.ui.ShowError("Error copying " + filepath.Base(src) + ": " + err.Error())
 			lastErr = err
 		}
 	}
 
 	o.setProgress(false, "", 0, 0)
 
-	if lastErr != nil {
-		log.Printf("Some paste operations failed")
-	}
+	// Note: We don't show a summary toast here since individual errors are already shown
+	_ = lastErr
 
 	// Clear clipboard after cut operation completes
 	if isCut && !o.conflictAbort {
@@ -626,7 +636,7 @@ func (o *Orchestrator) doMove(sources []string, dstDir string) {
 
 		srcInfo, err := os.Stat(src)
 		if err != nil {
-			log.Printf("Move error for %s: %v", src, err)
+			o.ui.ShowError("Cannot access: " + filepath.Base(src))
 			lastErr = err
 			continue
 		}
@@ -676,14 +686,14 @@ func (o *Orchestrator) doMove(sources []string, dstDir string) {
 		if srcInfo.IsDir() {
 			o.setProgress(true, progressLabel, 0, 0)
 			if err := o.copyDir(src, dst, true); err != nil {
-				log.Printf("Move directory error: %v", err)
+				o.ui.ShowError("Error moving " + filepath.Base(src) + ": " + err.Error())
 				lastErr = err
 			}
 		} else {
 			size := srcInfo.Size()
 			o.setProgress(true, progressLabel, 0, size)
 			if err := o.copyFile(src, dst, true); err != nil {
-				log.Printf("Move file error: %v", err)
+				o.ui.ShowError("Error moving " + filepath.Base(src) + ": " + err.Error())
 				lastErr = err
 			}
 		}
@@ -691,9 +701,8 @@ func (o *Orchestrator) doMove(sources []string, dstDir string) {
 
 	o.setProgress(false, "", 0, 0)
 
-	if lastErr != nil {
-		log.Printf("Move completed with errors: %v", lastErr)
-	}
+	// Note: We don't show a summary toast here since individual errors are already shown
+	_ = lastErr
 
 	// Refresh directory to show changes
 	o.navCtrl.RequestDir(o.state.CurrentPath)

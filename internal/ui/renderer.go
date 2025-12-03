@@ -183,6 +183,9 @@ type Renderer struct {
 	// Config error banner
 	ConfigError string // Non-empty if config.json failed to parse
 
+	// Toast notifications
+	toast Toast
+
 	// Search history dropdown
 	searchHistoryVisible  bool
 	searchHistoryItems    []SearchHistoryItem
