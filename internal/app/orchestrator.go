@@ -15,6 +15,7 @@ import (
 	"github.com/justyntemme/razor/internal/config"
 	"github.com/justyntemme/razor/internal/debug"
 	"github.com/justyntemme/razor/internal/fs"
+	"github.com/justyntemme/razor/internal/platform"
 	"github.com/justyntemme/razor/internal/search"
 	"github.com/justyntemme/razor/internal/store"
 	"github.com/justyntemme/razor/internal/trash"
@@ -275,11 +276,31 @@ func (o *Orchestrator) Run(startPath string) error {
 
 	o.navCtrl.Navigate(startPath)
 
+	// Set up external drop handler (copies files from Finder/external apps to current directory)
+	platform.SetDropHandler(func(paths []string) {
+		debug.Log(debug.APP, "External drop received: %v", paths)
+		// Copy dropped files to current directory
+		o.stateMu.RLock()
+		destDir := o.state.CurrentPath
+		o.stateMu.RUnlock()
+
+		if destDir != "" && len(paths) > 0 {
+			go o.doCopyExternal(paths, destDir)
+		}
+	})
+
 	var ops op.Ops
 	for {
 		switch e := o.window.Event().(type) {
 		case app.DestroyEvent:
 			return e.Err
+		case app.AppKitViewEvent:
+			// macOS: Set up external drag-and-drop when we get the view handle
+			debug.Log(debug.APP, "AppKitViewEvent received: Valid=%v View=%d", e.Valid(), e.View)
+			if e.Valid() {
+				debug.Log(debug.APP, "AppKitViewEvent: calling SetupExternalDrop")
+				platform.SetupExternalDrop(e.View)
+			}
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, e)
 			// Lock state for reading during UI layout

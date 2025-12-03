@@ -707,3 +707,97 @@ func (o *Orchestrator) doMove(sources []string, dstDir string) {
 	// Refresh directory to show changes
 	o.navCtrl.RequestDir(o.state.CurrentPath)
 }
+
+// doCopyExternal copies files from external sources (e.g., Finder) to the destination directory
+func (o *Orchestrator) doCopyExternal(sources []string, dstDir string) {
+	if len(sources) == 0 || dstDir == "" {
+		return
+	}
+
+	debug.Log(debug.APP, "doCopyExternal: %d files to %s", len(sources), dstDir)
+
+	// Reset conflict resolution state
+	o.conflictResolution = ui.ConflictAsk
+	o.conflictAbort = false
+
+	totalFiles := len(sources)
+	var lastErr error
+
+	for i, src := range sources {
+		if o.conflictAbort {
+			break
+		}
+
+		dstName := filepath.Base(src)
+		dst := filepath.Join(dstDir, dstName)
+
+		srcInfo, err := os.Stat(src)
+		if err != nil {
+			o.ui.ShowError("Cannot access: " + filepath.Base(src))
+			lastErr = err
+			continue
+		}
+
+		// Check for conflict
+		dstInfo, err := os.Stat(dst)
+		if err == nil {
+			// Destination exists - need to resolve conflict
+			remainingFiles := totalFiles - i
+			resolution := o.resolveConflict(src, dst, srcInfo, dstInfo, remainingFiles)
+
+			switch resolution {
+			case ui.ConflictReplaceAll:
+				// Replace - delete destination first
+				deleteItem(dst)
+			case ui.ConflictKeepBothAll:
+				// Keep both - rename destination
+				ext := filepath.Ext(dstName)
+				base := strings.TrimSuffix(dstName, ext)
+				for j := 1; ; j++ {
+					dst = filepath.Join(dstDir, base+"_copy"+strconv.Itoa(j)+ext)
+					if !pathExists(dst) {
+						break
+					}
+				}
+			case ui.ConflictSkipAll:
+				// Skip this file
+				continue
+			case ui.ConflictAsk:
+				// User clicked Stop or dialog was aborted
+				o.conflictAbort = true
+				continue
+			}
+		}
+
+		// Check if abort was triggered (by Stop button)
+		if o.conflictAbort {
+			break
+		}
+
+		// Show progress with file count for multiple files
+		progressLabel := "Copying " + filepath.Base(src)
+		if totalFiles > 1 {
+			progressLabel = fmt.Sprintf("Copying (%d/%d) %s", i+1, totalFiles, filepath.Base(src))
+		}
+
+		if srcInfo.IsDir() {
+			o.setProgress(true, progressLabel, 0, 0)
+			err = o.copyDir(src, dst, false)
+		} else {
+			o.setProgress(true, progressLabel, 0, srcInfo.Size())
+			err = o.copyFile(src, dst, false)
+		}
+
+		if err != nil {
+			o.ui.ShowError("Error copying " + filepath.Base(src) + ": " + err.Error())
+			lastErr = err
+		}
+	}
+
+	o.setProgress(false, "", 0, 0)
+
+	// Note: We don't show a summary toast here since individual errors are already shown
+	_ = lastErr
+
+	o.refreshCurrentDir()
+}

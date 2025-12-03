@@ -161,8 +161,27 @@ func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntr
 		isSelected = state.SelectedIndices[idx]
 	}
 
-	// Check if this item is a drop target
-	isDropTarget := item.IsDir && r.dropTargetPath == item.Path
+	// Check hover state for this item (works when not dragging)
+	isHovered := item.Touch.Hovered()
+
+	// Track if this item is being dragged
+	if item.Touch.Dragging() {
+		r.dragSourcePath = item.Path
+	}
+
+	// Check if this is a valid drop target:
+	// - Must be a directory
+	// - Something must be being dragged (dragSourcePath is set)
+	// - Can't drop on the item being dragged
+	// - Can't drop into parent directory of dragged item (it's already there)
+	isValidDropTarget := item.IsDir &&
+		r.dragSourcePath != "" &&
+		r.dragSourcePath != item.Path &&
+		filepath.Dir(r.dragSourcePath) != item.Path
+
+	// Determine if this item should show as drop target
+	// When not dragging, use regular hover. When dragging, use dropTargetPath match.
+	isDropTarget := isValidDropTarget && (isHovered || r.dropTargetPath == item.Path)
 
 	totalHeight := iconSize + labelHeight + 10
 
