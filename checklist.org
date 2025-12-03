@@ -3,7 +3,7 @@
 #+DATE: 2024
 
 * 1.0 Release Blockers
-
+* TODO allow modification to file list view preset (list, grid...)
 ** TODO External Drag and Drop Support
    :PROPERTIES:
    :PRIORITY: A
@@ -33,3 +33,19 @@
     - May need to use a Gio fork if PR is not merged
     - Consider filename/URL metadata needs (discussed in PR)
     - Multiple file drops generate separate events per file
+
+** TODO Size Column Display Bug
+   :PROPERTIES:
+   :PRIORITY: B
+   :END:
+
+   Size column text gets cut off when displaying values like "MB" or larger units.
+
+*** Symptoms
+    - File size display truncates unit suffix (e.g., "1.2 M" instead of "1.2 MB")
+    - Column width may not be adequate for larger size values
+
+*** Tasks
+    - [ ] Investigate size column width calculation
+    - [ ] Ensure adequate space for all size units (B, KB, MB, GB)
+    - [ ] Test with files of varying sizes
