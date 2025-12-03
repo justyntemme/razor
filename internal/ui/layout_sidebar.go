@@ -202,12 +202,34 @@ func (r *Renderer) layoutFavoritesListContent(gtx layout.Context, state *State, 
 			})
 	}
 
+	// Track sidebar row positions for drag hover detection
+	cumulativeY := 0
+
 	return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return r.favState.Layout(gtx, len(state.FavList), func(gtx layout.Context, i int) layout.Dimensions {
 			fav := &state.FavList[i]
 
-			// Render row and capture right-click event
-			rowDims, leftClicked, rightClicked, _ := r.renderFavoriteRow(gtx, fav)
+			// Render row and capture events
+			rowDims, leftClicked, rightClicked, _, dropEvt := r.renderFavoriteRow(gtx, fav)
+
+			// Track row bounds for sidebar drag hover detection
+			// Use dragWindowY which is in window coordinates
+			if r.dragSourcePath != "" && fav.Path != r.dragSourcePath {
+				// Check if drag cursor is over sidebar (X < fileListOffset.X)
+				if r.dragCurrentX < r.fileListOffset.X {
+					rowTop := yOffset + cumulativeY
+					rowBottom := rowTop + rowDims.Size.Y
+					if r.dragWindowY >= rowTop && r.dragWindowY < rowBottom {
+						r.sidebarDropTarget = fav.Path
+					}
+				}
+			}
+			cumulativeY += rowDims.Size.Y
+
+			// Handle drop event
+			if dropEvt != nil {
+				*eventOut = *dropEvt
+			}
 
 			// Handle right-click on favorite
 			if rightClicked {

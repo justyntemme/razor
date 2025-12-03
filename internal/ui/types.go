@@ -455,6 +455,7 @@ type FavoriteItem struct {
 	Type          FavoriteItemType // Type of favorite (normal, trash, etc.)
 	Clickable     widget.Clickable
 	RightClickTag int
+	DropTag       struct{} // Unique tag for drop target registration (address is unique per entry)
 }
 
 type ProgressState struct {

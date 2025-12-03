@@ -290,18 +290,25 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 				}
 			case transfer.DataEvent:
 				if e.Type == FileDragMIME {
-					// Read the dropped file path
+					// Read the dropped file paths (newline-separated for multi-select)
 					reader := e.Open()
 					data, err := io.ReadAll(reader)
 					reader.Close()
 					if err == nil {
-						sourcePath := string(data)
-						// Don't allow dropping on self or parent
-						if sourcePath != item.Path && filepath.Dir(sourcePath) != item.Path {
+						pathsData := string(data)
+						sourcePaths := strings.Split(pathsData, "\n")
+						// Filter out invalid paths (self or parent of destination)
+						validPaths := make([]string, 0, len(sourcePaths))
+						for _, p := range sourcePaths {
+							if p != "" && p != item.Path && filepath.Dir(p) != item.Path {
+								validPaths = append(validPaths, p)
+							}
+						}
+						if len(validPaths) > 0 {
 							dropEvent = &UIEvent{
 								Action: ActionMove,
-								Paths:  []string{sourcePath}, // Source paths
-								Path:   item.Path,            // Destination directory
+								Paths:  validPaths,  // Source paths
+								Path:   item.Path,   // Destination directory
 							}
 						}
 					}
@@ -442,7 +449,9 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 		// Handle drag data request - call Update() AFTER Layout() to process transfer events
 		// This receives RequestEvent when a drop happens on a target
 		if mime, ok := item.Touch.Update(gtx); ok && mime == FileDragMIME {
-			item.Touch.Offer(gtx, mime, io.NopCloser(strings.NewReader(item.Path)))
+			// Send all selected paths (for multi-select drag), separated by newlines
+			pathsData := strings.Join(r.dragSourcePaths, "\n")
+			item.Touch.Offer(gtx, mime, io.NopCloser(strings.NewReader(pathsData)))
 		}
 	}
 
@@ -601,8 +610,8 @@ func (r *Renderer) renderRowContent(gtx layout.Context, item *UIEntry, isRenamin
 		})
 }
 
-// renderFavoriteRow renders a favorite item. Returns dimensions, left-clicked, right-clicked, and click position.
-func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem) (layout.Dimensions, bool, bool, image.Point) {
+// renderFavoriteRow renders a favorite item. Returns dimensions, left-clicked, right-clicked, click position, and drop event.
+func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem) (layout.Dimensions, bool, bool, image.Point, *UIEvent) {
 	// Check for left-click BEFORE layout
 	leftClicked := fav.Clickable.Clicked(gtx)
 
@@ -620,19 +629,71 @@ func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem) (lay
 		}
 	}
 
+	// Handle drop events (favorites are drop targets)
+	var dropEvent *UIEvent
+	for {
+		ev, ok := gtx.Event(transfer.TargetFilter{Target: &fav.DropTag, Type: FileDragMIME})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(transfer.DataEvent); ok && e.Type == FileDragMIME {
+			reader := e.Open()
+			data, _ := io.ReadAll(reader)
+			reader.Close()
+			pathsData := string(data)
+			sourcePaths := strings.Split(pathsData, "\n")
+			// Filter out invalid paths
+			validPaths := make([]string, 0, len(sourcePaths))
+			for _, p := range sourcePaths {
+				if p != "" && p != fav.Path && filepath.Dir(p) != fav.Path {
+					validPaths = append(validPaths, p)
+				}
+			}
+			if len(validPaths) > 0 {
+				if fav.Type == FavoriteTypeTrash {
+					// Dropping on trash = delete (move to trash)
+					dropEvent = &UIEvent{
+						Action: ActionConfirmDelete,
+						Paths:  validPaths,
+					}
+				} else {
+					// Dropping on favorite folder = move
+					dropEvent = &UIEvent{
+						Action: ActionMove,
+						Paths:  validPaths,
+						Path:   fav.Path,
+					}
+				}
+			}
+		}
+	}
+
+	// Check if this favorite is being hovered during drag
+	isDropHover := r.dragSourcePath != "" && r.sidebarDropTarget == fav.Path
+
 	dims := material.Clickable(gtx, &fav.Clickable, func(gtx layout.Context) layout.Dimensions {
 		// Register right-click handler
 		defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
 		event.Op(gtx.Ops, &fav.RightClickTag)
 
-		// Highlight if viewing trash
-		if fav.Type == FavoriteTypeTrash && r.isTrashView {
+		// Register as drop target with PassOp so clicks still work
+		passStack := pointer.PassOp{}.Push(gtx.Ops)
+		event.Op(gtx.Ops, &fav.DropTag)
+		passStack.Pop()
+
+		// Highlight if viewing trash or if being hovered during drag
+		showHighlight := (fav.Type == FavoriteTypeTrash && r.isTrashView) || isDropHover
+		if showHighlight {
 			cornerRadius := gtx.Dp(4)
 			rr := clip.RRect{
 				Rect: image.Rect(0, 0, gtx.Constraints.Max.X, gtx.Constraints.Max.Y),
 				NE:   cornerRadius, NW: cornerRadius, SE: cornerRadius, SW: cornerRadius,
 			}
-			paint.FillShape(gtx.Ops, colSelected, rr.Op(gtx.Ops))
+			bgColor := colSelected
+			if isDropHover {
+				bgColor = colDropTarget
+			}
+			paint.FillShape(gtx.Ops, bgColor, rr.Op(gtx.Ops))
 		}
 
 		return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
@@ -663,7 +724,7 @@ func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem) (lay
 			})
 	})
 
-	return dims, leftClicked, rightClicked, clickPos
+	return dims, leftClicked, rightClicked, clickPos, dropEvent
 }
 
 // drawTrashIcon draws a simple trash can icon

@@ -27,6 +27,9 @@ const (
 func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 	defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
 
+	// Reset sidebar drop target each frame (will be set during sidebar rendering if dragging)
+	r.sidebarDropTarget = ""
+
 	// ===== GLOBAL MOUSE POSITION TRACKING =====
 	// Track mouse position for menu placement
 	// Use PassOp so events pass through to elements underneath

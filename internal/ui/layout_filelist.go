@@ -115,6 +115,22 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 						dragPos := state.Entries[i].Touch.CurrentPos()
 						r.dragCurrentX = r.fileListOffset.X + int(dragPos.X)
 						r.dragCurrentY = cumulativeY + int(dragPos.Y)
+						// Also track Y in window coordinates for sidebar hover detection
+						r.dragWindowY = r.fileListOffset.Y + r.listAreaOffset + cumulativeY + int(dragPos.Y) - r.listState.Position.Offset
+
+						// Build list of all paths being dragged (for multi-select)
+						// If dragging item is selected in multi-select, include all selected items
+						// Otherwise just include the single dragged item
+						if r.multiSelectMode && state.SelectedIndices[i] {
+							r.dragSourcePaths = r.dragSourcePaths[:0]
+							for idx, selected := range state.SelectedIndices {
+								if selected && idx < len(state.Entries) {
+									r.dragSourcePaths = append(r.dragSourcePaths, state.Entries[idx].Path)
+								}
+							}
+						} else {
+							r.dragSourcePaths = []string{state.Entries[i].Path}
+						}
 					}
 					item := &state.Entries[i]
 					isRenaming := r.renameIndex == i
