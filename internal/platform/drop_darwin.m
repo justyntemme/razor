@@ -38,10 +38,6 @@ static NSDragOperation gioView_draggingUpdated(id self, SEL _cmd, id<NSDraggingI
         int x = (int)(viewLocation.x * scale);
         int y = (int)((height - viewLocation.y) * scale);
 
-        // Log for debugging
-        NSLog(@"ExtDrag: view=(%f,%f) height=%f scale=%f -> gio=(%d,%d)",
-              viewLocation.x, viewLocation.y,
-              height, scale, x, y);
         razor_onExternalDragUpdate(x, y);
         return NSDragOperationCopy;
     }
@@ -61,13 +57,23 @@ static BOOL gioView_performDragOperation(id self, SEL _cmd, id<NSDraggingInfo> s
         NSArray<NSURL *> *fileURLs = [pboard readObjectsForClasses:@[[NSURL class]]
                                                             options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
 
+        // Collect all paths first, then dispatch the drop asynchronously
+        // This lets performDragOperation return immediately so macOS can end the drag animation
+        NSMutableArray<NSString *> *paths = [NSMutableArray arrayWithCapacity:fileURLs.count];
         for (NSURL *fileURL in fileURLs) {
             NSString *filePath = [fileURL path];
             if (filePath != nil) {
-                // Call back into Go for each dropped file
-                razor_onExternalDrop((char *)[filePath UTF8String]);
+                [paths addObject:filePath];
             }
         }
+
+        // Dispatch all file processing asynchronously
+        dispatch_async(dispatch_get_main_queue(), ^{
+            for (NSString *path in paths) {
+                razor_onExternalDrop((char *)[path UTF8String]);
+            }
+            razor_onExternalDragEnd();
+        });
         return YES;
     }
     return NO;
