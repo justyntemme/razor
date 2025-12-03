@@ -219,37 +219,89 @@ func (r *Renderer) processGlobalInput(gtx layout.Context, state *State, keyTag e
 			}
 		}
 
-		// Arrow keys and Enter are not configurable (fundamental navigation)
+		// Arrow keys and Enter - behavior differs between list and grid view
 		switch k.Name {
 		case key.NameUpArrow:
-			if idx := state.SelectedIndex - 1; idx >= 0 {
-				r.listState.ScrollTo(idx)
-				return UIEvent{Action: ActionSelect, NewIndex: idx}
-			} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
-				idx := len(state.Entries) - 1
-				r.listState.ScrollTo(idx)
-				return UIEvent{Action: ActionSelect, NewIndex: idx}
+			if r.viewMode == ViewModeGrid {
+				// Grid view: move up one row
+				cols := r.gridColumns
+				if cols < 1 {
+					cols = 1
+				}
+				if idx := state.SelectedIndex - cols; idx >= 0 {
+					r.listState.ScrollTo(idx / cols)
+					return UIEvent{Action: ActionSelect, NewIndex: idx}
+				}
+			} else {
+				// List view: move up one item
+				if idx := state.SelectedIndex - 1; idx >= 0 {
+					r.listState.ScrollTo(idx)
+					return UIEvent{Action: ActionSelect, NewIndex: idx}
+				} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
+					idx := len(state.Entries) - 1
+					r.listState.ScrollTo(idx)
+					return UIEvent{Action: ActionSelect, NewIndex: idx}
+				}
 			}
 		case key.NameDownArrow:
-			if idx := state.SelectedIndex + 1; idx < len(state.Entries) {
-				r.listState.ScrollTo(idx)
-				return UIEvent{Action: ActionSelect, NewIndex: idx}
-			} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
-				return UIEvent{Action: ActionSelect, NewIndex: 0}
+			if r.viewMode == ViewModeGrid {
+				// Grid view: move down one row
+				cols := r.gridColumns
+				if cols < 1 {
+					cols = 1
+				}
+				if idx := state.SelectedIndex + cols; idx < len(state.Entries) {
+					r.listState.ScrollTo(idx / cols)
+					return UIEvent{Action: ActionSelect, NewIndex: idx}
+				} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
+					return UIEvent{Action: ActionSelect, NewIndex: 0}
+				}
+			} else {
+				// List view: move down one item
+				if idx := state.SelectedIndex + 1; idx < len(state.Entries) {
+					r.listState.ScrollTo(idx)
+					return UIEvent{Action: ActionSelect, NewIndex: idx}
+				} else if state.SelectedIndex == -1 && len(state.Entries) > 0 {
+					return UIEvent{Action: ActionSelect, NewIndex: 0}
+				}
 			}
 		case key.NameLeftArrow:
-			// Left arrow: go back (up one directory level)
-			if state.CanBack {
-				return UIEvent{Action: ActionBack}
+			if r.viewMode == ViewModeGrid {
+				// Grid view: move left one item
+				if idx := state.SelectedIndex - 1; idx >= 0 {
+					cols := r.gridColumns
+					if cols < 1 {
+						cols = 1
+					}
+					r.listState.ScrollTo(idx / cols)
+					return UIEvent{Action: ActionSelect, NewIndex: idx}
+				}
+			} else {
+				// List view: go back (up one directory level)
+				if state.CanBack {
+					return UIEvent{Action: ActionBack}
+				}
 			}
 		case key.NameRightArrow:
-			// Right arrow: enter selection (navigate into folder or open file)
-			if idx := state.SelectedIndex; idx >= 0 && idx < len(state.Entries) {
-				item := state.Entries[idx]
-				if item.IsDir {
-					return UIEvent{Action: ActionNavigate, Path: item.Path}
+			if r.viewMode == ViewModeGrid {
+				// Grid view: move right one item
+				if idx := state.SelectedIndex + 1; idx < len(state.Entries) {
+					cols := r.gridColumns
+					if cols < 1 {
+						cols = 1
+					}
+					r.listState.ScrollTo(idx / cols)
+					return UIEvent{Action: ActionSelect, NewIndex: idx}
 				}
-				return UIEvent{Action: ActionOpen, Path: item.Path}
+			} else {
+				// List view: enter selection (navigate into folder or open file)
+				if idx := state.SelectedIndex; idx >= 0 && idx < len(state.Entries) {
+					item := state.Entries[idx]
+					if item.IsDir {
+						return UIEvent{Action: ActionNavigate, Path: item.Path}
+					}
+					return UIEvent{Action: ActionOpen, Path: item.Path}
+				}
 			}
 		case key.NameReturn, key.NameEnter:
 			if idx := state.SelectedIndex; idx >= 0 && idx < len(state.Entries) {

@@ -252,6 +252,7 @@ type Renderer struct {
 	viewMode        ViewMode
 	viewModeBtn     widget.Clickable // Button to toggle view mode
 	gridItemSize    int              // Size of grid items in pixels
+	gridColumns     int              // Number of columns in grid view (calculated each frame)
 }
 
 func NewRenderer() *Renderer {

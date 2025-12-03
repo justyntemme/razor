@@ -214,6 +214,7 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 						r.menuIsDir = item.IsDir
 						_, r.menuIsFav = state.Favorites[item.Path]
 						r.menuIsBackground = false
+						gtx.Execute(op.InvalidateCmd{})
 						// Don't change selection on right-click - menu operations use collectSelectedPaths()
 						// which will get all selected items. Selection is only cleared after copy/cut.
 					}
@@ -282,6 +283,7 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 					r.menuIsDir = true
 					r.menuIsFav = false
 					r.menuIsBackground = true
+					gtx.Execute(op.InvalidateCmd{})
 					// Don't clear selection on background right-click
 				}
 				r.bgRightClickPending = false

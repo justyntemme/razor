@@ -40,6 +40,10 @@ type TerminalConfig struct {
 // Supported modifiers: Ctrl, Shift, Alt, Cmd (or Super)
 // Supported keys: A-Z, 0-9, F1-F12, Delete, Backspace, Escape, Enter, Tab, Space
 //                 Up, Down, Left, Right, Home, End, PageUp, PageDown
+//
+// Note: Arrow keys have different behavior depending on view mode:
+//   List view: Up/Down navigate items, Left goes back, Right enters selection
+//   Grid view: All arrows navigate the grid spatially, Enter opens selection
 type HotkeysConfig struct {
 	// File operations
 	Copy            string `json:"copy"`

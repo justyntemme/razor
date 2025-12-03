@@ -33,6 +33,7 @@ func (r *Renderer) layoutFileGrid(gtx layout.Context, state *State, keyTag *layo
 	if cols < 1 {
 		cols = 1
 	}
+	r.gridColumns = cols // Store for keyboard navigation
 
 	// Calculate number of rows needed
 	numItems := len(state.Entries)
@@ -179,6 +180,7 @@ func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntr
 			r.menuIsDir = item.IsDir
 			_, r.menuIsFav = state.Favorites[item.Path]
 			r.menuIsBackground = false
+			gtx.Execute(op.InvalidateCmd{})
 		}
 	}
 

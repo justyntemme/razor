@@ -134,6 +134,7 @@ func (r *Renderer) layoutFileMenu(gtx layout.Context, eventOut *UIEvent) layout.
 				if r.hotkeysBtn.Clicked(gtx) {
 					r.onLeftClick()
 					r.hotkeysOpen = true
+				gtx.Execute(op.InvalidateCmd{})
 				}
 				return r.menuItem(gtx, &r.hotkeysBtn, "Keyboard Shortcuts")
 			}),
@@ -142,6 +143,7 @@ func (r *Renderer) layoutFileMenu(gtx layout.Context, eventOut *UIEvent) layout.
 					debug.Log(debug.UI, "Settings button clicked, opening settings")
 					r.onLeftClick()
 					r.settingsOpen = true
+				gtx.Execute(op.InvalidateCmd{})
 				}
 				return r.menuItem(gtx, &r.settingsBtn, "Settings")
 			}),
@@ -188,56 +190,62 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, state *State, eventOut 
 
 	defer op.Offset(image.Pt(posX, posY)).Push(gtx.Ops).Pop()
 
-	if r.openBtn.Clicked(gtx) {
+	// Helper to close menu and trigger redraw
+	closeMenu := func() {
 		r.menuVisible = false
+		gtx.Execute(op.InvalidateCmd{})
+	}
+
+	if r.openBtn.Clicked(gtx) {
+		closeMenu()
 		*eventOut = UIEvent{Action: ActionOpen, Path: r.menuPath}
 	}
 	if r.openWithBtn.Clicked(gtx) {
-		r.menuVisible = false
+		closeMenu()
 		*eventOut = UIEvent{Action: ActionOpenWith, Path: r.menuPath}
 	}
 	if r.openLocationBtn.Clicked(gtx) {
-		r.menuVisible = false
+		closeMenu()
 		*eventOut = UIEvent{Action: ActionOpenFileLocation, Path: r.menuPath}
 	}
 	if r.copyBtn.Clicked(gtx) {
-		r.menuVisible = false
+		closeMenu()
 		paths := r.collectSelectedPaths(state)
 		*eventOut = UIEvent{Action: ActionCopy, Paths: paths}
 	}
 	if r.cutBtn.Clicked(gtx) {
-		r.menuVisible = false
+		closeMenu()
 		paths := r.collectSelectedPaths(state)
 		*eventOut = UIEvent{Action: ActionCut, Paths: paths}
 	}
 	if r.pasteBtn.Clicked(gtx) {
-		r.menuVisible = false
+		closeMenu()
 		*eventOut = UIEvent{Action: ActionPaste}
 	}
 	if r.newFileBtn.Clicked(gtx) {
-		r.menuVisible = false
+		closeMenu()
 		r.ShowCreateDialog(false)
 	}
 	if r.newFolderBtn.Clicked(gtx) {
-		r.menuVisible = false
+		closeMenu()
 		r.ShowCreateDialog(true)
 	}
 	if r.deleteBtn.Clicked(gtx) {
-		r.menuVisible = false
+		closeMenu()
 		r.deleteConfirmOpen = true
 		state.DeleteTargets = r.collectSelectedPaths(state)
 	}
 	if r.emptyTrashBtn.Clicked(gtx) {
-		r.menuVisible = false
+		closeMenu()
 		*eventOut = UIEvent{Action: ActionEmptyTrash}
 	}
 	if r.permanentDeleteBtn.Clicked(gtx) {
-		r.menuVisible = false
+		closeMenu()
 		paths := r.collectSelectedPaths(state)
 		*eventOut = UIEvent{Action: ActionPermanentDelete, Paths: paths}
 	}
 	if r.renameBtn.Clicked(gtx) {
-		r.menuVisible = false
+		closeMenu()
 		// Start rename for the selected item
 		if state.SelectedIndex >= 0 && state.SelectedIndex < len(state.Entries) {
 			item := &state.Entries[state.SelectedIndex]
@@ -245,7 +253,7 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, state *State, eventOut 
 		}
 	}
 	if r.favBtn.Clicked(gtx) {
-		r.menuVisible = false
+		closeMenu()
 		action := ActionAddFavorite
 		if r.menuIsFav {
 			action = ActionRemoveFavorite
@@ -253,11 +261,11 @@ func (r *Renderer) layoutContextMenu(gtx layout.Context, state *State, eventOut 
 		*eventOut = UIEvent{Action: action, Path: r.menuPath}
 	}
 	if r.openInNewTabBtn.Clicked(gtx) {
-		r.menuVisible = false
+		closeMenu()
 		*eventOut = UIEvent{Action: ActionOpenInNewTab, Path: r.menuPath}
 	}
 	if r.openTerminalBtn.Clicked(gtx) {
-		r.menuVisible = false
+		closeMenu()
 		// For favorites/drives sidebar, use the clicked item's path
 		// For file list (including background clicks), always use current directory
 		termPath := state.CurrentPath
