@@ -109,9 +109,11 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 					// Track if any item is being dragged and capture its current position
 					if state.Entries[i].Touch.Dragging() {
 						anyDragging = true
-						// Capture drag cursor position in list coordinates
-						// cumulativeY is the top of this row, add the current drag Y position within the row
+						// Capture drag cursor position
+						// For Y: cumulativeY is the top of this row, add the current drag Y position within the row
+						// For X: convert from row-local to window coordinates
 						dragPos := state.Entries[i].Touch.CurrentPos()
+						r.dragCurrentX = r.fileListOffset.X + int(dragPos.X)
 						r.dragCurrentY = cumulativeY + int(dragPos.Y)
 					}
 					item := &state.Entries[i]
@@ -265,13 +267,21 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 				} else {
 					// Determine drop target based on drag cursor position
 					// dragCurrentY is already in list coordinates (set when we found the dragging item)
+					// dragCurrentX is in window coordinates - check if within file list bounds
 
-					// Find which candidate the drag cursor is over
+					// Check if drag cursor X is within the file list area (not over sidebar)
+					fileListMinX := r.fileListOffset.X
+					fileListMaxX := r.fileListOffset.X + r.fileListSize.X
+					dragInFileList := r.dragCurrentX >= fileListMinX && r.dragCurrentX < fileListMaxX
+
+					// Find which candidate the drag cursor is over (only if within file list)
 					r.dropTargetPath = ""
-					for _, candidate := range r.dragHoverCandidates {
-						if r.dragCurrentY >= candidate.MinY && r.dragCurrentY < candidate.MaxY {
-							r.dropTargetPath = candidate.Path
-							break
+					if dragInFileList {
+						for _, candidate := range r.dragHoverCandidates {
+							if r.dragCurrentY >= candidate.MinY && r.dragCurrentY < candidate.MaxY {
+								r.dropTargetPath = candidate.Path
+								break
+							}
 						}
 					}
 
