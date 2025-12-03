@@ -107,6 +107,10 @@ type Renderer struct {
 	bgRightClickPos     image.Point
 	bgLeftClickPending  bool // Left-click on background - dismiss menus
 
+	// Drag and drop state
+	dragSourcePath string // Path of item being dragged
+	dropTargetPath string // Path of directory currently being hovered as drop target
+
 	// Delete confirmation
 	deleteConfirmOpen bool
 	deleteConfirmYes  widget.Clickable
