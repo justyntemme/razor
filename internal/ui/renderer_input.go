@@ -157,6 +157,10 @@ func (r *Renderer) processGlobalInput(gtx layout.Context, state *State, keyTag e
 				r.showDotfilesCheck.Value = r.ShowDotfiles
 				return UIEvent{Action: ActionToggleDotfiles, ShowDotfiles: r.ShowDotfiles}
 			}
+			if r.hotkeys.ToggleViewMode.Matches(k) {
+				debug.Log(debug.HOTKEY, "ToggleViewMode hotkey matched!")
+				return UIEvent{Action: ActionChangeViewMode}
+			}
 			// Debug: log when we're close to matching ToggleHidden
 			if k.Modifiers.Contain(key.ModCtrl) {
 				debug.Log(debug.HOTKEY, "Ctrl key combo: name=%q mods=0x%x, ToggleHidden expects: key=%q mods=0x%x",
@@ -324,7 +328,7 @@ func (r *Renderer) buildHotkeyFilters(keyTag event.Tag) []event.Filter {
 		r.hotkeys.Copy, r.hotkeys.Cut, r.hotkeys.Paste, r.hotkeys.Delete, r.hotkeys.PermanentDelete,
 		r.hotkeys.Rename, r.hotkeys.NewFile, r.hotkeys.NewFolder, r.hotkeys.SelectAll,
 		r.hotkeys.Back, r.hotkeys.Forward, r.hotkeys.Up, r.hotkeys.Home, r.hotkeys.Refresh,
-		r.hotkeys.FocusSearch, r.hotkeys.TogglePreview, r.hotkeys.ToggleHidden, r.hotkeys.Escape,
+		r.hotkeys.FocusSearch, r.hotkeys.TogglePreview, r.hotkeys.ToggleHidden, r.hotkeys.ToggleViewMode, r.hotkeys.Escape,
 		r.hotkeys.NewTab, r.hotkeys.CloseTab, r.hotkeys.NextTab, r.hotkeys.PrevTab,
 		r.hotkeys.Tab1, r.hotkeys.Tab2, r.hotkeys.Tab3, r.hotkeys.Tab4, r.hotkeys.Tab5, r.hotkeys.Tab6,
 	}

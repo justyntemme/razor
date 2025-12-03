@@ -632,15 +632,18 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 		o.collapseDirectory(evt.Path)
 	case ui.ActionChangeViewMode:
 		viewMode := o.ui.ToggleViewMode()
-		// Save to config
-		viewModeStr := "list"
-		if viewMode == ui.ViewModeGrid {
-			viewModeStr = "grid"
-		}
-		o.config.SetViewMode(viewModeStr)
-		if err := o.config.Save(); err != nil {
-			debug.Log(debug.APP, "Failed to save view mode config: %v", err)
-		}
+		o.window.Invalidate() // Immediate redraw
+		// Save to config asynchronously to avoid blocking UI
+		go func() {
+			viewModeStr := "list"
+			if viewMode == ui.ViewModeGrid {
+				viewModeStr = "grid"
+			}
+			o.config.SetViewMode(viewModeStr)
+			if err := o.config.Save(); err != nil {
+				debug.Log(debug.APP, "Failed to save view mode config: %v", err)
+			}
+		}()
 	}
 }
 

@@ -26,10 +26,11 @@ func DefaultHotkeys() HotkeysConfig {
 		Refresh: "Cmd+R",
 
 		// UI
-		FocusSearch:   "Cmd+F",
-		TogglePreview: "Cmd+P",
-		ToggleHidden:  "Cmd+Shift+>", // macOS convention (Shift+. = >)
-		Escape:        "Escape",
+		FocusSearch:    "Cmd+F",
+		TogglePreview:  "Cmd+P",
+		ToggleHidden:   "Cmd+Shift+>", // macOS convention (Shift+. = >)
+		ToggleViewMode: "Cmd+Shift+G", // Toggle between list and grid view
+		Escape:         "Escape",
 
 		// Tabs - use Cmd on macOS (standard macOS convention)
 		NewTab:     "Cmd+T",

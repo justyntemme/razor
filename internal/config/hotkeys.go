@@ -235,10 +235,11 @@ type HotkeyMatcher struct {
 	Refresh Hotkey
 
 	// UI
-	FocusSearch   Hotkey
-	TogglePreview Hotkey
-	ToggleHidden  Hotkey
-	Escape        Hotkey
+	FocusSearch    Hotkey
+	TogglePreview  Hotkey
+	ToggleHidden   Hotkey
+	ToggleViewMode Hotkey
+	Escape         Hotkey
 
 	// Tabs
 	NewTab     Hotkey
@@ -278,10 +279,11 @@ func NewHotkeyMatcher(cfg HotkeysConfig) *HotkeyMatcher {
 		Refresh: ParseHotkey(cfg.Refresh),
 
 		// UI
-		FocusSearch:   ParseHotkey(cfg.FocusSearch),
-		TogglePreview: ParseHotkey(cfg.TogglePreview),
-		ToggleHidden:  ParseHotkey(cfg.ToggleHidden),
-		Escape:        ParseHotkey(cfg.Escape),
+		FocusSearch:    ParseHotkey(cfg.FocusSearch),
+		TogglePreview:  ParseHotkey(cfg.TogglePreview),
+		ToggleHidden:   ParseHotkey(cfg.ToggleHidden),
+		ToggleViewMode: ParseHotkey(cfg.ToggleViewMode),
+		Escape:         ParseHotkey(cfg.Escape),
 
 		// Tabs
 		NewTab:     ParseHotkey(cfg.NewTab),

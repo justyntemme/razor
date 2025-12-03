@@ -25,10 +25,11 @@ func DefaultHotkeys() HotkeysConfig {
 		Refresh: "F5",
 
 		// UI
-		FocusSearch:   "Ctrl+F",
-		TogglePreview: "Ctrl+P",
-		ToggleHidden:  "Ctrl+Shift+H", // Toggle hidden files
-		Escape:        "Escape",
+		FocusSearch:    "Ctrl+F",
+		TogglePreview:  "Ctrl+P",
+		ToggleHidden:   "Ctrl+Shift+H", // Toggle hidden files
+		ToggleViewMode: "Ctrl+Shift+G", // Toggle between list and grid view
+		Escape:         "Escape",
 
 		// Tabs - vim bindings: Ctrl+H (left) and Ctrl+L (right)
 		NewTab:     "Ctrl+T",           // New tab in current directory

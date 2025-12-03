@@ -300,7 +300,7 @@ func NewRenderer() *Renderer {
 	r.thumbnailCache = NewThumbnailCache(50, 400)
 
 	// Default grid item size (larger for better readability)
-	r.gridItemSize = 175
+	r.gridItemSize = 180
 
 	return r
 }
