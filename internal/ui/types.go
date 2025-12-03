@@ -420,15 +420,14 @@ type UIEvent struct {
 }
 
 type UIEntry struct {
-	Name, Path    string
-	IsDir         bool
-	Size          int64
-	ModTime       time.Time
-	ClickDrag     ClickAndDraggable // Combined click and drag handling with visual shadow
-	DropTag       int               // Tag for drop target registration (directories only)
-	Checkbox      widget.Bool       // For multi-select mode
-	RightClickTag int
-	LastClick     time.Time
+	Name, Path string
+	IsDir      bool
+	Size       int64
+	ModTime    time.Time
+	Touch      Touchable   // Combined click, right-click, and drag handling
+	DropTag    int         // Tag for drop target registration (directories only)
+	Checkbox   widget.Bool // For multi-select mode
+	LastClick  time.Time
 	// Tree view fields
 	Depth      int              // Indentation level (0 = root level)
 	IsExpanded bool             // Whether this directory is expanded inline

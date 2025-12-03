@@ -90,9 +90,15 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 			}
 
 			return layout.Stack{}.Layout(gtx, layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+				// Reset drag state at start of each frame - will be set by dragging item
+				anyDragging := false
 
 				// Layout file list
 				listDims := r.listState.Layout(gtx, len(state.Entries), func(gtx layout.Context, i int) layout.Dimensions {
+					// Track if any item is being dragged
+					if state.Entries[i].Touch.Dragging() {
+						anyDragging = true
+					}
 					item := &state.Entries[i]
 					isRenaming := r.renameIndex == i
 
@@ -218,6 +224,12 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 					r.onLeftClick() // Dismiss context menus, file menu, exit path edit mode
 				}
 				r.bgLeftClickPending = false
+
+				// Clear drag state if no item is being dragged
+				if !anyDragging {
+					r.dragSourcePath = ""
+					r.dropTargetPath = ""
+				}
 
 				return listDims
 			}))

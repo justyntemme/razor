@@ -204,8 +204,9 @@ func (r *Renderer) renderColumns(gtx layout.Context) (layout.Dimensions, UIEvent
 
 // renderRow renders a file/folder row. Returns dimensions, left-clicked, right-clicked, shift held, click position, rename event, checkbox toggled, chevron event, and drop event.
 func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selected bool, isRenaming bool, isChecked bool, showCheckbox bool) (layout.Dimensions, bool, bool, bool, image.Point, *UIEvent, bool, *UIEvent, *UIEvent) {
-	// Track click state - will be set from ClickAndDraggable.Layout
+	// Track click state - will be set from Touchable.Layout
 	leftClicked := false
+	rightClicked := false
 	shiftHeld := false
 	var clickPos image.Point
 
@@ -225,19 +226,6 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 		} else {
 			chevronEvent = &UIEvent{Action: ActionExpandDir, Path: item.Path}
 			debug.Log(debug.UI, "Creating ActionExpandDir event for: %s", item.Path)
-		}
-	}
-
-	// Check for right-click and capture position
-	rightClicked := false
-	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: &item.RightClickTag, Kinds: pointer.Press})
-		if !ok {
-			break
-		}
-		if e, ok := ev.(pointer.Event); ok && e.Buttons.Contain(pointer.ButtonSecondary) {
-			rightClicked = true
-			clickPos = image.Pt(int(e.Position.X), int(e.Position.Y))
 		}
 	}
 
@@ -280,12 +268,12 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 	// In single-select mode, use the primary selection
 	showSelected := isChecked
 
-	// Handle drag data request from this item's ClickDrag
+	// Handle drag data request from this item's Touch
 	// This must be called to provide data when a drop target requests it
-	item.ClickDrag.Type = FileDragMIME
-	if mime, ok := item.ClickDrag.Update(gtx); ok && mime == FileDragMIME {
+	item.Touch.Type = FileDragMIME
+	if mime, ok := item.Touch.Update(gtx); ok && mime == FileDragMIME {
 		// Provide the file path as drag data
-		item.ClickDrag.Offer(gtx, mime, io.NopCloser(strings.NewReader(item.Path)))
+		item.Touch.Offer(gtx, mime, io.NopCloser(strings.NewReader(item.Path)))
 	}
 
 	// Handle drop events for directories (they are drop targets)
@@ -339,10 +327,31 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 
 		dims = contentDims
 	} else {
-		// Use ClickAndDraggable.Layout for combined click and drag handling
-		// This allows both click/double-click AND drag with visual shadow
-		var clickEvt *ClickEvent
-		dims, clickEvt = item.ClickDrag.Layout(gtx,
+		// Use Touchable.Layout for combined click, right-click, and drag handling
+		// This allows click/double-click, right-click, AND drag with visual shadow
+		var touchEvt *TouchEvent
+
+		// Check hover state for this item
+		isHovered := item.Touch.Hovered()
+
+		// Track if this item is being dragged
+		if item.Touch.Dragging() {
+			r.dragSourcePath = item.Path
+		}
+
+		// Check if this is a valid drop target:
+		// - Must be a directory
+		// - Must be hovered
+		// - Something else must be being dragged (dragSourcePath is set)
+		// - Can't drop on the item being dragged
+		// - Can't drop into parent directory of dragged item (it's already there)
+		isDropTarget := item.IsDir &&
+			isHovered &&
+			r.dragSourcePath != "" &&
+			r.dragSourcePath != item.Path &&
+			filepath.Dir(r.dragSourcePath) != item.Path
+
+		dims, touchEvt = item.Touch.Layout(gtx,
 			// Normal content - the row with selection background
 			func(gtx layout.Context) layout.Dimensions {
 				// First render content to get actual dimensions
@@ -353,22 +362,27 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 				// Now set up clip area with ACTUAL content size (not constraints)
 				defer clip.Rect{Max: contentDims.Size}.Push(gtx.Ops).Pop()
 
-				// Register right-click handler on this row's area
-				event.Op(gtx.Ops, &item.RightClickTag)
-
 				// Register drop target for directories
 				if item.IsDir {
 					event.Op(gtx.Ops, &item.DropTag)
 				}
 
-				// Draw selection background with rounded corners
-				// Also highlight if this is the current drop target
-				isDropTarget := item.IsDir && r.dropTargetPath == item.Path
-				if showSelected || isDropTarget {
-					bgColor := colSelected
-					if isDropTarget {
-						bgColor = color.NRGBA{R: 180, G: 220, B: 255, A: 255} // Light blue for drop target
-					}
+				// Draw background based on state (priority: selected > drop target > hover)
+				var bgColor color.NRGBA
+				drawBg := false
+
+				if showSelected {
+					bgColor = colSelected
+					drawBg = true
+				} else if isDropTarget {
+					bgColor = colDropTarget
+					drawBg = true
+				} else if isHovered {
+					bgColor = colHover
+					drawBg = true
+				}
+
+				if drawBg {
 					rr := clip.RRect{
 						Rect: image.Rect(0, 0, contentDims.Size.X, contentDims.Size.Y),
 						NE:   cornerRadius, NW: cornerRadius, SE: cornerRadius, SW: cornerRadius,
@@ -401,11 +415,17 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 			},
 		)
 
-		// Process click event from ClickAndDraggable
-		if clickEvt != nil {
-			leftClicked = true
-			clickPos = clickEvt.Position
-			shiftHeld = clickEvt.Modifiers.Contain(key.ModShift)
+		// Process touch event from Touchable (handles both left-click and right-click)
+		if touchEvt != nil {
+			switch touchEvt.Type {
+			case TouchClick:
+				leftClicked = true
+				clickPos = touchEvt.Position
+				shiftHeld = touchEvt.Modifiers.Contain(key.ModShift)
+			case TouchRightClick:
+				rightClicked = true
+				clickPos = touchEvt.Position
+			}
 		}
 	}
 
