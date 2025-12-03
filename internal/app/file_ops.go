@@ -335,12 +335,6 @@ func (o *Orchestrator) doPaste() {
 		dstName := filepath.Base(src)
 		dst := filepath.Join(dstDir, dstName)
 
-		// Skip if source and destination are the same file (pasting to same directory)
-		if src == dst {
-			log.Printf("Skipping %s: source and destination are the same", src)
-			continue
-		}
-
 		srcInfo, err := os.Stat(src)
 		if err != nil {
 			log.Printf("Paste error for %s: %v", src, err)
@@ -348,16 +342,24 @@ func (o *Orchestrator) doPaste() {
 			continue
 		}
 
-		// Check for conflict
+		// Check for conflict (including pasting to same directory)
+		sameFile := src == dst
 		dstInfo, err := os.Stat(dst)
-		if err == nil {
+		if err == nil || sameFile {
+			// Use srcInfo as dstInfo when pasting to same location
+			if sameFile {
+				dstInfo = srcInfo
+			}
 			// Destination exists - need to resolve conflict
 			remainingFiles := totalFiles - i
 			resolution := o.resolveConflict(src, dst, srcInfo, dstInfo, remainingFiles)
 
 			switch resolution {
 			case ui.ConflictReplaceAll:
-				// Replace - delete destination first
+				// Replace - delete destination first (skip if same file)
+				if sameFile {
+					continue // Can't replace a file with itself
+				}
 				deleteItem(dst)
 			case ui.ConflictKeepBothAll:
 				// Keep both - rename destination
