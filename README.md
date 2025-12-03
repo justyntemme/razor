@@ -21,6 +21,7 @@
 - **Advanced Search** - Filename, content, extension, size, and date filtering
 - **File Preview** - Text, JSON, Markdown, and image preview with resizable pane
 - **File Operations** - Copy, cut, paste, delete, rename with conflict resolution
+- **Trash Support** - Delete to system trash with restore capability (permanent delete also available)
 - **Multi-Select** - Shift+click for range, Ctrl/Cmd+click for toggle selection
 - **Dotfiles Toggle** - Show/hide hidden files
 - **Recent Files** - Track and quickly access recently opened files
@@ -189,12 +190,22 @@ Configuration is stored in `~/.config/razor/config.json` on all platforms. The f
       "showDrives": true,
       "collapsible": true
     },
+    "toolbar": {
+      "visible": true,
+      "position": "top",
+      "showLabels": false
+    },
     "fileList": {
       "showDotfiles": false,
       "defaultSort": "name",
       "sortAscending": true,
       "rowHeight": "normal",
       "showIcons": true
+    },
+    "statusBar": {
+      "visible": true,
+      "showFileCount": true,
+      "showSelectionInfo": true
     }
   },
   "search": {
@@ -208,14 +219,23 @@ Configuration is stored in `~/.config/razor/config.json` on all platforms. The f
     "restoreLastPath": true,
     "singleClickToSelect": true
   },
+  "tabs": {
+    "enabled": false,
+    "newTabLocation": "home",
+    "lastTabBehavior": "close_app",
+    "restoreTabsOnStart": false
+  },
   "preview": {
     "enabled": true,
     "position": "right",
     "widthPercent": 33,
     "textExtensions": [".txt", ".json", ".csv", ".md", ".org", ".log", ".xml", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg"],
-    "imageExtensions": [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".heic"],
+    "imageExtensions": [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".heic", ".heif"],
     "maxFileSize": 1048576,
     "markdownRendered": false
+  },
+  "terminal": {
+    "app": ""
   },
   "favorites": [
     {"name": "Home", "path": "/Users/you", "icon": "home"},
@@ -276,7 +296,8 @@ All keyboard shortcuts are configurable via the `hotkeys` section in config.json
 | Copy | Ctrl+C | Ctrl+C |
 | Cut | Ctrl+X | Ctrl+X |
 | Paste | Ctrl+V | Ctrl+V |
-| Delete | Backspace | Delete |
+| Delete (to Trash) | Backspace | Delete |
+| Permanent Delete | Shift+Backspace | Shift+Delete |
 | Rename | F2 | F2 |
 | New File | Ctrl+N | Ctrl+N |
 | New Folder | Ctrl+Shift+N | Ctrl+Shift+N |
@@ -319,6 +340,7 @@ Override any shortcut in your config.json:
     "cut": "Ctrl+X",
     "paste": "Ctrl+V",
     "delete": "Delete",
+    "permanentDelete": "Shift+Delete",
     "rename": "F2",
     "newFile": "Ctrl+N",
     "newFolder": "Ctrl+Shift+N",
@@ -381,7 +403,8 @@ razor/
 │   ├── config/                 # Configuration management
 │   │   ├── config.go           # Config file loading, defaults, persistence
 │   │   ├── hotkeys.go          # Hotkey parsing and matching
-│   │   └── hotkeys_*.go        # Platform-specific default hotkeys
+│   │   ├── hotkeys_*.go        # Platform-specific default hotkeys
+│   │   └── terminals_*.go      # Platform-specific terminal configuration
 │   │
 │   ├── debug/                  # Debug logging (build tag controlled)
 │   │   ├── debug_on.go         # Debug build: enables logging
@@ -397,6 +420,10 @@ razor/
 │   │
 │   ├── store/                  # SQLite persistence
 │   │   └── db.go               # Search history, recent files database
+│   │
+│   ├── trash/                  # Trash/recycle bin support
+│   │   ├── trash.go            # Cross-platform API
+│   │   └── trash_*.go          # Platform-specific implementations
 │   │
 │   └── ui/                     # Gio UI components
 │       ├── renderer.go         # Main UI renderer, state types, event handling
@@ -417,6 +444,7 @@ razor/
 - [fsnotify](https://github.com/fsnotify/fsnotify) - Cross-platform filesystem notifications
 - [goldmark](https://github.com/yuin/goldmark) - Markdown parser for preview rendering
 - [goheif](https://github.com/jdeng/goheif) - HEIC image format support
+- [organelle](https://github.com/justyntemme/organelle) - Org-mode parsing for preview rendering
 
 ## License
 

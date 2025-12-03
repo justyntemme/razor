@@ -241,6 +241,12 @@ type Renderer struct {
 
 	// Configurable hotkeys
 	hotkeys *config.HotkeyMatcher
+
+	// Thumbnail cache for image preview
+	thumbnailCache     *ThumbnailCache
+	visibleImagePaths  []string // Image paths visible in current frame (for cache loading)
+	lastVisiblePaths   []string // Previous frame's visible paths (to detect changes)
+	thumbnailLoadDelay int      // Frames to wait after directory load before caching
 }
 
 func NewRenderer() *Renderer {
@@ -284,6 +290,9 @@ func NewRenderer() *Renderer {
 
 	// Initialize default hotkeys (can be overridden via SetHotkeys)
 	r.hotkeys = config.NewHotkeyMatcher(config.DefaultHotkeys())
+
+	// Initialize thumbnail cache (50 entries max, 400px max dimension)
+	r.thumbnailCache = NewThumbnailCache(50, 400)
 
 	return r
 }

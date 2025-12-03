@@ -788,6 +788,9 @@ func (o *Orchestrator) handleFSResponse(resp fs.Response) {
 		o.ui.ClearExpanded()
 		o.stateOwner.ClearExpanded()
 
+		// Notify UI that directory load is complete (for thumbnail caching)
+		o.ui.OnDirectoryLoaded()
+
 		// Update current tab title and path
 		if o.activeTabIndex >= 0 && o.activeTabIndex < len(o.tabs) {
 			title := filepath.Base(resp.Path)

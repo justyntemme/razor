@@ -4,7 +4,7 @@ Welcome! This guide will help you set up your development environment and unders
 
 ## Prerequisites
 
-- **Go 1.21+** - [Download](https://go.dev/dl/)
+- **Go 1.25+** - [Download](https://go.dev/dl/)
 - **Git** - For version control
 - **Optional**: ripgrep (`rg`) or ugrep (`ug`) for faster content search
 
@@ -82,6 +82,14 @@ razor/
 │   ├── search/             # Search engine
 │   │   ├── engine.go       # External engine detection
 │   │   └── query.go        # Query parsing
+│   │
+│   ├── config/             # Configuration management
+│   │   ├── config.go       # Config file loading/saving
+│   │   └── hotkeys.go      # Hotkey parsing
+│   │
+│   ├── trash/              # Trash/recycle bin
+│   │   ├── trash.go        # Cross-platform API
+│   │   └── trash_*.go      # Platform implementations
 │   │
 │   └── store/              # Persistence
 │       └── db.go           # SQLite operations

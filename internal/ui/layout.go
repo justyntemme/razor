@@ -250,5 +250,12 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions { return r.layoutToast(gtx, r.Theme) }),
 	)
 
+	// Request thumbnail loading for visible images (after a delay to let UI settle)
+	if r.thumbnailLoadDelay > 0 {
+		r.thumbnailLoadDelay--
+	} else {
+		r.RequestVisibleThumbnails()
+	}
+
 	return eventOut
 }

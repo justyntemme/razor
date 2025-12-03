@@ -15,10 +15,13 @@ Welcome to the Razor developer documentation. This guide provides comprehensive 
 - [Search Package](./packages/search.md) - Query parsing, directives, and external engine integration
 - [Store Package](./packages/store.md) - SQLite persistence for favorites and settings
 - [Debug Package](./packages/debug.md) - Categorized debug logging system
+- [Config Package](./packages/config.md) - Configuration file management and hotkeys
+- [Trash Package](./packages/trash.md) - Cross-platform trash/recycle bin support
 
 ### Guides
 - [Contributing Guide](./contributing.md) - How to set up, build, and contribute
-- [Adding Features](./guides/adding-features.md) - Step-by-step guide for common modifications
+- [Drag and Drop](./drag-and-drop.md) - Implementing drag-and-drop in Gio
+- [Touchable Widget](./touchable.md) - Unified click, right-click, and drag handling
 
 ## Quick Start for Contributors
 
@@ -41,6 +44,8 @@ razor/
 │   ├── fs/              # Filesystem operations
 │   ├── search/          # Search engine
 │   ├── store/           # SQLite persistence
+│   ├── config/          # Configuration management
+│   ├── trash/           # Trash/recycle bin support
 │   └── debug/           # Debug logging system
 ├── docs/                # This documentation
 └── TODO.org             # Project roadmap

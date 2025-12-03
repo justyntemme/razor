@@ -104,8 +104,16 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 				// Track cumulative Y position for row bounds
 				cumulativeY := 0
 
+				// Reset visible image paths for this frame
+				r.visibleImagePaths = r.visibleImagePaths[:0]
+
 				// Layout file list
 				listDims := r.listState.Layout(gtx, len(state.Entries), func(gtx layout.Context, i int) layout.Dimensions {
+					// Track visible image files for thumbnail caching
+					if !state.Entries[i].IsDir {
+						r.trackVisibleImage(state.Entries[i].Path)
+					}
+
 					// Track if any item is being dragged and capture its current position
 					if state.Entries[i].Touch.Dragging() {
 						anyDragging = true

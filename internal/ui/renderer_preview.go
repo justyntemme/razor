@@ -77,6 +77,17 @@ func (r *Renderer) ShowPreview(path string) error {
 	r.previewError = ""
 
 	if isImage {
+		// Check thumbnail cache first for faster preview
+		if thumb, size, ok := r.thumbnailCache.Get(path); ok {
+			debug.Log(debug.UI, "ShowPreview: using cached thumbnail for %s", path)
+			r.previewImage = thumb
+			r.previewImageSize = size
+			r.previewIsImage = true
+			r.previewIsJSON = false
+			r.previewContent = ""
+			r.previewVisible = true
+			return nil
+		}
 		// Load image (will be scaled to fit preview pane)
 		return r.loadImagePreview(path)
 	}

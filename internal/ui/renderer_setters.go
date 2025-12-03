@@ -1,6 +1,9 @@
 package ui
 
 import (
+	"path/filepath"
+	"strings"
+
 	"github.com/justyntemme/razor/internal/config"
 	"github.com/justyntemme/razor/internal/debug"
 )
@@ -113,4 +116,37 @@ func (r *Renderer) SetTrashView(active bool) {
 // IsTrashView returns whether the trash view is currently active
 func (r *Renderer) IsTrashView() bool {
 	return r.isTrashView
+}
+
+// trackVisibleImage checks if a file path is an image and adds it to the visible list.
+// This is called during list layout for each visible item.
+func (r *Renderer) trackVisibleImage(path string) {
+	ext := strings.ToLower(filepath.Ext(path))
+	for _, imgExt := range r.previewImageExts {
+		if ext == strings.ToLower(imgExt) {
+			r.visibleImagePaths = append(r.visibleImagePaths, path)
+			return
+		}
+	}
+}
+
+// RequestVisibleThumbnails queues visible image files for thumbnail loading.
+// This should be called after the file list has been rendered.
+func (r *Renderer) RequestVisibleThumbnails() {
+	for _, path := range r.visibleImagePaths {
+		r.thumbnailCache.RequestLoad(path)
+	}
+}
+
+// ClearThumbnailCache clears the thumbnail cache.
+// Call this when navigating to a new directory.
+func (r *Renderer) ClearThumbnailCache() {
+	r.thumbnailCache.Clear()
+	r.thumbnailLoadDelay = 3 // Wait 3 frames before loading thumbnails
+}
+
+// OnDirectoryLoaded should be called when a directory listing completes.
+// It resets the thumbnail load delay counter.
+func (r *Renderer) OnDirectoryLoaded() {
+	r.thumbnailLoadDelay = 3 // Wait 3 frames for UI to settle
 }
