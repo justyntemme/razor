@@ -724,9 +724,7 @@ func (r *Renderer) renderFavoriteRow(gtx layout.Context, fav *FavoriteItem) (lay
 			}
 			bgColor := colSelected
 			if isDropHover {
-				// Use bright red for debugging visibility
-				bgColor = color.NRGBA{R: 255, G: 0, B: 0, A: 255}
-				debug.Log(debug.UI, "DRAWING DROP HIGHLIGHT for %s: size=%v", fav.Name, contentDims.Size)
+				bgColor = colDropTarget
 			}
 			paint.FillShape(gtx.Ops, bgColor, rr.Op(gtx.Ops))
 		}
