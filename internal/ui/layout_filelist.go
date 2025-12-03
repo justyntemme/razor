@@ -155,6 +155,11 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 						chevronClicked = true
 					}
 
+					// Handle drop event (file dropped onto directory)
+					if dropEvt != nil {
+						*eventOut = *dropEvt
+					}
+
 					// Handle checkbox toggle (only visible in multi-select mode)
 					if checkboxToggled && r.multiSelectMode {
 						*eventOut = UIEvent{Action: ActionToggleSelect, NewIndex: i, OldIndex: -1}
