@@ -247,6 +247,11 @@ type Renderer struct {
 	visibleImagePaths  []string // Image paths visible in current frame (for cache loading)
 	lastVisiblePaths   []string // Previous frame's visible paths (to detect changes)
 	thumbnailLoadDelay int      // Frames to wait after directory load before caching
+
+	// View mode (list or grid)
+	viewMode        ViewMode
+	viewModeBtn     widget.Clickable // Button to toggle view mode
+	gridItemSize    int              // Size of grid items in pixels
 }
 
 func NewRenderer() *Renderer {
@@ -293,6 +298,9 @@ func NewRenderer() *Renderer {
 
 	// Initialize thumbnail cache (50 entries max, 400px max dimension)
 	r.thumbnailCache = NewThumbnailCache(50, 400)
+
+	// Default grid item size (100px icon + padding + label)
+	r.gridItemSize = 120
 
 	return r
 }

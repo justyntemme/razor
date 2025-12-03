@@ -90,6 +90,8 @@ const (
 	ActionCollapseDir // Collapse an expanded directory (uses Path)
 	// Terminal action
 	ActionOpenTerminal // Open terminal in directory (uses Path)
+	// View mode action
+	ActionChangeViewMode // Change between list/grid view
 )
 
 type ClipOp int
@@ -98,6 +100,33 @@ const (
 	ClipCopy ClipOp = iota
 	ClipCut
 )
+
+// ViewMode represents the file list display mode
+type ViewMode int
+
+const (
+	ViewModeList ViewMode = iota // Traditional list view with columns
+	ViewModeGrid                 // Grid/icon view with thumbnails
+)
+
+func (v ViewMode) String() string {
+	switch v {
+	case ViewModeGrid:
+		return "grid"
+	default:
+		return "list"
+	}
+}
+
+// ParseViewMode converts a string to ViewMode
+func ParseViewMode(s string) ViewMode {
+	switch s {
+	case "grid":
+		return ViewModeGrid
+	default:
+		return ViewModeList
+	}
+}
 
 // SearchEngineInfo contains information about a search engine
 type SearchEngineInfo struct {
@@ -413,10 +442,11 @@ type UIEvent struct {
 	SearchEngine       string // Selected search engine ID
 	DefaultDepth       int    // Default recursive search depth
 	DarkMode           bool   // Theme dark mode setting
-	SearchHistoryQuery string // For fetching/selecting search history
-	SearchSubmitted    bool   // True if search was submitted via Enter, not typed
-	TabIndex           int    // Tab index for tab operations
-	TerminalApp        string // Selected terminal application ID
+	SearchHistoryQuery string   // For fetching/selecting search history
+	SearchSubmitted    bool     // True if search was submitted via Enter, not typed
+	TabIndex           int      // Tab index for tab operations
+	TerminalApp        string   // Selected terminal application ID
+	ViewMode           ViewMode // View mode (list/grid)
 }
 
 type UIEntry struct {

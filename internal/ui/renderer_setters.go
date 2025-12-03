@@ -150,3 +150,23 @@ func (r *Renderer) ClearThumbnailCache() {
 func (r *Renderer) OnDirectoryLoaded() {
 	r.thumbnailLoadDelay = 3 // Wait 3 frames for UI to settle
 }
+
+// SetViewMode sets the file list view mode
+func (r *Renderer) SetViewMode(mode ViewMode) {
+	r.viewMode = mode
+}
+
+// GetViewMode returns the current view mode
+func (r *Renderer) GetViewMode() ViewMode {
+	return r.viewMode
+}
+
+// ToggleViewMode switches between list and grid view
+func (r *Renderer) ToggleViewMode() ViewMode {
+	if r.viewMode == ViewModeList {
+		r.viewMode = ViewModeGrid
+	} else {
+		r.viewMode = ViewModeList
+	}
+	return r.viewMode
+}

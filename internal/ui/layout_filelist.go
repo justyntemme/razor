@@ -30,6 +30,12 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 	// Track file list size for background click hit-testing
 	r.fileListSize = gtx.Constraints.Max
 
+	// Grid view mode - simplified layout without column headers
+	if r.viewMode == ViewModeGrid {
+		return r.layoutFileGrid(gtx, state, keyTag, eventOut)
+	}
+
+	// List view mode - standard layout with column headers
 	// Track vertical offset for row bounds calculation
 	headerHeight := 0
 

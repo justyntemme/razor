@@ -38,6 +38,22 @@ func (r *Renderer) layoutNavBar(gtx layout.Context, state *State, keyTag *layout
 			}
 			return r.iconButton(gtx, &r.homeBtn, "home", colAccent)
 		}),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+		// View mode toggle button
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if r.viewModeBtn.Clicked(gtx) {
+				r.onLeftClick()
+				// Only emit the event - orchestrator will toggle and persist
+				*eventOut = UIEvent{Action: ActionChangeViewMode}
+				gtx.Execute(key.FocusCmd{Tag: keyTag})
+			}
+			// Show icon for CURRENT mode (what user will switch TO is the opposite)
+			iconType := "grid-view" // Show grid icon when in list mode (click to switch to grid)
+			if r.viewMode == ViewModeGrid {
+				iconType = "list-view" // Show list icon when in grid mode (click to switch to list)
+			}
+			return r.iconButton(gtx, &r.viewModeBtn, iconType, colAccent)
+		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(16)}.Layout),
 
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
@@ -421,6 +437,42 @@ func (r *Renderer) iconButton(gtx layout.Context, btn *widget.Clickable, iconTyp
 func (r *Renderer) drawIcon(ops *op.Ops, iconType string, size int, iconColor color.NRGBA) {
 	s := float32(size)
 
+	// Handle rectangle-based icons first (no path operations)
+	switch iconType {
+	case "list-view":
+		// Three horizontal lines (list icon) - use simple rectangles
+		lineH := int(s * 0.08)
+		lineW := int(s * 0.7)
+		lineX := int(s * 0.15)
+		for _, yPct := range []float32{0.25, 0.5, 0.75} {
+			y := int(s*yPct) - lineH/2
+			paint.FillShape(ops, iconColor, clip.Rect{
+				Min: image.Pt(lineX, y),
+				Max: image.Pt(lineX+lineW, y+lineH),
+			}.Op())
+		}
+		return
+
+	case "grid-view":
+		// 2x2 grid of squares (grid icon) - use simple rectangles
+		boxSize := int(s * 0.32)
+		gap := int(s * 0.08)
+		startX := int(s*0.5) - boxSize - gap/2
+		startY := int(s*0.5) - boxSize - gap/2
+		for row := 0; row < 2; row++ {
+			for col := 0; col < 2; col++ {
+				x := startX + col*(boxSize+gap)
+				y := startY + row*(boxSize+gap)
+				paint.FillShape(ops, iconColor, clip.Rect{
+					Min: image.Pt(x, y),
+					Max: image.Pt(x+boxSize, y+boxSize),
+				}.Op())
+			}
+		}
+		return
+	}
+
+	// Path-based icons
 	var path clip.Path
 	path.Begin(ops)
 

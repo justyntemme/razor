@@ -168,6 +168,13 @@ func NewOrchestrator() *Orchestrator {
 	// Set preview pane config
 	o.ui.SetPreviewConfig(cfg.Preview.TextExtensions, cfg.Preview.ImageExtensions, cfg.Preview.MaxFileSize, cfg.Preview.WidthPercent, cfg.Preview.MarkdownRendered)
 
+	// Set view mode from config
+	if cfg.UI.FileList.ViewMode == "grid" {
+		o.ui.SetViewMode(ui.ViewModeGrid)
+	} else {
+		o.ui.SetViewMode(ui.ViewModeList)
+	}
+
 	// Set hotkeys from config
 	o.ui.SetHotkeys(cfg.Hotkeys)
 
@@ -623,6 +630,17 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 	case ui.ActionCollapseDir:
 		debug.Log(debug.APP, "Received ActionCollapseDir for path: %s", evt.Path)
 		o.collapseDirectory(evt.Path)
+	case ui.ActionChangeViewMode:
+		viewMode := o.ui.ToggleViewMode()
+		// Save to config
+		viewModeStr := "list"
+		if viewMode == ui.ViewModeGrid {
+			viewModeStr = "grid"
+		}
+		o.config.SetViewMode(viewModeStr)
+		if err := o.config.Save(); err != nil {
+			debug.Log(debug.APP, "Failed to save view mode config: %v", err)
+		}
 	}
 }
 

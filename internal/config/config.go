@@ -115,6 +115,7 @@ type FileListConfig struct {
 	SortAscending bool   `json:"sortAscending"`
 	RowHeight     string `json:"rowHeight"` // "compact" | "normal" | "comfortable"
 	ShowIcons     bool   `json:"showIcons"`
+	ViewMode      string `json:"viewMode"` // "list" | "grid"
 }
 
 // StatusBarConfig holds status bar settings
@@ -224,6 +225,7 @@ func DefaultConfig() *Config {
 				SortAscending: true,
 				RowHeight:     "normal",
 				ShowIcons:     true,
+				ViewMode:      "list",
 			},
 			StatusBar: StatusBarConfig{
 				Visible:           true,
@@ -504,6 +506,24 @@ func (m *Manager) GetTerminalApp() string {
 func (m *Manager) SetTerminalApp(app string) {
 	m.mu.Lock()
 	m.config.Terminal.App = app
+	m.mu.Unlock()
+	m.Save()
+}
+
+// GetViewMode returns the file list view mode
+func (m *Manager) GetViewMode() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.config.UI.FileList.ViewMode == "" {
+		return "list"
+	}
+	return m.config.UI.FileList.ViewMode
+}
+
+// SetViewMode sets the file list view mode and saves the config
+func (m *Manager) SetViewMode(mode string) {
+	m.mu.Lock()
+	m.config.UI.FileList.ViewMode = mode
 	m.mu.Unlock()
 	m.Save()
 }
