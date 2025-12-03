@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -54,6 +55,9 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 			return dims
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			// Track the list area offset (after header) for drag hover calculation
+			r.listAreaOffset = headerHeight
+
 			// === BACKGROUND CLICK DETECTION ===
 			// Create a hit area filling the entire available space behind the list.
 			// This catches clicks that miss the rows (empty space).
@@ -90,9 +94,26 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 			}
 
 			return layout.Stack{}.Layout(gtx, layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+				// Reset drag state at start of each frame - will be set by dragging item
+				anyDragging := false
+
+				// Reset drag hover candidates for this frame (but NOT dropTargetPath -
+				// we need the previous frame's value for rendering, then update after)
+				r.dragHoverCandidates = r.dragHoverCandidates[:0]
+
+				// Track cumulative Y position for row bounds
+				cumulativeY := 0
 
 				// Layout file list
 				listDims := r.listState.Layout(gtx, len(state.Entries), func(gtx layout.Context, i int) layout.Dimensions {
+					// Track if any item is being dragged and capture its current position
+					if state.Entries[i].Touch.Dragging() {
+						anyDragging = true
+						// Capture drag cursor position in list coordinates
+						// cumulativeY is the top of this row, add the current drag Y position within the row
+						dragPos := state.Entries[i].Touch.CurrentPos()
+						r.dragCurrentY = cumulativeY + int(dragPos.Y)
+					}
 					item := &state.Entries[i]
 					isRenaming := r.renameIndex == i
 
@@ -112,6 +133,19 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 
 					// Render row and capture right-click event
 					rowDims, leftClicked, rightClicked, shiftHeld, _, renameEvt, checkboxToggled, chevronEvt, dropEvt := r.renderRow(gtx, item, i, i == state.SelectedIndex, isRenaming, isChecked, showCheckbox)
+
+					// Track this row as a potential drop target if it's a valid directory
+					// Check validity: is a directory, something is being dragged, not the source, not the source's parent
+					if item.IsDir && r.dragSourcePath != "" &&
+						r.dragSourcePath != item.Path &&
+						filepath.Dir(r.dragSourcePath) != item.Path {
+						r.dragHoverCandidates = append(r.dragHoverCandidates, dragHoverCandidate{
+							Path: item.Path,
+							MinY: cumulativeY,
+							MaxY: cumulativeY + rowDims.Size.Y,
+						})
+					}
+					cumulativeY += rowDims.Size.Y
 
 					// Handle chevron click (expand/collapse directory)
 					chevronClicked := false
@@ -148,6 +182,11 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 						r.menuIsBackground = false
 						// Don't change selection on right-click - menu operations use collectSelectedPaths()
 						// which will get all selected items. Selection is only cleared after copy/cut.
+					}
+
+					// Handle drop event (drag-and-drop move)
+					if dropEvt != nil {
+						*eventOut = *dropEvt
 					}
 
 					// Handle left-click (but not if renaming or chevron was clicked)
@@ -218,6 +257,27 @@ func (r *Renderer) layoutFileList(gtx layout.Context, state *State, keyTag *layo
 					r.onLeftClick() // Dismiss context menus, file menu, exit path edit mode
 				}
 				r.bgLeftClickPending = false
+
+				// Clear drag state if no item is being dragged
+				if !anyDragging {
+					r.dragSourcePath = ""
+					r.dropTargetPath = ""
+				} else {
+					// Determine drop target based on drag cursor position
+					// dragCurrentY is already in list coordinates (set when we found the dragging item)
+
+					// Find which candidate the drag cursor is over
+					r.dropTargetPath = ""
+					for _, candidate := range r.dragHoverCandidates {
+						if r.dragCurrentY >= candidate.MinY && r.dragCurrentY < candidate.MaxY {
+							r.dropTargetPath = candidate.Path
+							break
+						}
+					}
+
+					// Always request redraw during drag to keep tracking position
+					gtx.Execute(op.InvalidateCmd{})
+				}
 
 				return listDims
 			}))

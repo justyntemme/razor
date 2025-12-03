@@ -202,13 +202,13 @@ func (r *Renderer) renderColumns(gtx layout.Context) (layout.Dimensions, UIEvent
 	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, children...), evt
 }
 
-// renderRow renders a file/folder row. Returns dimensions, left-clicked, right-clicked, click position, rename event, checkbox toggled, chevron event, and drop event.
+// renderRow renders a file/folder row. Returns dimensions, left-clicked, right-clicked, shift held, click position, rename event, checkbox toggled, chevron event, and drop event.
 func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selected bool, isRenaming bool, isChecked bool, showCheckbox bool) (layout.Dimensions, bool, bool, bool, image.Point, *UIEvent, bool, *UIEvent, *UIEvent) {
-	// Check for left-click BEFORE layout (Gio pattern)
-	leftClicked := item.Clickable.Clicked(gtx)
-
-	// Check for shift modifier during click by tracking last click modifiers
-	shiftHeld := r.lastClickModifiers.Contain(key.ModShift)
+	// Track click state - will be set from Touchable.Layout
+	leftClicked := false
+	rightClicked := false
+	shiftHeld := false
+	var clickPos image.Point
 
 	// Check for checkbox toggle (only if checkboxes are visible)
 	checkboxToggled := false
@@ -226,20 +226,6 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 		} else {
 			chevronEvent = &UIEvent{Action: ActionExpandDir, Path: item.Path}
 			debug.Log(debug.UI, "Creating ActionExpandDir event for: %s", item.Path)
-		}
-	}
-
-	// Check for right-click and capture position
-	rightClicked := false
-	var clickPos image.Point
-	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: &item.RightClickTag, Kinds: pointer.Press})
-		if !ok {
-			break
-		}
-		if e, ok := ev.(pointer.Event); ok && e.Buttons.Contain(pointer.ButtonSecondary) {
-			rightClicked = true
-			clickPos = image.Pt(int(e.Position.X), int(e.Position.Y))
 		}
 	}
 
@@ -282,45 +268,49 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 	// In single-select mode, use the primary selection
 	showSelected := isChecked
 
-	// Handle drag data request from this item's Draggable
-	// This must be called to provide data when a drop target requests it
-	item.Draggable.Type = FileDragMIME
-	if mime, ok := item.Draggable.Update(gtx); ok && mime == FileDragMIME {
-		// Provide the file path as drag data
-		item.Draggable.Offer(gtx, mime, io.NopCloser(strings.NewReader(item.Path)))
-	}
+	// Set MIME type for drag operations - must be set before Update() and Layout()
+	item.Touch.Type = FileDragMIME
 
 	// Handle drop events for directories (they are drop targets)
 	var dropEvent *UIEvent
 	if item.IsDir {
-		// Check for drop events on this directory
+		// Check for transfer events on this directory
 		for {
 			ev, ok := gtx.Event(transfer.TargetFilter{Target: &item.DropTag, Type: FileDragMIME})
 			if !ok {
 				break
 			}
-			if e, ok := ev.(transfer.DataEvent); ok && e.Type == FileDragMIME {
-				// Read the dropped file path
-				reader := e.Open()
-				data, err := io.ReadAll(reader)
-				reader.Close()
-				if err == nil {
-					sourcePath := string(data)
-					// Don't allow dropping on self or parent
-					if sourcePath != item.Path && filepath.Dir(sourcePath) != item.Path {
-						dropEvent = &UIEvent{
-							Action: ActionMove,
-							Paths:  []string{sourcePath}, // Source paths
-							Path:   item.Path,            // Destination directory
+			switch e := ev.(type) {
+			case transfer.InitiateEvent:
+				// Drag started and this directory is a potential target
+				// Check if it's a valid drop target (not the source or its parent)
+				if r.dragSourcePath != "" && r.dragSourcePath != item.Path && filepath.Dir(r.dragSourcePath) != item.Path {
+					// We can't set dropTargetPath here because InitiateEvent is sent to ALL potential targets
+					// We need pointer position to determine which one is actually hovered
+				}
+			case transfer.DataEvent:
+				if e.Type == FileDragMIME {
+					// Read the dropped file path
+					reader := e.Open()
+					data, err := io.ReadAll(reader)
+					reader.Close()
+					if err == nil {
+						sourcePath := string(data)
+						// Don't allow dropping on self or parent
+						if sourcePath != item.Path && filepath.Dir(sourcePath) != item.Path {
+							dropEvent = &UIEvent{
+								Action: ActionMove,
+								Paths:  []string{sourcePath}, // Source paths
+								Path:   item.Path,            // Destination directory
+							}
 						}
-						debug.Log(debug.UI, "Drop event: moving %s to %s", sourcePath, item.Path)
 					}
 				}
 			}
 		}
 	}
 
-	// Layout the clickable row (but not if renaming - we handle clicks differently)
+	// Layout the row (but not if renaming - we handle clicks differently)
 	var dims layout.Dimensions
 	cornerRadius := gtx.Dp(4)
 	if isRenaming {
@@ -341,41 +331,70 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 
 		dims = contentDims
 	} else {
-		// Use Draggable.Layout to wrap the clickable content
-		// The Draggable only activates after pointer movement exceeds 3dp threshold,
-		// so clicks still work normally through the Clickable inside
-		dims = item.Draggable.Layout(gtx,
-			// Normal content - the clickable row
+		// Use Touchable.Layout for combined click, right-click, and drag handling
+		// This allows click/double-click, right-click, AND drag with visual shadow
+		var touchEvt *TouchEvent
+
+		// Check hover state for this item (works when not dragging)
+		isHovered := item.Touch.Hovered()
+
+		// Track if this item is being dragged
+		if item.Touch.Dragging() {
+			r.dragSourcePath = item.Path
+		}
+
+		// Check if this is a valid drop target:
+		// - Must be a directory
+		// - Something must be being dragged (dragSourcePath is set)
+		// - Can't drop on the item being dragged
+		// - Can't drop into parent directory of dragged item (it's already there)
+		// For hover detection during drag, we check if this is the current dropTargetPath
+		isValidDropTarget := item.IsDir &&
+			r.dragSourcePath != "" &&
+			r.dragSourcePath != item.Path &&
+			filepath.Dir(r.dragSourcePath) != item.Path
+
+		// Determine if this row should show as drop target
+		// When not dragging, use regular hover. When dragging, use dropTargetPath match.
+		isDropTarget := isValidDropTarget && (isHovered || r.dropTargetPath == item.Path)
+
+		dims, touchEvt = item.Touch.Layout(gtx,
+			// Normal content - the row with selection background
 			func(gtx layout.Context) layout.Dimensions {
-				return material.Clickable(gtx, &item.Clickable, func(gtx layout.Context) layout.Dimensions {
-					// Register right-click handler on this row's area
-					defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
-					event.Op(gtx.Ops, &item.RightClickTag)
+				// First render content to get actual dimensions
+				macro := op.Record(gtx.Ops)
+				contentDims := r.renderRowContent(gtx, item, false, showCheckbox, isChecked)
+				call := macro.Stop()
 
-					// Register drop target for directories
-					if item.IsDir {
-						event.Op(gtx.Ops, &item.DropTag)
+				// Draw background based on state (priority: selected > drop target > hover)
+				var bgColor color.NRGBA
+				drawBg := false
+
+				if showSelected {
+					bgColor = colSelected
+					drawBg = true
+				} else if isDropTarget {
+					bgColor = colDropTarget
+					drawBg = true
+				} else if isHovered {
+					bgColor = colHover
+					drawBg = true
+				}
+
+				if drawBg {
+					rr := clip.RRect{
+						Rect: image.Rect(0, 0, contentDims.Size.X, contentDims.Size.Y),
+						NE:   cornerRadius, NW: cornerRadius, SE: cornerRadius, SW: cornerRadius,
 					}
+					paint.FillShape(gtx.Ops, bgColor, rr.Op(gtx.Ops))
+				}
 
-					// Draw selection background with rounded corners
-					// Also highlight if this is the current drop target
-					isDropTarget := item.IsDir && r.dropTargetPath == item.Path
-					if showSelected || isDropTarget {
-						bgColor := colSelected
-						if isDropTarget {
-							bgColor = color.NRGBA{R: 180, G: 220, B: 255, A: 255} // Light blue for drop target
-						}
-						rr := clip.RRect{
-							Rect: image.Rect(0, 0, gtx.Constraints.Max.X, gtx.Constraints.Max.Y),
-							NE:   cornerRadius, NW: cornerRadius, SE: cornerRadius, SW: cornerRadius,
-						}
-						paint.FillShape(gtx.Ops, bgColor, rr.Op(gtx.Ops))
-					}
+				// Replay the content on top of the background
+				call.Add(gtx.Ops)
 
-					return r.renderRowContent(gtx, item, false, showCheckbox, isChecked)
-				})
+				return contentDims
 			},
-			// Drag appearance - simplified visual during drag
+			// Drag appearance - simplified visual during drag (the shadow)
 			func(gtx layout.Context) layout.Dimensions {
 				// Show a semi-transparent version of the item being dragged
 				cornerRadius := gtx.Dp(4)
@@ -394,6 +413,37 @@ func (r *Renderer) renderRow(gtx layout.Context, item *UIEntry, index int, selec
 					})
 			},
 		)
+
+		// Register drop target for directories AFTER Touch.Layout with same dimensions
+		// PassOp is critical: without it, the drop target clip area would block pointer
+		// events from reaching the underlying Touchable, breaking hover detection.
+		// PassOp must wrap the clip area to allow events to "pass through" to lower layers.
+		if item.IsDir {
+			passStack := pointer.PassOp{}.Push(gtx.Ops)
+			stack := clip.Rect{Max: dims.Size}.Push(gtx.Ops)
+			event.Op(gtx.Ops, &item.DropTag)
+			stack.Pop()
+			passStack.Pop()
+		}
+
+		// Process touch event from Touchable (handles both left-click and right-click)
+		if touchEvt != nil {
+			switch touchEvt.Type {
+			case TouchClick:
+				leftClicked = true
+				clickPos = touchEvt.Position
+				shiftHeld = touchEvt.Modifiers.Contain(key.ModShift)
+			case TouchRightClick:
+				rightClicked = true
+				clickPos = touchEvt.Position
+			}
+		}
+
+		// Handle drag data request - call Update() AFTER Layout() to process transfer events
+		// This receives RequestEvent when a drop happens on a target
+		if mime, ok := item.Touch.Update(gtx); ok && mime == FileDragMIME {
+			item.Touch.Offer(gtx, mime, io.NopCloser(strings.NewReader(item.Path)))
+		}
 	}
 
 	return dims, leftClicked, rightClicked, shiftHeld, clickPos, renameEvent, checkboxToggled, chevronEvent, dropEvent

@@ -509,7 +509,7 @@ func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
 			go o.doPaste()
 		}
 	case ui.ActionMove:
-		// Drag-and-drop move: evt.Paths are sources, evt.Path is destination
+		// Drag-and-drop move: evt.Paths = sources, evt.Path = destination directory
 		if len(evt.Paths) > 0 && evt.Path != "" {
 			go o.doMove(evt.Paths, evt.Path)
 		}

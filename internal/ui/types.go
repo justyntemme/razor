@@ -420,21 +420,26 @@ type UIEvent struct {
 }
 
 type UIEntry struct {
-	Name, Path    string
-	IsDir         bool
-	Size          int64
-	ModTime       time.Time
-	Clickable     widget.Clickable
-	Draggable     widget.Draggable // For drag-and-drop (child of this entry)
-	DropTag       int              // Tag for drop target registration (directories only)
-	Checkbox      widget.Bool      // For multi-select mode
-	RightClickTag int
-	LastClick     time.Time
+	Name, Path string
+	IsDir      bool
+	Size       int64
+	ModTime    time.Time
+	Touch      Touchable   // Combined click, right-click, and drag handling
+	DropTag    struct{}    // Unique tag for drop target registration (address is unique per entry)
+	Checkbox   widget.Bool // For multi-select mode
+	LastClick  time.Time
 	// Tree view fields
 	Depth      int              // Indentation level (0 = root level)
 	IsExpanded bool             // Whether this directory is expanded inline
 	ExpandBtn  widget.Clickable // Clickable for chevron expand/collapse button
 	ParentPath string           // Path of parent directory (empty for root level)
+}
+
+// dragHoverCandidate stores info for a potential drop target during drag
+type dragHoverCandidate struct {
+	Path   string // Path of the directory
+	MinY   int    // Top of row in list-local coordinates
+	MaxY   int    // Bottom of row in list-local coordinates
 }
 
 // FavoriteItemType indicates the type of favorite entry

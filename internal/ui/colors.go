@@ -10,6 +10,8 @@ var (
 	colLightGray = color.NRGBA{R: 200, G: 200, B: 200, A: 255}
 	colDirBlue   = color.NRGBA{R: 0, G: 0, B: 128, A: 255}
 	colSelected  = color.NRGBA{R: 200, G: 220, B: 255, A: 255}
+	colHover     = color.NRGBA{R: 230, G: 230, B: 230, A: 255} // Light gray hover
+	colDropTarget = color.NRGBA{R: 180, G: 220, B: 255, A: 255} // Light blue for drop target
 	colSidebar   = color.NRGBA{R: 245, G: 245, B: 245, A: 255}
 	colDisabled  = color.NRGBA{R: 150, G: 150, B: 150, A: 255}
 	colProgress  = color.NRGBA{R: 66, G: 133, B: 244, A: 255}

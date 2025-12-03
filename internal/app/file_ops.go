@@ -628,3 +628,106 @@ func (pw *progressWriter) Write(p []byte) (int, error) {
 	}
 	return n, err
 }
+
+// doMove moves files/folders to a destination directory (drag-and-drop)
+func (o *Orchestrator) doMove(sources []string, dstDir string) {
+	if len(sources) == 0 {
+		return
+	}
+
+	// Reset conflict resolution state
+	o.conflictResolution = ui.ConflictAsk
+	o.conflictAbort = false
+
+	totalFiles := len(sources)
+	var lastErr error
+
+	for i, src := range sources {
+		if o.conflictAbort {
+			break
+		}
+
+		dstName := filepath.Base(src)
+		dst := filepath.Join(dstDir, dstName)
+
+		// Skip if source and destination are the same
+		if src == dst {
+			debug.Log(debug.APP, "Move: skipping %s, same location", src)
+			continue
+		}
+
+		// Skip if trying to move into itself (for directories)
+		if strings.HasPrefix(dst, src+string(filepath.Separator)) {
+			debug.Log(debug.APP, "Move: skipping %s, cannot move into itself", src)
+			continue
+		}
+
+		srcInfo, err := os.Stat(src)
+		if err != nil {
+			log.Printf("Move error for %s: %v", src, err)
+			lastErr = err
+			continue
+		}
+
+		// Check for conflict
+		dstInfo, err := os.Stat(dst)
+		if err == nil {
+			// Destination exists - need to resolve conflict
+			remainingFiles := totalFiles - i
+			resolution := o.resolveConflict(src, dst, srcInfo, dstInfo, remainingFiles)
+
+			switch resolution {
+			case ui.ConflictReplaceAll:
+				// Replace - delete destination first
+				deleteItem(dst)
+			case ui.ConflictKeepBothAll:
+				// Keep both - rename destination
+				ext := filepath.Ext(dstName)
+				base := strings.TrimSuffix(dstName, ext)
+				for j := 1; ; j++ {
+					dst = filepath.Join(dstDir, base+"_copy"+strconv.Itoa(j)+ext)
+					if !pathExists(dst) {
+						break
+					}
+				}
+			case ui.ConflictSkipAll:
+				// Skip this file
+				continue
+			case ui.ConflictAsk:
+				// User clicked Stop or dialog was aborted
+				o.conflictAbort = true
+				break
+			}
+		}
+
+		// Show progress
+		progressLabel := fmt.Sprintf("Moving (%d/%d) %s", i+1, totalFiles, filepath.Base(src))
+		if totalFiles == 1 {
+			progressLabel = "Moving " + filepath.Base(src)
+		}
+
+		if srcInfo.IsDir() {
+			o.setProgress(true, progressLabel, 0, 0)
+			if err := o.copyDir(src, dst, true); err != nil {
+				log.Printf("Move directory error: %v", err)
+				lastErr = err
+			}
+		} else {
+			size := srcInfo.Size()
+			o.setProgress(true, progressLabel, 0, size)
+			if err := o.copyFile(src, dst, true); err != nil {
+				log.Printf("Move file error: %v", err)
+				lastErr = err
+			}
+		}
+	}
+
+	o.setProgress(false, "", 0, 0)
+
+	if lastErr != nil {
+		log.Printf("Move completed with errors: %v", lastErr)
+	}
+
+	// Refresh directory to show changes
+	o.navCtrl.RequestDir(o.state.CurrentPath)
+}
