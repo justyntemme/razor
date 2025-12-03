@@ -156,9 +156,12 @@ func (r *Renderer) layoutFileGrid(gtx layout.Context, state *State, keyTag *layo
 			gtx.Execute(op.InvalidateCmd{})
 		} else if state.ExternalDragActive {
 			// External drag: convert window coordinates to list-local coordinates
-			// and find drop target
-			localX := state.ExternalDragPos.X - r.fileListOffset.X
-			localY := state.ExternalDragPos.Y - r.fileListOffset.Y + r.listState.Position.Offset
+			// Subtract fileListOffset to get into file list area
+			// Subtract padding (8dp) to account for the layout.Inset
+			// Add scroll offset to convert to content coordinates
+			padding := gtx.Dp(8)
+			localX := state.ExternalDragPos.X - r.fileListOffset.X - padding
+			localY := state.ExternalDragPos.Y - r.fileListOffset.Y - padding + r.listState.Position.Offset
 
 			r.dropTargetPath = ""
 			for _, candidate := range r.dragHoverCandidates {
