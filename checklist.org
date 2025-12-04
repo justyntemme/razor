@@ -3,6 +3,8 @@
 #+DATE: 2024
 
 * 1.0 Release Blockers
+* TODO enable multi select on icon view
+
 ** DONE allow modification to file list view preset (list, grid...)
    :PROPERTIES:
    :COMPLETED: 2024-12-03
