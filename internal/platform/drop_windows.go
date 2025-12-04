@@ -117,7 +117,7 @@ type STGMEDIUM struct {
 	pUnkForRelease uintptr
 }
 
-// IDropTarget vtable
+// IDropTarget vtable - must match COM interface exactly
 type iDropTargetVtbl struct {
 	QueryInterface uintptr
 	AddRef         uintptr
@@ -138,10 +138,12 @@ type iDataObjectVtbl struct {
 }
 
 // razorDropTarget implements IDropTarget
+// CRITICAL: The first field MUST be a pointer to the vtable - this is how COM works.
+// Windows will call methods via: (*(*iDropTargetVtbl)(obj)).Method(obj, ...)
 type razorDropTarget struct {
-	vtbl     *iDropTargetVtbl
-	refs     int32
-	hwnd     windows.HWND
+	lpVtbl    uintptr // Pointer to vtable - MUST be first field
+	refs      int32
+	hwnd      windows.HWND
 	oleInited bool
 }
 
@@ -200,12 +202,12 @@ func SetupExternalDrop(hwnd uintptr) {
 	// Create our drop target
 	debug.Log(debug.APP, "[Windows DnD] Creating razorDropTarget struct...")
 	dropTarget = &razorDropTarget{
-		vtbl:      globalVtbl,
+		lpVtbl:    uintptr(unsafe.Pointer(globalVtbl)),
 		refs:      1,
 		hwnd:      windows.HWND(hwnd),
 		oleInited: true,
 	}
-	debug.Log(debug.APP, "[Windows DnD] razorDropTarget created at %p, vtbl=%p", dropTarget, dropTarget.vtbl)
+	debug.Log(debug.APP, "[Windows DnD] razorDropTarget created at %p, lpVtbl=0x%x", dropTarget, dropTarget.lpVtbl)
 
 	// Register for drag-drop
 	debug.Log(debug.APP, "[Windows DnD] Calling RegisterDragDrop(hwnd=0x%x, dropTarget=%p)...", hwnd, dropTarget)
@@ -293,20 +295,14 @@ func dropTargetRelease(this uintptr) (ret uintptr) {
 
 // IDropTarget::DragEnter
 // Signature: HRESULT DragEnter(IDataObject *pDataObject, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect)
-// On x64 Windows, POINTL is passed as a single 64-bit value (two 32-bit ints packed together)
+// All parameters as uintptr for syscall.NewCallback compatibility
 // CRITICAL: This callback runs on Windows' OLE thread - must return IMMEDIATELY or it freezes drag-drop system-wide
-func dropTargetDragEnter(this uintptr, pDataObject uintptr, grfKeyState uint32, pt uint64, pdwEffect *uint32) (ret uintptr) {
-	defer func() {
-		if r := recover(); r != nil {
-			debug.Log(debug.APP, "[Windows DnD] PANIC in DragEnter: %v", r)
-			ret = S_OK
-		}
-	}()
+func dropTargetDragEnter(this, pDataObject, grfKeyState, ptLo, ptHi, pdwEffect uintptr) uintptr {
+	debug.Log(debug.APP, "[Windows DnD] >>> DragEnter: this=%x pDataObject=%x ptLo=%x ptHi=%x pdwEffect=%x",
+		this, pDataObject, ptLo, ptHi, pdwEffect)
 
-	ptX := int32(pt & 0xFFFFFFFF)
-	ptY := int32(pt >> 32)
-
-	debug.Log(debug.APP, "[Windows DnD] >>> DragEnter: pt=%x, screenX=%d, screenY=%d", pt, ptX, ptY)
+	ptX := int32(ptLo)
+	ptY := int32(ptHi)
 
 	dt := (*razorDropTarget)(unsafe.Pointer(this))
 
@@ -330,8 +326,8 @@ func dropTargetDragEnter(this uintptr, pDataObject uintptr, grfKeyState uint32, 
 	}
 
 	// Accept copy operations
-	if pdwEffect != nil {
-		*pdwEffect = DROPEFFECT_COPY
+	if pdwEffect != 0 {
+		*(*uint32)(unsafe.Pointer(pdwEffect)) = DROPEFFECT_COPY
 	}
 
 	return S_OK
@@ -339,18 +335,11 @@ func dropTargetDragEnter(this uintptr, pDataObject uintptr, grfKeyState uint32, 
 
 // IDropTarget::DragOver
 // Signature: HRESULT DragOver(DWORD grfKeyState, POINTL pt, DWORD *pdwEffect)
-// On x64 Windows, POINTL is passed as a single 64-bit value
+// All parameters as uintptr for syscall.NewCallback compatibility
 // CRITICAL: Must return immediately - runs on OLE thread
-func dropTargetDragOver(this uintptr, grfKeyState uint32, pt uint64, pdwEffect *uint32) (ret uintptr) {
-	defer func() {
-		if r := recover(); r != nil {
-			debug.Log(debug.APP, "[Windows DnD] PANIC in DragOver: %v", r)
-			ret = S_OK
-		}
-	}()
-
-	ptX := int32(pt & 0xFFFFFFFF)
-	ptY := int32(pt >> 32)
+func dropTargetDragOver(this, grfKeyState, ptLo, ptHi, pdwEffect uintptr) uintptr {
+	ptX := int32(ptLo)
+	ptY := int32(ptHi)
 
 	dt := (*razorDropTarget)(unsafe.Pointer(this))
 
@@ -366,8 +355,8 @@ func dropTargetDragOver(this uintptr, grfKeyState uint32, pt uint64, pdwEffect *
 		go handler(x, y)
 	}
 
-	if pdwEffect != nil {
-		*pdwEffect = DROPEFFECT_COPY
+	if pdwEffect != 0 {
+		*(*uint32)(unsafe.Pointer(pdwEffect)) = DROPEFFECT_COPY
 	}
 
 	return S_OK
@@ -376,15 +365,8 @@ func dropTargetDragOver(this uintptr, grfKeyState uint32, pt uint64, pdwEffect *
 // IDropTarget::DragLeave
 // Signature: HRESULT DragLeave(void)
 // CRITICAL: Must return immediately - runs on OLE thread
-func dropTargetDragLeave(this uintptr) (ret uintptr) {
-	defer func() {
-		if r := recover(); r != nil {
-			debug.Log(debug.APP, "[Windows DnD] PANIC in DragLeave: %v", r)
-			ret = S_OK
-		}
-	}()
-
-	debug.Log(debug.APP, "[Windows DnD] >>> DragLeave")
+func dropTargetDragLeave(this uintptr) uintptr {
+	debug.Log(debug.APP, "[Windows DnD] >>> DragLeave: this=%x", this)
 
 	dropMu.Lock()
 	handler := dragEndHandler
@@ -400,56 +382,47 @@ func dropTargetDragLeave(this uintptr) (ret uintptr) {
 
 // IDropTarget::Drop
 // Signature: HRESULT Drop(IDataObject *pDataObject, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect)
-// On x64 Windows, POINTL is passed as a single 64-bit value
-func dropTargetDrop(this uintptr, pDataObject uintptr, grfKeyState uint32, pt uint64, pdwEffect *uint32) (ret uintptr) {
-	defer func() {
-		if r := recover(); r != nil {
-			debug.Log(debug.APP, "[Windows DnD] PANIC in Drop: %v", r)
-			ret = S_OK
+// All parameters as uintptr for syscall.NewCallback compatibility
+func dropTargetDrop(this, pDataObject, grfKeyState, ptLo, ptHi, pdwEffect uintptr) uintptr {
+	ptX := int32(ptLo)
+	ptY := int32(ptHi)
+
+	debug.Log(debug.APP, "[Windows DnD] >>> Drop: this=%x, pDataObject=%x, x=%d, y=%d", this, pDataObject, ptX, ptY)
+
+	// Get dropped files in a goroutine to not block
+	go func() {
+		paths := getDroppedFiles(pDataObject)
+		debug.Log(debug.APP, "[Windows DnD] Drop: got %d files: %v", len(paths), paths)
+
+		// End the drag state first
+		dropMu.Lock()
+		endHandler := dragEndHandler
+		dropMu.Unlock()
+
+		if endHandler != nil {
+			endHandler()
+		}
+
+		// Then handle the drop
+		dropMu.Lock()
+		handler := dropHandler
+		target := currentDropTarget
+		dropMu.Unlock()
+
+		if handler != nil && len(paths) > 0 {
+			debug.Log(debug.APP, "[Windows DnD] Drop: calling dropHandler with %d paths to target=%s", len(paths), target)
+			handler(paths, target)
+		} else if len(paths) > 0 {
+			debug.Log(debug.APP, "[Windows DnD] Drop: no handler, storing %d paths as pending", len(paths))
+			dropMu.Lock()
+			pendingDrop = append(pendingDrop, paths...)
+			dropMu.Unlock()
 		}
 	}()
 
-	ptX := int32(pt & 0xFFFFFFFF)
-	ptY := int32(pt >> 32)
-
-	debug.Log(debug.APP, "[Windows DnD] >>> Drop CALLBACK FIRED! this=%x, pDataObject=%x, pt=%x, x=%d, y=%d",
-		this, pDataObject, pt, ptX, ptY)
-
-	// Get dropped files
-	paths := getDroppedFiles(pDataObject)
-
-	debug.Log(debug.APP, "[Windows DnD] Drop: got %d files: %v", len(paths), paths)
-
-	// End the drag state first
-	dropMu.Lock()
-	endHandler := dragEndHandler
-	dropMu.Unlock()
-
-	if endHandler != nil {
-		debug.Log(debug.APP, "[Windows DnD] Drop: calling dragEndHandler")
-		go endHandler()
-	}
-
-	// Then handle the drop
-	dropMu.Lock()
-	handler := dropHandler
-	target := currentDropTarget
-	dropMu.Unlock()
-
-	debug.Log(debug.APP, "[Windows DnD] Drop: dropHandler=%v, target=%s", handler != nil, target)
-
-	if handler != nil && len(paths) > 0 {
-		debug.Log(debug.APP, "[Windows DnD] Drop: calling dropHandler with %d paths to target=%s", len(paths), target)
-		go handler(paths, target)
-	} else if len(paths) > 0 {
-		debug.Log(debug.APP, "[Windows DnD] Drop: no handler, storing %d paths as pending", len(paths))
-		dropMu.Lock()
-		pendingDrop = append(pendingDrop, paths...)
-		dropMu.Unlock()
-	}
-
-	if pdwEffect != nil {
-		*pdwEffect = DROPEFFECT_COPY
+	// Set effect immediately
+	if pdwEffect != 0 {
+		*(*uint32)(unsafe.Pointer(pdwEffect)) = DROPEFFECT_COPY
 	}
 
 	debug.Log(debug.APP, "[Windows DnD] Drop: returning S_OK")
