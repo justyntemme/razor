@@ -444,6 +444,13 @@ Reusable code formatting module for preview pane and markdown code blocks.
 
 * Known Issues / Technical Debt
 
+** TODO Update Documentation for New Features
+   - [ ] Document Tab key for expand/collapse directories in tree view
+   - [ ] Document shift+click multi-select in grid view
+   - [ ] Document letter key cycling for quick-jump navigation
+   - [ ] Update hotkeys modal/help screen with new shortcuts
+   - [ ] Ensure keyboard shortcuts UI reflects all available shortcuts
+
 ** TODO Context menu positioning
    - Menu can appear off-screen near edges
    - Consider using system-level popup windows

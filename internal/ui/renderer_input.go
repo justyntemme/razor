@@ -311,6 +311,19 @@ func (r *Renderer) processGlobalInput(gtx layout.Context, state *State, keyTag e
 				}
 				return UIEvent{Action: ActionOpen, Path: item.Path}
 			}
+		case key.NameTab:
+			// Tab key: toggle expand/collapse for selected directory (list view only)
+			if r.viewMode != ViewModeGrid {
+				if idx := state.SelectedIndex; idx >= 0 && idx < len(state.Entries) {
+					item := state.Entries[idx]
+					if item.IsDir {
+						if item.IsExpanded {
+							return UIEvent{Action: ActionCollapseDir, Path: item.Path}
+						}
+						return UIEvent{Action: ActionExpandDir, Path: item.Path}
+					}
+				}
+			}
 		default:
 			// Quick-jump: single letter A-Z with no modifiers
 			if k.Modifiers == 0 && len(k.Name) == 1 {

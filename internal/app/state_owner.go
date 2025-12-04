@@ -453,6 +453,48 @@ func (s *StateOwner) RemoveEntries(paths []string) {
 	}
 }
 
+// RefreshCurrentDir refreshes the current directory while preserving tree expansion state.
+// This is used for fsnotify updates where we want to update contents without resetting the view.
+func (s *StateOwner) RefreshCurrentDir() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.currentPath == "" {
+		return
+	}
+
+	// Re-read the current directory
+	newRaw := s.readDirLocked(s.currentPath)
+	s.rawEntries = newRaw
+
+	// Clean up expanded dirs - remove any that no longer exist
+	for path := range s.expandedDirs {
+		exists := false
+		for _, entry := range newRaw {
+			if entry.Path == path {
+				exists = true
+				break
+			}
+		}
+		// Also check if it's a child of an expanded dir by checking if the dir exists on disk
+		if !exists {
+			// Check if directory still exists on filesystem
+			if info, err := os.Stat(path); err != nil || !info.IsDir() {
+				delete(s.expandedDirs, path)
+				debug.Log(debug.APP, "RefreshCurrentDir: removed deleted expanded dir: %s", path)
+			}
+		}
+	}
+
+	// Rebuild with filter, sort, and re-apply expansions
+	s.rebuildLocked()
+
+	debug.Log(debug.APP, "RefreshCurrentDir: refreshed %s, %d entries, %d expanded",
+		s.currentPath, len(s.entries), len(s.expandedDirs))
+
+	s.invalidate()
+}
+
 // RefreshExpandedDir refreshes children of an expanded directory
 func (s *StateOwner) RefreshExpandedDir(path string) {
 	s.mu.Lock()
@@ -525,7 +567,8 @@ func (s *StateOwner) rebuildLocked() {
 
 func (s *StateOwner) applyExpansionsLocked() {
 	// For each expanded dir, insert its children
-	// Need to process in order to maintain tree structure
+	// Process in order to maintain tree structure
+	// Don't skip children - they need to be processed too if they're expanded
 	for i := 0; i < len(s.entries); i++ {
 		entry := &s.entries[i]
 		if entry.IsDir && s.expandedDirs[entry.Path] {
@@ -538,18 +581,19 @@ func (s *StateOwner) applyExpansionsLocked() {
 			for j := range children {
 				children[j].Depth = entry.Depth + 1
 				children[j].ParentPath = entry.Path
+				// Mark as expanded if in expandedDirs - will be processed when we reach it
 				children[j].IsExpanded = s.expandedDirs[children[j].Path]
 			}
 
-			// Insert children
+			// Insert children right after the parent
 			newEntries := make([]ui.UIEntry, 0, len(s.entries)+len(children))
 			newEntries = append(newEntries, s.entries[:i+1]...)
 			newEntries = append(newEntries, children...)
 			newEntries = append(newEntries, s.entries[i+1:]...)
 			s.entries = newEntries
 
-			// Skip past children we just inserted
-			i += len(children)
+			// Don't skip children - continue to next entry (i+1)
+			// so that expanded children directories get processed too
 		}
 	}
 }

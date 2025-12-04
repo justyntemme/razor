@@ -58,9 +58,19 @@ func (o *Orchestrator) newProgressWriter(w io.Writer) io.Writer {
 	}
 }
 
-// refreshCurrentDir refreshes the current directory view.
+// refreshCurrentDir refreshes the current directory view while preserving tree expansion state.
+// This is used for fsnotify updates where we want to update contents without resetting the view.
 func (o *Orchestrator) refreshCurrentDir() {
-	o.navCtrl.RequestDir(o.state.CurrentPath)
+	// Use StateOwner to refresh while preserving expansions
+	o.stateOwner.RefreshCurrentDir()
+
+	// Sync to state for UI
+	snapshot := o.stateOwner.GetSnapshot()
+	o.stateMu.Lock()
+	o.state.Entries = snapshot.Entries
+	o.stateMu.Unlock()
+
+	o.window.Invalidate()
 }
 
 // refreshExpandedDir refreshes an expanded directory's entries in the current view

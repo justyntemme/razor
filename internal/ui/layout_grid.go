@@ -291,6 +291,7 @@ func (r *Renderer) layoutFileGrid(gtx layout.Context, state *State, keyTag *layo
 		if r.bgLeftClickPending && !itemLeftClicked && !itemPressed {
 			debug.Log(debug.UI, "Grid BG: clearing selection and multiSelectMode")
 			r.onLeftClick()
+			r.CancelRename() // Cancel any active rename
 			r.multiSelectMode = false
 			if !r.settingsOpen && !r.deleteConfirmOpen && !r.createDialogOpen && !state.Conflict.Active {
 				*eventOut = UIEvent{Action: ActionClearSelection}
