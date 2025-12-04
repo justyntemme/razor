@@ -8,13 +8,16 @@
   A fast, lightweight file manager built with Go and <a href="https://gioui.org/">Gio UI</a>
 </p>
 
-**List View**
-
-![List View](https://raw.githubusercontent.com/justyntemme/razor/main/docs/screenshots/razor-screen-1.png)
-
-**Grid View**
-
-![Grid View](https://raw.githubusercontent.com/justyntemme/razor/main/docs/screenshots/screenshot-iconview.png)
+<table>
+<tr>
+<td align="center"><strong>List View</strong></td>
+<td align="center"><strong>Grid View</strong></td>
+</tr>
+<tr>
+<td><img src="https://raw.githubusercontent.com/justyntemme/razor/main/docs/screenshots/razor-screen-1.png" alt="List View"></td>
+<td><img src="https://raw.githubusercontent.com/justyntemme/razor/main/docs/screenshots/screenshot-iconview.png" alt="Grid View"></td>
+</tr>
+</table>
 
 ## Features
 
