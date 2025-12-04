@@ -1,0 +1,421 @@
+#+TITLE: External Windows Drag-and-Drop Implementation Strategy
+#+AUTHOR: Razor Team
+#+DATE: 2024-12-04
+
+* Overview
+
+This document outlines the implementation strategy for adding external drag-and-drop support on Windows. This allows users to drag files from Windows Explorer (or other applications) into Razor.
+
+** Current Darwin Implementation Reference
+
+The macOS/Darwin implementation in ~internal/platform/~ demonstrates the pattern:
+- ~drop_darwin.go~ - Go interface layer with exported callback functions
+- ~drop_darwin.m~ - Objective-C code that hooks into NSView's NSDraggingDestination protocol
+- ~drop_other.go~ - Stub for platforms without external drop support
+
+The Darwin implementation:
+1. Receives the NSView pointer via ~app.AppKitViewEvent~
+2. Uses Objective-C runtime to add NSDraggingDestination methods to GioView class
+3. Registers the view for ~NSPasteboardTypeFileURL~ drag types
+4. Exports Go callbacks that the Obj-C code calls: ~razor_onExternalDragStart~, ~razor_onExternalDragUpdate~, ~razor_onExternalDragEnd~, ~razor_onExternalDrop~
+
+** Goal: Reuse Internal Handlers
+
+The orchestrator already has handlers configured (see ~internal/app/orchestrator.go:281-315~):
+- ~platform.SetDropHandler~ - Called when files are dropped
+- ~platform.SetDragUpdateHandler~ - Called with (x, y) during drag
+- ~platform.SetDragEndHandler~ - Called when drag ends
+
+The UI already has support for external drag state:
+- ~state.ExternalDragActive~ - Boolean flag
+- ~state.ExternalDragPos~ - Current drag position
+- Both grid and list views use these for hover highlighting
+
+*Key Insight*: The Windows implementation should call the SAME Go handlers, providing identical behavior.
+
+* Windows API Background
+
+** Relevant Win32 Drag-and-Drop APIs
+
+Windows uses OLE/COM-based drag-and-drop with these key interfaces:
+- ~IDropTarget~ - Interface to implement on a window to receive drops
+- ~DragAcceptFiles~ - Simpler legacy API (WM_DROPFILES message)
+
+** Two Approaches
+
+*** Approach A: Legacy WM_DROPFILES (Simpler)
+
+Pros:
+- Simpler to implement
+- Pure Win32 syscalls (no COM)
+- Single ~DragAcceptFiles(hwnd, TRUE)~ call to enable
+
+Cons:
+- No drag position updates during drag
+- Only notifies on final drop, not during drag
+- Cannot highlight drop targets in real-time
+
+*** Approach B: OLE IDropTarget (Full Featured)
+
+Pros:
+- Full ~DragEnter~, ~DragOver~, ~DragLeave~, ~Drop~ callbacks
+- Real-time position updates for hover highlighting
+- Matches Darwin implementation feature-for-feature
+
+Cons:
+- Requires COM initialization (~OleInitialize~)
+- Must implement ~IDropTarget~ interface via vtable
+- More complex syscall setup
+
+* Decision Point: Which Approach?
+
+*Question for user*: Should we implement the simpler WM_DROPFILES approach (no hover highlighting during drag) or the full OLE IDropTarget approach (matches Darwin behavior exactly)?
+
+The Darwin implementation provides:
+1. Drag start notification
+2. Real-time position updates during drag (for hover highlighting)
+3. Drag end notification (drop or cancel)
+4. File paths on drop
+
+To match this exactly, we need OLE IDropTarget. If hover highlighting during external drag is not critical, WM_DROPFILES is much simpler.
+
+* Implementation Plan (OLE IDropTarget Approach)
+
+** Phase 1: Windows Platform Files
+
+Create ~internal/platform/drop_windows.go~:
+
+#+begin_src go
+//go:build windows
+
+package platform
+
+import (
+    "sync"
+    "syscall"
+    "unsafe"
+
+    "golang.org/x/sys/windows"
+)
+
+// Reuse the same handler types from drop_darwin.go
+// DropHandler is called when files are dropped from an external source
+type DropHandler func(paths []string, targetDir string)
+
+// DragUpdateHandler is called when external drag position changes
+type DragUpdateHandler func(x, y int)
+
+// DragEndHandler is called when external drag ends
+type DragEndHandler func()
+
+var (
+    dropHandler       DropHandler
+    dragUpdateHandler DragUpdateHandler
+    dragEndHandler    DragEndHandler
+    dropMu            sync.Mutex
+    pendingDrop       []string
+    currentDropTarget string
+)
+
+// Same interface as Darwin
+func SetDropHandler(handler DropHandler) { ... }
+func SetDragUpdateHandler(handler DragUpdateHandler) { ... }
+func SetDragEndHandler(handler DragEndHandler) { ... }
+func SetCurrentDropTarget(path string) { ... }
+func GetCurrentDropTarget() string { ... }
+func SetupExternalDrop(hwnd uintptr) { ... }
+#+end_src
+
+** Phase 2: COM/OLE Infrastructure
+
+We need to:
+1. Initialize OLE (~OleInitialize~)
+2. Create an IDropTarget implementation
+3. Register it with ~RegisterDragDrop(hwnd, pDropTarget)~
+
+Required Win32/OLE calls:
+#+begin_src
+ole32.dll:
+  - OleInitialize
+  - RegisterDragDrop
+  - RevokeDragDrop
+  - ReleaseStgMedium
+
+shell32.dll:
+  - DragQueryFileW  (to get file paths from HDROP)
+  - DragQueryPoint  (to get drop position)
+  - DragFinish      (cleanup)
+#+end_src
+
+** Phase 3: IDropTarget Implementation
+
+IDropTarget is a COM interface with vtable:
+#+begin_src
+IDropTarget:
+  - QueryInterface(riid, ppvObject) -> HRESULT
+  - AddRef() -> ULONG
+  - Release() -> ULONG
+  - DragEnter(pDataObject, grfKeyState, pt, pdwEffect) -> HRESULT
+  - DragOver(grfKeyState, pt, pdwEffect) -> HRESULT
+  - DragLeave() -> HRESULT
+  - Drop(pDataObject, grfKeyState, pt, pdwEffect) -> HRESULT
+#+end_src
+
+In Go, we can implement this with a struct containing function pointers:
+
+#+begin_src go
+type iDropTargetVtbl struct {
+    QueryInterface uintptr
+    AddRef         uintptr
+    Release        uintptr
+    DragEnter      uintptr
+    DragOver       uintptr
+    DragLeave      uintptr
+    Drop           uintptr
+}
+
+type razorDropTarget struct {
+    vtbl *iDropTargetVtbl
+    refs int32
+    hwnd windows.Handle
+}
+#+end_src
+
+** Phase 4: Callback Mapping
+
+Map IDropTarget methods to Go handlers:
+
+| IDropTarget Method | Go Handler Called            |
+|--------------------+------------------------------|
+| DragEnter          | razor_onExternalDragStart    |
+| DragOver           | dragUpdateHandler(x, y)      |
+| DragLeave          | dragEndHandler()             |
+| Drop               | dropHandler(paths, target)   |
+
+** Phase 5: Coordinate Translation
+
+Windows provides screen coordinates in POINTL. Need to:
+1. Convert screen coords to client coords (~ScreenToClient~)
+2. Account for DPI scaling (~GetDpiForWindow~)
+
+Similar to Darwin's coordinate handling:
+#+begin_src go
+// In DragOver callback
+var clientPt windows.Point
+clientPt.X = pt.x
+clientPt.Y = pt.y
+windows.ScreenToClient(hwnd, &clientPt)
+
+// Get DPI scale factor
+dpi := windows.GetWindowDPI(hwnd)
+scale := float64(dpi) / 96.0
+
+x := int(float64(clientPt.X) * scale)
+y := int(float64(clientPt.Y) * scale)
+dragUpdateHandler(x, y)
+#+end_src
+
+** Phase 6: File Path Extraction
+
+From IDataObject on Drop:
+1. Query for CF_HDROP format
+2. Use ~DragQueryFileW~ to get file count and paths
+
+#+begin_src go
+func getDroppedFiles(pDataObject uintptr) []string {
+    // Query IDataObject for CF_HDROP format
+    formatetc := FORMATETC{
+        cfFormat: CF_HDROP,
+        dwAspect: DVASPECT_CONTENT,
+        lindex:   -1,
+        tymed:    TYMED_HGLOBAL,
+    }
+    var stgmedium STGMEDIUM
+
+    hr := pDataObject_GetData(pDataObject, &formatetc, &stgmedium)
+    if FAILED(hr) {
+        return nil
+    }
+    defer ReleaseStgMedium(&stgmedium)
+
+    // Get file count
+    count := DragQueryFileW(stgmedium.hGlobal, 0xFFFFFFFF, nil, 0)
+
+    var paths []string
+    for i := uint32(0); i < count; i++ {
+        // Get required buffer size
+        size := DragQueryFileW(stgmedium.hGlobal, i, nil, 0)
+        buf := make([]uint16, size+1)
+        DragQueryFileW(stgmedium.hGlobal, i, &buf[0], size+1)
+        paths = append(paths, windows.UTF16ToString(buf))
+    }
+
+    return paths
+}
+#+end_src
+
+** Phase 7: Orchestrator Integration
+
+The orchestrator currently handles ~app.AppKitViewEvent~ at line 323 but does NOT have a handler for ~app.Win32ViewEvent~.
+
+Current event loop (orchestrator.go:320-344):
+#+begin_src go
+switch e := o.window.Event().(type) {
+case app.DestroyEvent:
+    return e.Err
+case app.AppKitViewEvent:
+    // macOS: Set up external drag-and-drop when we get the view handle
+    debug.Log(debug.APP, "AppKitViewEvent received: Valid=%v View=%d", e.Valid(), e.View)
+    if e.Valid() {
+        debug.Log(debug.APP, "AppKitViewEvent: calling SetupExternalDrop")
+        platform.SetupExternalDrop(e.View)
+    }
+case app.FrameEvent:
+    // ... frame handling
+}
+#+end_src
+
+*REQUIRED CHANGE*: Add Win32ViewEvent handler after AppKitViewEvent:
+
+#+begin_src go
+case app.Win32ViewEvent:
+    // Windows: Set up external drag-and-drop when we get the HWND
+    debug.Log(debug.APP, "Win32ViewEvent received: Valid=%v HWND=%d", e.Valid(), e.HWND)
+    if e.Valid() {
+        debug.Log(debug.APP, "Win32ViewEvent: calling SetupExternalDrop")
+        platform.SetupExternalDrop(e.HWND)
+    }
+#+end_src
+
+*Finding*: The Win32ViewEvent case is NOT currently present - it needs to be added.
+
+* Files to Create/Modify
+
+** New Files
+
+1. ~internal/platform/drop_windows.go~
+   - Windows-specific drop handling
+   - COM/OLE initialization
+   - IDropTarget implementation
+   - Same exported interface as drop_darwin.go
+
+** Modified Files
+
+1. ~internal/platform/drop_other.go~
+   - Update build constraint: ~//go:build !darwin && !windows~ (currently ~!darwin~)
+
+2. ~internal/app/orchestrator.go~ (line ~323, after AppKitViewEvent case)
+   - Add case for ~app.Win32ViewEvent~ to call ~platform.SetupExternalDrop(e.HWND)~
+   - Currently MISSING - needs to be added
+
+* Implementation Checklist
+
+** Setup
+- [ ] Update ~drop_other.go~ build constraint
+- [ ] Create ~drop_windows.go~ with same interface as Darwin
+
+** COM Infrastructure
+- [ ] Load ole32.dll and shell32.dll
+- [ ] Implement ~OleInitialize~
+- [ ] Implement ~RegisterDragDrop~
+- [ ] Implement ~RevokeDragDrop~ for cleanup
+
+** IDropTarget
+- [ ] Define IDropTarget vtable structure
+- [ ] Implement QueryInterface (return S_OK for IDropTarget, IUnknown)
+- [ ] Implement AddRef/Release with refcount
+- [ ] Implement DragEnter - call dragUpdateHandler, return DROPEFFECT_COPY
+- [ ] Implement DragOver - call dragUpdateHandler with position
+- [ ] Implement DragLeave - call dragEndHandler
+- [ ] Implement Drop - extract paths, call dropHandler
+
+** Coordinate Handling
+- [ ] Convert POINTL screen coords to client coords
+- [ ] Apply DPI scaling factor
+- [ ] Match Darwin coordinate system (top-left origin)
+
+** File Path Extraction
+- [ ] Query IDataObject for CF_HDROP
+- [ ] Use DragQueryFileW to enumerate files
+- [ ] Convert UTF-16 paths to Go strings
+
+** Integration
+- [ ] Handle Win32ViewEvent in orchestrator
+- [ ] Test with existing UI drag highlighting
+- [ ] Verify drop target selection works
+
+** Testing
+- [ ] Drag single file from Explorer to current directory
+- [ ] Drag multiple files
+- [ ] Drag to specific folder (hover highlighting)
+- [ ] Cancel drag (move cursor out of window)
+- [ ] Drag from other applications
+
+* Risk Assessment
+
+** Technical Risks
+
+1. *COM Threading Model*
+   - Gio runs on a dedicated window thread
+   - OleInitialize must be called from that thread
+   - May need to use ~Run()~ method for thread safety
+
+2. *Memory Management*
+   - COM objects require proper ref counting
+   - STGMEDIUM must be released with ReleaseStgMedium
+   - Go GC won't clean up COM objects
+
+3. *Coordinate Systems*
+   - Windows uses screen coordinates for drag
+   - Need to convert to client coords
+   - DPI scaling must match Gio's expectations
+
+** Mitigation Strategies
+
+- Use the ~window.Run()~ method to ensure COM calls happen on window thread
+- Implement Release() properly and call RevokeDragDrop on cleanup
+- Test with various DPI settings (100%, 125%, 150%, 200%)
+
+* Alternative: WM_DROPFILES Implementation
+
+If full OLE is too complex, simpler WM_DROPFILES approach:
+
+#+begin_src go
+// In drop_windows.go
+
+func SetupExternalDrop(hwnd uintptr) {
+    // Enable drop acceptance
+    shell32.DragAcceptFiles(hwnd, true)
+}
+
+// In orchestrator, need to handle WM_DROPFILES message
+// This would require modifying Gio's window procedure...
+#+end_src
+
+*Problem*: Gio's window proc doesn't expose WM_DROPFILES handling.
+We'd need to subclass the window, which adds complexity.
+
+*Recommendation*: OLE IDropTarget is actually cleaner because we can register independently without modifying Gio's window procedure.
+
+* References
+
+- [[https://learn.microsoft.com/en-us/windows/win32/api/ole2/nf-ole2-registerdragdrop][RegisterDragDrop - Win32 API]]
+- [[https://learn.microsoft.com/en-us/windows/win32/api/oleidl/nn-oleidl-idroptarget][IDropTarget interface]]
+- [[https://learn.microsoft.com/en-us/windows/win32/shell/datascenarios][Shell Data Transfer Scenarios]]
+- [[https://pkg.go.dev/golang.org/x/sys/windows][golang.org/x/sys/windows package]]
+- ~gioui.org/app/os_windows.go~ - Gio's Windows implementation
+- ~gioui.org/app/internal/windows/windows.go~ - Gio's Win32 wrapper
+
+* Questions for Discussion
+
+1. *Approach Selection*: OLE IDropTarget (full-featured) vs WM_DROPFILES (simpler)?
+   - Recommendation: OLE IDropTarget to match Darwin behavior
+
+2. *Thread Safety*: Should we call COM functions directly or via window.Run()?
+   - Need to check if SetupExternalDrop is called from window thread
+
+3. *Cleanup*: When to call RevokeDragDrop?
+   - Probably on Win32ViewEvent with !Valid() or window destroy
+
+4. *Error Handling*: How to handle COM initialization failures?
+   - Log error and degrade gracefully (no external drop support)
