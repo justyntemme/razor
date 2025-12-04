@@ -138,11 +138,13 @@ type iDataObjectVtbl struct {
 }
 
 // razorDropTarget implements IDropTarget
-// CRITICAL: The first field MUST be a pointer to the vtable - this is how COM works.
-// Windows will call methods via: (*(*iDropTargetVtbl)(obj)).Method(obj, ...)
+// COM object layout: first field is pointer to vtable
+// Windows calls: obj->lpVtbl->Method(obj, ...)
+// Which means: (*(*vtbl)(obj))[methodIndex](obj, ...)
 type razorDropTarget struct {
-	lpVtbl    uintptr // Pointer to vtable - MUST be first field
+	lpVtbl    *iDropTargetVtbl // Pointer to vtable - MUST be first field and be a real pointer
 	refs      int32
+	_padding  uint32           // Ensure 8-byte alignment on 64-bit
 	hwnd      windows.HWND
 	oleInited bool
 }
@@ -201,13 +203,14 @@ func SetupExternalDrop(hwnd uintptr) {
 
 	// Create our drop target
 	debug.Log(debug.APP, "[Windows DnD] Creating razorDropTarget struct...")
+	debug.Log(debug.APP, "[Windows DnD] globalVtbl at %p, DragEnter callback=0x%x", globalVtbl, globalVtbl.DragEnter)
 	dropTarget = &razorDropTarget{
-		lpVtbl:    uintptr(unsafe.Pointer(globalVtbl)),
+		lpVtbl:    globalVtbl,
 		refs:      1,
 		hwnd:      windows.HWND(hwnd),
 		oleInited: true,
 	}
-	debug.Log(debug.APP, "[Windows DnD] razorDropTarget created at %p, lpVtbl=0x%x", dropTarget, dropTarget.lpVtbl)
+	debug.Log(debug.APP, "[Windows DnD] razorDropTarget created at %p, lpVtbl=%p", dropTarget, dropTarget.lpVtbl)
 
 	// Register for drag-drop
 	debug.Log(debug.APP, "[Windows DnD] Calling RegisterDragDrop(hwnd=0x%x, dropTarget=%p)...", hwnd, dropTarget)
@@ -298,37 +301,25 @@ func dropTargetRelease(this uintptr) (ret uintptr) {
 // All parameters as uintptr for syscall.NewCallback compatibility
 // CRITICAL: This callback runs on Windows' OLE thread - must return IMMEDIATELY or it freezes drag-drop system-wide
 func dropTargetDragEnter(this, pDataObject, grfKeyState, ptLo, ptHi, pdwEffect uintptr) uintptr {
-	debug.Log(debug.APP, "[Windows DnD] >>> DragEnter: this=%x pDataObject=%x ptLo=%x ptHi=%x pdwEffect=%x",
-		this, pDataObject, ptLo, ptHi, pdwEffect)
-
-	ptX := int32(ptLo)
-	ptY := int32(ptHi)
-
-	dt := (*razorDropTarget)(unsafe.Pointer(this))
-
-	// Reset drop target when drag starts (non-blocking)
-	go func() {
-		dropMu.Lock()
-		currentDropTarget = ""
-		dropMu.Unlock()
-	}()
-
-	// Convert screen to client coordinates and notify handler asynchronously
-	x, y := screenToClient(dt.hwnd, ptX, ptY)
-
-	dropMu.Lock()
-	handler := dragUpdateHandler
-	dropMu.Unlock()
-
-	if handler != nil {
-		// Run handler in goroutine to not block the OLE thread
-		go handler(x, y)
-	}
-
-	// Accept copy operations
+	// Minimal implementation - just accept the drop and return immediately
 	if pdwEffect != 0 {
 		*(*uint32)(unsafe.Pointer(pdwEffect)) = DROPEFFECT_COPY
 	}
+
+	// Notify Go code asynchronously
+	go func() {
+		debug.Log(debug.APP, "[Windows DnD] DragEnter (async): this=%x", this)
+		dropMu.Lock()
+		currentDropTarget = ""
+		handler := dragUpdateHandler
+		dropMu.Unlock()
+
+		if handler != nil {
+			dt := (*razorDropTarget)(unsafe.Pointer(this))
+			x, y := screenToClient(dt.hwnd, int32(ptLo), int32(ptHi))
+			handler(x, y)
+		}
+	}()
 
 	return S_OK
 }
@@ -338,26 +329,23 @@ func dropTargetDragEnter(this, pDataObject, grfKeyState, ptLo, ptHi, pdwEffect u
 // All parameters as uintptr for syscall.NewCallback compatibility
 // CRITICAL: Must return immediately - runs on OLE thread
 func dropTargetDragOver(this, grfKeyState, ptLo, ptHi, pdwEffect uintptr) uintptr {
-	ptX := int32(ptLo)
-	ptY := int32(ptHi)
-
-	dt := (*razorDropTarget)(unsafe.Pointer(this))
-
-	// Convert screen to client coordinates
-	x, y := screenToClient(dt.hwnd, ptX, ptY)
-
-	dropMu.Lock()
-	handler := dragUpdateHandler
-	dropMu.Unlock()
-
-	if handler != nil {
-		// Run handler in goroutine to not block the OLE thread
-		go handler(x, y)
-	}
-
+	// Minimal implementation - just accept and return
 	if pdwEffect != 0 {
 		*(*uint32)(unsafe.Pointer(pdwEffect)) = DROPEFFECT_COPY
 	}
+
+	// Notify Go code asynchronously (but not too often - DragOver is called frequently)
+	go func() {
+		dropMu.Lock()
+		handler := dragUpdateHandler
+		dropMu.Unlock()
+
+		if handler != nil {
+			dt := (*razorDropTarget)(unsafe.Pointer(this))
+			x, y := screenToClient(dt.hwnd, int32(ptLo), int32(ptHi))
+			handler(x, y)
+		}
+	}()
 
 	return S_OK
 }
@@ -366,16 +354,17 @@ func dropTargetDragOver(this, grfKeyState, ptLo, ptHi, pdwEffect uintptr) uintpt
 // Signature: HRESULT DragLeave(void)
 // CRITICAL: Must return immediately - runs on OLE thread
 func dropTargetDragLeave(this uintptr) uintptr {
-	debug.Log(debug.APP, "[Windows DnD] >>> DragLeave: this=%x", this)
+	go func() {
+		debug.Log(debug.APP, "[Windows DnD] DragLeave (async)")
+		dropMu.Lock()
+		handler := dragEndHandler
+		currentDropTarget = ""
+		dropMu.Unlock()
 
-	dropMu.Lock()
-	handler := dragEndHandler
-	currentDropTarget = ""
-	dropMu.Unlock()
-
-	if handler != nil {
-		go handler()
-	}
+		if handler != nil {
+			handler()
+		}
+	}()
 
 	return S_OK
 }
@@ -384,15 +373,21 @@ func dropTargetDragLeave(this uintptr) uintptr {
 // Signature: HRESULT Drop(IDataObject *pDataObject, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect)
 // All parameters as uintptr for syscall.NewCallback compatibility
 func dropTargetDrop(this, pDataObject, grfKeyState, ptLo, ptHi, pdwEffect uintptr) uintptr {
-	ptX := int32(ptLo)
-	ptY := int32(ptHi)
+	debug.Log(debug.APP, "[Windows DnD] Drop: this=%x, pDataObject=%x", this, pDataObject)
 
-	debug.Log(debug.APP, "[Windows DnD] >>> Drop: this=%x, pDataObject=%x, x=%d, y=%d", this, pDataObject, ptX, ptY)
+	// IMPORTANT: Extract file paths SYNCHRONOUSLY before returning
+	// The pDataObject pointer becomes invalid after we return!
+	paths := getDroppedFiles(pDataObject)
+	debug.Log(debug.APP, "[Windows DnD] Drop: extracted %d files", len(paths))
 
-	// Get dropped files in a goroutine to not block
+	// Set effect
+	if pdwEffect != 0 {
+		*(*uint32)(unsafe.Pointer(pdwEffect)) = DROPEFFECT_COPY
+	}
+
+	// Process the drop asynchronously
 	go func() {
-		paths := getDroppedFiles(pDataObject)
-		debug.Log(debug.APP, "[Windows DnD] Drop: got %d files: %v", len(paths), paths)
+		debug.Log(debug.APP, "[Windows DnD] Drop (async): processing %d files: %v", len(paths), paths)
 
 		// End the drag state first
 		dropMu.Lock()
@@ -419,11 +414,6 @@ func dropTargetDrop(this, pDataObject, grfKeyState, ptLo, ptHi, pdwEffect uintpt
 			dropMu.Unlock()
 		}
 	}()
-
-	// Set effect immediately
-	if pdwEffect != 0 {
-		*(*uint32)(unsafe.Pointer(pdwEffect)) = DROPEFFECT_COPY
-	}
 
 	debug.Log(debug.APP, "[Windows DnD] Drop: returning S_OK")
 	return S_OK

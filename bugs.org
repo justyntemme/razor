@@ -1,0 +1,50 @@
+#+TITLE: Razor Bug Tracker
+#+AUTHOR: Razor Team
+
+* Windows: Files locked "open in another program"
+** Status: Open
+** Platform: Windows
+** Severity: High
+** Description
+Files and folders cannot be deleted because Windows reports they "are open in another program".
+Move operations succeed but still show the same error message.
+
+** Symptoms
+- Cannot delete files/folders - Windows says they are in use
+- Move operations work but display the "open in another program" error
+- Likely Razor is holding file handles open somewhere
+
+** Possible Causes
+1. File handles not being closed after directory listing
+2. Preview/thumbnail generation holding files open
+3. File watcher or monitoring keeping handles
+4. Go's filepath.Walk or os.ReadDir not releasing handles properly on Windows
+
+** Investigation Steps
+- [ ] Check if issue persists after closing Razor (confirms it's Razor holding the lock)
+- [ ] Review fs package for unclosed file handles
+- [ ] Review preview generation code for handle leaks
+- [ ] Test with Process Explorer to identify which handles Razor holds
+
+** Related Files
+- internal/fs/
+- internal/ui/ (preview code)
+
+* Windows: External drag-and-drop callbacks not firing
+** Status: In Progress
+** Platform: Windows
+** Severity: Medium
+** Description
+OLE IDropTarget registration succeeds but DragEnter/DragOver/Drop callbacks are never called.
+Explorer.exe crashes when dropping files onto Razor window.
+
+** Current Status
+- RegisterDragDrop returns S_OK
+- OleInitialize succeeds
+- No callback debug messages appear when dragging files
+- Explorer crashes on drop attempt
+
+** Investigation Notes
+- Vtable structure may not match COM expectations
+- Callback function signatures may need adjustment for Windows x64 ABI
+- POINTL struct passing conventions need verification
