@@ -89,23 +89,25 @@ func (r *Renderer) layoutFileGrid(gtx layout.Context, state *State, keyTag *layo
 		cumulativeY := 0
 
 		dims := r.listState.Layout(gtx, rows, func(gtx layout.Context, rowIdx int) layout.Dimensions {
-			// Build row of grid items
-			var children []layout.FlexChild
-			rowHeight := 0
-
+			// Build row of grid items with DIRECT offset application
+			// No record/replay - offsets are applied directly to the ops stream
 			startIdx := rowIdx * cols
 			endIdx := startIdx + cols
 			if endIdx > numItems {
 				endIdx = numItems
 			}
 
-			// Track X position within row
-			cumulativeX := 0
+			// Calculate row height (fixed based on item size + label)
+			totalHeight := itemSize + 10 // Icon + padding + label space
+			rowHeight := totalHeight
 
+			// Lay out each item directly with explicit offset
+			// This avoids any record/replay issues with clip areas and event handlers
 			for i := startIdx; i < endIdx; i++ {
 				idx := i
 				item := &state.Entries[idx]
-				itemX := cumulativeX // Capture for closure
+				colIdx := idx - startIdx
+				itemX := colIdx * itemSize
 
 				// Track visible images for thumbnail caching
 				if !item.IsDir {
@@ -116,52 +118,68 @@ func (r *Renderer) layoutFileGrid(gtx layout.Context, state *State, keyTag *layo
 				if item.Touch.Dragging() {
 					anyDragging = true
 					dragPos := item.Touch.CurrentPos()
-					r.dragCurrentX = r.fileListOffset.X + itemX + int(dragPos.X)
+					// dragCurrentX/Y are in grid-local coordinates (same as dragHoverCandidates)
+					// Don't add fileListOffset here - candidates are in local space
+					r.dragCurrentX = itemX + int(dragPos.X)
 					r.dragCurrentY = cumulativeY + int(dragPos.Y)
+					// dragWindowY is in window coordinates for the drag shadow
 					r.dragWindowY = r.fileListOffset.Y + cumulativeY + int(dragPos.Y) - r.listState.Position.Offset
 					r.dragSourcePath = item.Path
-					r.dragSourcePaths = []string{item.Path}
+
+					// Build list of all paths being dragged (for multi-select)
+					if r.multiSelectMode && state.SelectedIndices[idx] {
+						r.dragSourcePaths = r.dragSourcePaths[:0]
+						for selIdx, selected := range state.SelectedIndices {
+							if selected && selIdx < len(state.Entries) {
+								r.dragSourcePaths = append(r.dragSourcePaths, state.Entries[selIdx].Path)
+							}
+						}
+					} else {
+						r.dragSourcePaths = []string{item.Path}
+					}
 				}
 
-				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					itemDims := r.layoutGridItem(gtx, state, item, idx, itemSize, keyTag, eventOut)
-					if itemDims.Size.Y > rowHeight {
-						rowHeight = itemDims.Size.Y
-					}
+				// Apply the X offset for this item - this transform is applied directly
+				// to the ops stream, not recorded and replayed
+				trans := op.Offset(image.Pt(itemX, 0)).Push(gtx.Ops)
 
-					// Track this item as drop target candidate if it's a valid directory
-					// For internal drag: check it's not self or parent
-					// For external drag: all directories are valid
-					isInternalDragCandidate := item.IsDir && r.dragSourcePath != "" &&
-						r.dragSourcePath != item.Path &&
-						filepath.Dir(r.dragSourcePath) != item.Path
-					isExternalDragCandidate := item.IsDir && state.ExternalDragActive
+				// Create item-specific constraints
+				itemGtx := gtx
+				itemGtx.Constraints.Max.X = itemSize
+				itemGtx.Constraints.Min.X = 0
 
-					if isInternalDragCandidate || isExternalDragCandidate {
-						r.dragHoverCandidates = append(r.dragHoverCandidates, dragHoverCandidate{
-							Path: item.Path,
-							MinX: itemX,
-							MaxX: itemX + itemSize,
-							MinY: cumulativeY,
-							MaxY: cumulativeY + itemDims.Size.Y,
-						})
-					}
+				// Debug: log if this item is hovered
+				if item.Touch.Hovered() {
+					debug.Log(debug.UI, "GridItem HOVERED: idx=%d col=%d name=%s itemX=%d", idx, colIdx, item.Name, itemX)
+				}
 
-					return itemDims
-				}))
-				cumulativeX += itemSize
+				itemDims := r.layoutGridItem(itemGtx, state, item, idx, itemSize, keyTag, eventOut)
+
+				if itemDims.Size.Y > rowHeight {
+					rowHeight = itemDims.Size.Y
+				}
+
+				// Track this item as drop target candidate if it's a valid directory
+				isInternalDragCandidate := item.IsDir && r.dragSourcePath != "" &&
+					r.dragSourcePath != item.Path &&
+					filepath.Dir(r.dragSourcePath) != item.Path
+				isExternalDragCandidate := item.IsDir && state.ExternalDragActive
+
+				if isInternalDragCandidate || isExternalDragCandidate {
+					r.dragHoverCandidates = append(r.dragHoverCandidates, dragHoverCandidate{
+						Path: item.Path,
+						MinX: itemX,
+						MaxX: itemX + itemSize,
+						MinY: cumulativeY,
+						MaxY: cumulativeY + itemDims.Size.Y,
+					})
+				}
+
+				trans.Pop()
 			}
 
-			// Pad remaining columns if row isn't full
-			for i := endIdx - startIdx; i < cols; i++ {
-				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Dimensions{Size: image.Pt(itemSize, itemSize+30)} // Icon + label height
-				}))
-			}
-
-			rowDims := layout.Flex{Axis: layout.Horizontal}.Layout(gtx, children...)
-			cumulativeY += rowDims.Size.Y
-			return rowDims
+			cumulativeY += rowHeight
+			return layout.Dimensions{Size: image.Pt(cols * itemSize, rowHeight)}
 		})
 
 		// Clear drag state if nothing is being dragged (internal or external)
@@ -310,9 +328,6 @@ func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntr
 		}
 	}
 
-	// Check hover state for this item (works when not dragging)
-	isHovered := item.Touch.Hovered()
-
 	// Track if this item is being dragged
 	if item.Touch.Dragging() {
 		r.dragSourcePath = item.Path
@@ -331,13 +346,13 @@ func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntr
 	isExternalDropTarget := item.IsDir && state.ExternalDragActive
 
 	// Determine if this item should show as drop target
-	// For internal drag: use hover OR dropTargetPath match
-	// For external drag: ONLY use dropTargetPath match (hover is stale during external drag)
+	// Use dropTargetPath match (calculated from cursor position) for both internal and external drags
+	// This avoids issues with hover state being reported for wrong items due to Gio hit area timing
 	var isDropTarget bool
 	if state.ExternalDragActive {
 		isDropTarget = isExternalDropTarget && r.dropTargetPath == item.Path
 	} else {
-		isDropTarget = isValidDropTarget && (isHovered || r.dropTargetPath == item.Path)
+		isDropTarget = isValidDropTarget && r.dropTargetPath == item.Path
 	}
 
 	totalHeight := iconSize + labelHeight + 10
@@ -391,6 +406,15 @@ func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntr
 		}
 	}
 
+	// Check if we should show checkbox (multi-select mode)
+	showCheckbox := r.multiSelectMode
+	isChecked := false
+	if state.SelectedIndices != nil && len(state.SelectedIndices) > 0 {
+		isChecked = state.SelectedIndices[idx]
+	} else {
+		isChecked = idx == state.SelectedIndex
+	}
+
 	// Layout the touchable widget and handle events
 	dims, touchEvt := item.Touch.Layout(gtx,
 		// Content widget
@@ -418,6 +442,24 @@ func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntr
 							}.Op(gtx.Ops))
 					}
 					return layout.Dimensions{Size: image.Pt(itemSize, totalHeight)}
+				}),
+				// Checkbox overlay (top-left corner) when in multi-select mode
+				layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+					if !showCheckbox {
+						return layout.Dimensions{}
+					}
+					return layout.Inset{Top: unit.Dp(2), Left: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						cb := material.CheckBox(r.Theme, &item.Checkbox, "")
+						cb.Size = unit.Dp(16)
+						if isChecked {
+							cb.Color = colAccent
+							cb.IconColor = colAccent
+						} else {
+							cb.Color = colGray
+							cb.IconColor = colGray
+						}
+						return cb.Layout(gtx)
+					})
 				}),
 				// Content
 				layout.Stacked(func(gtx layout.Context) layout.Dimensions {
@@ -510,13 +552,18 @@ func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntr
 		case TouchClick:
 			r.bgLeftClickPending = false // Cancel background left-click
 			r.onLeftClick()
+			r.CancelRename()
 			now := time.Now()
+
+			// Check for shift key (for multi-select)
+			shiftHeld := touchEvt.Modifiers.Contain(key.ModShift)
 
 			isDoubleClick := r.lastClickIndex == idx &&
 				!r.lastClickTime.IsZero() &&
 				now.Sub(r.lastClickTime) < doubleClickInterval
 
 			if isDoubleClick {
+				// Double-click: exit multi-select mode and navigate/open
 				r.multiSelectMode = false
 				r.lastClickIndex = -1
 				r.lastClickTime = time.Time{}
@@ -525,7 +572,20 @@ func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntr
 				} else {
 					*eventOut = UIEvent{Action: ActionOpen, Path: item.Path}
 				}
+			} else if shiftHeld {
+				// Shift+click: toggle checkbox (enter/extend multi-select)
+				r.lastClickIndex = idx
+				r.lastClickTime = now
+				if !r.multiSelectMode && state.SelectedIndex >= 0 {
+					// First shift+click: add current selection to multi-select, then toggle new item
+					r.multiSelectMode = true
+					*eventOut = UIEvent{Action: ActionToggleSelect, NewIndex: idx, OldIndex: state.SelectedIndex}
+				} else {
+					r.multiSelectMode = true
+					*eventOut = UIEvent{Action: ActionToggleSelect, NewIndex: idx, OldIndex: -1}
+				}
 			} else {
+				// Single click: select immediately
 				r.multiSelectMode = false
 				*eventOut = UIEvent{Action: ActionSelect, NewIndex: idx}
 				r.lastClickIndex = idx

@@ -209,13 +209,15 @@ func (t *Touchable) Layout(gtx layout.Context, w, drag layout.Widget) (layout.Di
 	dims := w(gtx)
 
 	// Set up hit area for gesture handlers (for next frame's events)
-	// The clip rect bounds the area where pointer events are registered
-	defer clip.Rect{Max: dims.Size}.Push(gtx.Ops).Pop()
+	// The clip rect bounds the area where pointer events are registered.
+	// IMPORTANT: The clip area and PassOp must be pushed BEFORE registering
+	// the gesture handlers so they are properly scoped to this item's bounds.
+	clipStack := clip.Rect{Max: dims.Size}.Push(gtx.Ops)
 
 	// Use PassOp to allow pointer events to pass through to nested clickable
 	// elements (like the chevron expand/collapse button) while still receiving
 	// events ourselves for row-level click/drag handling.
-	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+	passStack := pointer.PassOp{}.Push(gtx.Ops)
 
 	// Register click handler
 	t.click.Add(gtx.Ops)
@@ -225,6 +227,10 @@ func (t *Touchable) Layout(gtx layout.Context, w, drag layout.Widget) (layout.Di
 
 	// Register for right-click and other pointer events
 	event.Op(gtx.Ops, t)
+
+	// Pop the stacks in reverse order
+	passStack.Pop()
+	clipStack.Pop()
 
 	// Render the drag shadow if dragging
 	if drag != nil && t.drag.Pressed() && t.dragStarted {
