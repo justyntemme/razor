@@ -317,16 +317,16 @@ func (o *Orchestrator) Run(startPath string) error {
 
 	var ops op.Ops
 	for {
-		switch e := o.window.Event().(type) {
+		e := o.window.Event()
+
+		// Handle platform-specific view events (macOS, Windows)
+		if o.handlePlatformEvent(e) {
+			continue
+		}
+
+		switch e := e.(type) {
 		case app.DestroyEvent:
 			return e.Err
-		case app.AppKitViewEvent:
-			// macOS: Set up external drag-and-drop when we get the view handle
-			debug.Log(debug.APP, "AppKitViewEvent received: Valid=%v View=%d", e.Valid(), e.View)
-			if e.Valid() {
-				debug.Log(debug.APP, "AppKitViewEvent: calling SetupExternalDrop")
-				platform.SetupExternalDrop(e.View)
-			}
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, e)
 			// Lock state for reading during UI layout

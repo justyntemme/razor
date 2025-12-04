@@ -289,6 +289,37 @@ case app.Win32ViewEvent:
 
 *Finding*: The Win32ViewEvent case is NOT currently present - it needs to be added.
 
+*CRITICAL: Darwin Compatibility*
+
+The Windows implementation MUST NOT break or regress the existing Darwin functionality:
+
+1. *Keep AppKitViewEvent handler unchanged* - Do not modify the existing Darwin case
+2. *Separate case statements* - Win32ViewEvent and AppKitViewEvent are distinct types, handle them independently
+3. *Same Go interface* - ~drop_windows.go~ must export the exact same functions as ~drop_darwin.go~:
+   - ~SetDropHandler(handler DropHandler)~
+   - ~SetDragUpdateHandler(handler DragUpdateHandler)~
+   - ~SetDragEndHandler(handler DragEndHandler)~
+   - ~SetCurrentDropTarget(path string)~
+   - ~GetCurrentDropTarget() string~
+   - ~SetupExternalDrop(viewPtr uintptr)~
+4. *Build tags isolate platforms* - Darwin code compiles only on Darwin, Windows code only on Windows
+5. *No shared state between platforms* - Each platform file has its own ~var~ declarations
+6. *Test Darwin after Windows changes* - Verify macOS drag-drop still works after adding Windows support
+
+The orchestrator code already sets up handlers generically before the event loop:
+#+begin_src go
+// These calls work identically on both platforms
+platform.SetDropHandler(func(paths []string, targetDir string) { ... })
+platform.SetDragUpdateHandler(func(x, y int) { ... })
+platform.SetDragEndHandler(func() { ... })
+#+end_src
+
+Each platform's ~SetupExternalDrop~ is called with the appropriate handle type:
+- Darwin: ~e.View~ (NSView pointer)
+- Windows: ~e.HWND~ (window handle)
+
+Both are ~uintptr~ so the function signature is identical.
+
 * Files to Create/Modify
 
 ** New Files
@@ -344,12 +375,20 @@ case app.Win32ViewEvent:
 - [ ] Test with existing UI drag highlighting
 - [ ] Verify drop target selection works
 
-** Testing
+** Testing (Windows)
 - [ ] Drag single file from Explorer to current directory
 - [ ] Drag multiple files
 - [ ] Drag to specific folder (hover highlighting)
 - [ ] Cancel drag (move cursor out of window)
 - [ ] Drag from other applications
+
+** Testing (Darwin - Regression)
+- [ ] Verify Darwin build still compiles after changes
+- [ ] Drag single file from Finder to current directory
+- [ ] Drag multiple files from Finder
+- [ ] Drag to specific folder (hover highlighting works)
+- [ ] Cancel drag (move cursor out of window)
+- [ ] Verify no changes to Darwin behavior
 
 * Risk Assessment
 
@@ -406,16 +445,37 @@ We'd need to subclass the window, which adds complexity.
 - ~gioui.org/app/os_windows.go~ - Gio's Windows implementation
 - ~gioui.org/app/internal/windows/windows.go~ - Gio's Win32 wrapper
 
-* Questions for Discussion
+* Decisions Made
 
-1. *Approach Selection*: OLE IDropTarget (full-featured) vs WM_DROPFILES (simpler)?
-   - Recommendation: OLE IDropTarget to match Darwin behavior
+1. *Approach Selection*: OLE IDropTarget (full-featured)
+   - DECIDED: Full OLE implementation to match Darwin feature-for-feature
+   - Hover highlighting during drag is required
 
-2. *Thread Safety*: Should we call COM functions directly or via window.Run()?
-   - Need to check if SetupExternalDrop is called from window thread
+2. *Thread Safety*: Check if SetupExternalDrop is called from window thread
+   - Win32ViewEvent is processed in the main event loop which runs on the window thread
+   - COM calls should be safe from there
 
 3. *Cleanup*: When to call RevokeDragDrop?
-   - Probably on Win32ViewEvent with !Valid() or window destroy
+   - On Win32ViewEvent with !Valid() (window being destroyed)
+   - Similar to how Darwin would clean up
 
 4. *Error Handling*: How to handle COM initialization failures?
    - Log error and degrade gracefully (no external drop support)
+
+* Quick Start for Implementation
+
+When implementing, start with this order:
+
+1. *First*: Update ~drop_other.go~ build constraint to ~!darwin && !windows~
+2. *Second*: Create ~drop_windows.go~ with stub functions (same interface, no-op bodies)
+3. *Third*: Add ~Win32ViewEvent~ case in orchestrator
+4. *Fourth*: Verify Darwin still builds and works
+5. *Fifth*: Implement COM/OLE infrastructure in ~drop_windows.go~
+6. *Sixth*: Implement IDropTarget
+7. *Seventh*: Test on Windows
+
+Key files to reference during implementation:
+- ~internal/platform/drop_darwin.go~ - The interface to match
+- ~internal/platform/drop_darwin.m~ - The callback pattern
+- ~gioui.org/app/os_windows.go~ - How Gio handles Win32
+- ~gioui.org/app/internal/windows/windows.go~ - Win32 syscall wrappers
