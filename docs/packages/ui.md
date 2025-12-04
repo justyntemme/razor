@@ -4,10 +4,35 @@ The UI package contains all Gio-based rendering code. It defines the visual stru
 
 ## Files
 
-| File | Lines | Purpose |
-|------|-------|---------|
-| `renderer.go` | ~730 | Type definitions, widget state, row rendering |
-| `layout.go` | ~1400 | Layout composition, dialogs, event handling |
+| File | Purpose |
+|------|---------|
+| `types.go` | UI actions, events, state types |
+| `renderer.go` | Main Renderer struct, widget state |
+| `renderer_rows.go` | File row rendering |
+| `renderer_input.go` | Keyboard input handling |
+| `renderer_preview.go` | Preview pane rendering |
+| `renderer_setters.go` | State setter methods |
+| `renderer_tabs.go` | Tab-related rendering |
+| `layout.go` | Top-level layout composition |
+| `layout_navbar.go` | Navigation bar layout |
+| `layout_sidebar.go` | Sidebar (favorites/drives) layout |
+| `layout_filelist.go` | File list view layout |
+| `layout_grid.go` | Grid/icon view layout |
+| `layout_search.go` | Search bar and directive pills |
+| `layout_preview.go` | Preview pane layout |
+| `layout_menus.go` | Context menus and file menu |
+| `layout_dialogs.go` | Delete confirm, create file/folder dialogs |
+| `layout_modals.go` | Settings modal |
+| `layout_browser_tabs.go` | Browser tab bar layout |
+| `colors.go` | Theme color definitions (light/dark) |
+| `tabs.go` | Reusable tab bar component |
+| `markdown.go` | Markdown rendering (goldmark) |
+| `orgmode.go` | Org-mode rendering (organelle) |
+| `toast.go` | Toast notification UI |
+| `thumbnail_cache.go` | Image thumbnail caching |
+| `clickdrag.go` | Unified click and drag gesture handling |
+| `heic_*.go` | Platform-specific HEIC image support |
+| `debug_*.go` | UI debug flags |
 
 ## Key Types
 

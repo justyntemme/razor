@@ -117,16 +117,17 @@ Reusable code formatting module for preview pane and markdown code blocks.
     - [ ] Ctrl/Cmd+Shift+Z to redo
     - [ ] Operation history viewer (stretch goal)
 
-*** TODO Trash/Recycle Bin Integration
+*** DONE Trash/Recycle Bin Integration
+    CLOSED: [2024-12-01]
     Priority: HIGH
-    - [ ] Delete moves to trash instead of permanent delete
-    - [ ] "Empty Trash" option
-    - [ ] Restore from trash
-    - [ ] Shift+Delete for permanent delete
-    - [ ] Platform-specific trash locations:
-      - macOS: ~/.Trash
-      - Linux: ~/.local/share/Trash (freedesktop spec)
-      - Windows: Recycle Bin API
+    - [X] Delete moves to trash instead of permanent delete
+    - [X] Shift+Delete for permanent delete (bypass trash)
+    - [X] Platform-specific trash locations:
+      - macOS: ~/.Trash (via Finder/osascript - no restore API available)
+      - Linux: ~/.local/share/Trash (freedesktop spec with .trashinfo for restore)
+      - Windows: Recycle Bin API (supports restore)
+    - [ ] "Empty Trash" option (not yet implemented)
+    - [ ] Restore from trash UI (Windows and Linux only - macOS lacks restore API)
 
 *** DONE Column Headers and Sorting
     CLOSED: [2024-12-01]
@@ -160,11 +161,13 @@ Reusable code formatting module for preview pane and markdown code blocks.
 
 ** Tier 2: Expected by Users
 
-*** TODO Grid/Icon View
-    - [ ] Toggle between list and grid view
-    - [ ] Thumbnail previews for images
-    - [ ] Configurable icon/thumbnail size
-    - [ ] View menu or toolbar toggle
+*** DONE Grid/Icon View
+    CLOSED: [2024-12-04]
+    - [X] Toggle between list and grid view
+    - [X] Thumbnail previews for images
+    - [X] Image thumbnail caching for performance
+    - [ ] Configurable icon/thumbnail size (not yet configurable)
+    - [ ] View menu or toolbar toggle (not yet in menu)
 
 *** TODO Archive/Compression Support
     - [ ] Open zip/tar/gz as virtual folder

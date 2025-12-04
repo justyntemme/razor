@@ -1,12 +1,20 @@
 # App Package (`internal/app`)
 
-The app package contains the Orchestrator, which is the central controller coordinating all subsystems.
+The app package contains the Orchestrator and its controllers, which form the central coordination layer managing all subsystems.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `orchestrator.go` | Main controller (~1100 lines) |
+| `orchestrator.go` | Central event loop controller |
+| `state_owner.go` | Canonical file entry cache, state management |
+| `controllers.go` | Shared dependencies and controller types |
+| `nav_controller.go` | Navigation history, path expansion |
+| `search_controller.go` | Search execution, engine management |
+| `tabs.go` | Tab state management |
+| `file_ops.go` | File operations (copy, paste, delete, rename) |
+| `conflict.go` | File conflict resolution dialog handling |
+| `watcher.go` | Directory change detection (fsnotify) |
 | `platform_darwin.go` | macOS file operations |
 | `platform_linux.go` | Linux file operations |
 | `platform_windows.go` | Windows file operations |

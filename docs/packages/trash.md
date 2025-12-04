@@ -101,9 +101,10 @@ phrase := trash.VerbPhrase() // "Move to Trash" or "Move to Recycle Bin"
 
 ### macOS (`trash_darwin.go`)
 
-Uses the `NSFileManager` API via `osascript`:
+Uses `osascript` to invoke Finder's trash functionality:
 - Trash location: `~/.Trash`
-- Supports restore to original location
+- **No restore API available** - macOS does not expose a programmatic way to restore files from Trash
+- Items must be manually restored via Finder
 - Integrates with Finder's trash
 
 ### Linux (`trash_linux.go`)
@@ -111,13 +112,14 @@ Uses the `NSFileManager` API via `osascript`:
 Follows the [FreeDesktop.org Trash Specification](https://specifications.freedesktop.org/trash-spec/trashspec-latest.html):
 - Primary trash: `~/.local/share/Trash`
 - Supports `files/` and `info/` directories
-- Creates `.trashinfo` metadata files for restore
+- Creates `.trashinfo` metadata files containing original path and deletion date
+- **Restore supported** via `.trashinfo` files
 
 ### Windows (`trash_windows.go`)
 
 Uses the Windows Shell API:
 - Recycle Bin per drive
-- Supports restore via shell operations
+- **Restore supported** via shell operations
 - Integrates with Windows Explorer
 
 ## Integration with File Operations
@@ -165,8 +167,16 @@ if err != nil {
 ## Availability
 
 Trash support depends on the platform:
-- **macOS**: Always available
-- **Linux**: Available if `~/.local/share/Trash` is writable
-- **Windows**: Always available
+- **macOS**: Always available (move to trash only, no programmatic restore)
+- **Linux**: Available if `~/.local/share/Trash` is writable (restore supported via `.trashinfo`)
+- **Windows**: Always available (full restore support)
 
 Use `trash.IsAvailable()` to check before using trash functionality.
+
+## Platform Restore Support
+
+| Platform | Move to Trash | Restore | Empty |
+|----------|--------------|---------|-------|
+| macOS    | Yes          | No (use Finder) | No |
+| Linux    | Yes          | Yes     | Yes   |
+| Windows  | Yes          | Yes     | Yes   |

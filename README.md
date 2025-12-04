@@ -23,12 +23,13 @@
 
 - **Fast Navigation** - Keyboard-driven with mouse support
 - **Browser Tabs** - Multiple directories in tabs with keyboard shortcuts
+- **List and Grid Views** - Toggle between detailed list view and icon/thumbnail grid view
 - **Sortable Columns** - Click column headers to sort by name, date, type, or size
 - **Resizable Columns** - Drag column dividers to resize
 - **Breadcrumb Path Bar** - Clickable path segments for quick navigation
 - **Favorites Sidebar** - Quick access to frequently used directories
 - **Advanced Search** - Filename, content, extension, size, and date filtering
-- **File Preview** - Text, JSON, Markdown, and image preview with resizable pane
+- **File Preview** - Text, JSON, Markdown, Org-mode, and image preview with resizable pane
 - **File Operations** - Copy, cut, paste, delete, rename with conflict resolution
 - **Trash Support** - Delete to system trash with restore capability (permanent delete also available)
 - **Multi-Select** - Shift+click for range, Ctrl/Cmd+click for toggle selection
@@ -434,11 +435,21 @@ razor/
 │   │   ├── trash.go            # Cross-platform API
 │   │   └── trash_*.go          # Platform-specific implementations
 │   │
-│   └── ui/                     # Gio UI components
-│       ├── renderer.go         # Main UI renderer, state types, event handling
-│       ├── layout.go           # Layout functions for all UI components
+│   ├── platform/               # Platform-specific features
+│   │   └── drop_*.go           # External drag-drop handling
+│   │
+│   └── ui/                     # Gio UI components (~30 files)
+│       ├── renderer.go         # Main UI renderer, widget state
+│       ├── types.go            # UI actions, events, state types
+│       ├── layout.go           # Top-level layout composition
+│       ├── layout_*.go         # Specific UI sections (navbar, sidebar, filelist, grid, etc.)
+│       ├── renderer_*.go       # Specific rendering logic (rows, preview, tabs, input)
+│       ├── colors.go           # Theme color definitions (light/dark)
 │       ├── tabs.go             # Reusable tab bar component (manila, underline, pill styles)
 │       ├── markdown.go         # Markdown parsing and rendering (goldmark)
+│       ├── orgmode.go          # Org-mode parsing and rendering
+│       ├── toast.go            # Toast notification UI
+│       ├── thumbnail_cache.go  # Image thumbnail caching for grid view
 │       └── debug_*.go          # UI debug flag
 │
 └── docs/

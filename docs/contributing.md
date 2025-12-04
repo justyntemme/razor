@@ -67,13 +67,29 @@ razor/
 │
 ├── internal/
 │   ├── app/                # Application orchestration
-│   │   ├── orchestrator.go # Main controller
+│   │   ├── orchestrator.go # Central event loop controller
+│   │   ├── state_owner.go  # Canonical file entry cache
+│   │   ├── controllers.go  # Shared dependencies
+│   │   ├── nav_controller.go    # Navigation history
+│   │   ├── search_controller.go # Search execution
+│   │   ├── tabs.go         # Tab state management
+│   │   ├── file_ops.go     # File operations
+│   │   ├── conflict.go     # Conflict resolution
+│   │   ├── watcher.go      # Directory change watcher
 │   │   ├── platform_*.go   # Platform-specific operations
 │   │   └── debug_*.go      # Debug logging
 │   │
-│   ├── ui/                 # Gio UI components
-│   │   ├── renderer.go     # Types and widget state
-│   │   └── layout.go       # Layout composition
+│   ├── ui/                 # Gio UI components (~30 files)
+│   │   ├── renderer.go     # Main renderer, widget state
+│   │   ├── types.go        # UI actions, events, state types
+│   │   ├── layout.go       # Top-level layout composition
+│   │   ├── layout_*.go     # Section layouts (navbar, sidebar, filelist, grid, etc.)
+│   │   ├── renderer_*.go   # Specific rendering (rows, preview, tabs, input)
+│   │   ├── colors.go       # Theme colors
+│   │   ├── tabs.go         # Tab bar component
+│   │   ├── markdown.go     # Markdown rendering
+│   │   ├── orgmode.go      # Org-mode rendering
+│   │   └── thumbnail_cache.go # Image thumbnails for grid view
 │   │
 │   ├── fs/                 # Filesystem operations
 │   │   ├── system.go       # Async file operations
@@ -85,11 +101,19 @@ razor/
 │   │
 │   ├── config/             # Configuration management
 │   │   ├── config.go       # Config file loading/saving
-│   │   └── hotkeys.go      # Hotkey parsing
+│   │   ├── hotkeys.go      # Hotkey parsing
+│   │   └── hotkeys_*.go    # Platform defaults
 │   │
 │   ├── trash/              # Trash/recycle bin
 │   │   ├── trash.go        # Cross-platform API
 │   │   └── trash_*.go      # Platform implementations
+│   │
+│   ├── platform/           # Platform-specific features
+│   │   └── drop_*.go       # External drag-drop
+│   │
+│   ├── debug/              # Debug logging
+│   │   ├── debug_on.go     # Debug build
+│   │   └── debug_off.go    # Release build (no-op)
 │   │
 │   └── store/              # Persistence
 │       └── db.go           # SQLite operations

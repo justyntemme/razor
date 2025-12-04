@@ -11,24 +11,36 @@ cmd/razor/main.go
 internal/app
     ├─→ internal/ui        (UIEvent, State, Renderer)
     ├─→ internal/fs        (Request/Response channels)
-    ├─→ internal/search    (Engine detection)
-    ├─→ internal/store     (Favorites/settings)
+    ├─→ internal/search    (Engine detection, query parsing)
+    ├─→ internal/store     (Search history, recent files, settings)
+    ├─→ internal/config    (Configuration file management)
+    ├─→ internal/trash     (Trash/recycle bin operations)
+    ├─→ internal/debug     (Debug logging)
     └─→ gioui.org/app      (Window event loop)
 
 internal/ui
     ├─→ gioui.org/*        (Layout, widgets, material)
-    └─→ gioui.org/io/*     (Keyboard, pointer events)
+    ├─→ gioui.org/io/*     (Keyboard, pointer events)
+    ├─→ internal/config    (Hotkey matching)
+    └─→ internal/debug     (Debug logging)
 
 internal/fs
     ├─→ internal/search    (Query parser, external engines)
+    ├─→ github.com/charlievieth/fastwalk  (Parallel directory walking)
     └─→ context            (Cancellation)
 
 internal/search
     ├─→ os/exec            (ripgrep/ugrep subprocess)
     └─→ bufio              (Stream results)
 
+internal/config
+    └─→ encoding/json      (Config file parsing)
+
 internal/store
     └─→ modernc.org/sqlite (Pure Go SQLite)
+
+internal/trash
+    └─→ Platform APIs      (macOS/Linux/Windows trash)
 ```
 
 ## Goroutine Architecture
