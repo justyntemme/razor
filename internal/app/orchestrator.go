@@ -277,7 +277,7 @@ func (o *Orchestrator) Run(startPath string) error {
 
 	o.navCtrl.Navigate(startPath)
 
-	// Set up external drop handler (copies files from Finder/external apps)
+	// Set up external drop handler (moves files from Finder/external apps)
 	platform.SetDropHandler(func(paths []string, targetDir string) {
 		debug.Log(debug.APP, "External drop received: %v -> target: %s", paths, targetDir)
 		// Use target directory if set, otherwise fall back to current directory
@@ -289,7 +289,7 @@ func (o *Orchestrator) Run(startPath string) error {
 		}
 
 		if destDir != "" && len(paths) > 0 {
-			go o.doCopyExternal(paths, destDir)
+			go o.doMove(paths, destDir)
 		}
 	})
 
