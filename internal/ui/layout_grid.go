@@ -273,6 +273,42 @@ func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntr
 		isSelected = state.SelectedIndices[idx]
 	}
 
+	// Check if this item is being renamed
+	isRenaming := r.renameIndex == idx
+
+	// Check for rename submission or cancellation
+	if isRenaming {
+		// Handle Enter to submit
+		for {
+			ev, ok := r.renameEditor.Update(gtx)
+			if !ok {
+				break
+			}
+			if _, ok := ev.(widget.SubmitEvent); ok {
+				newName := r.renameEditor.Text()
+				if newName != "" && newName != item.Name {
+					*eventOut = UIEvent{
+						Action:  ActionRename,
+						Path:    filepath.Join(filepath.Dir(r.renamePath), newName),
+						OldPath: r.renamePath,
+					}
+				}
+				r.CancelRename()
+			}
+		}
+
+		// Handle Escape to cancel - check focused key events
+		for {
+			ev, ok := gtx.Event(key.Filter{Focus: true, Name: key.NameEscape})
+			if !ok {
+				break
+			}
+			if e, ok := ev.(key.Event); ok && e.State == key.Press {
+				r.CancelRename()
+			}
+		}
+	}
+
 	// Check hover state for this item (works when not dragging)
 	isHovered := item.Touch.Hovered()
 
@@ -391,12 +427,27 @@ func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntr
 								return r.drawGridIcon(gtx, item, iconSize)
 							})
 						}),
-						// Filename label
+						// Filename label or rename editor
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							// Use full item width for text
 							gtx.Constraints.Max.X = itemSize
 							gtx.Constraints.Min.X = itemSize
 							return layout.Inset{Top: unit.Dp(4), Left: unit.Dp(2), Right: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								if isRenaming {
+									// Show editor for renaming
+									gtx.Execute(key.FocusCmd{Tag: &r.renameEditor})
+									ed := material.Editor(r.Theme, &r.renameEditor, "")
+									ed.TextSize = unit.Sp(12)
+									if item.IsDir {
+										ed.Color = colBlack
+									} else {
+										ed.Color = colGray
+									}
+									return widget.Border{Color: colAccent, Width: unit.Dp(1)}.Layout(gtx,
+										func(gtx layout.Context) layout.Dimensions {
+											return layout.Inset{Left: unit.Dp(2), Right: unit.Dp(2)}.Layout(gtx, ed.Layout)
+										})
+								}
 								// Show full name, let Gio handle wrapping
 								lbl := material.Body2(r.Theme, item.Name)
 								lbl.Alignment = text.Middle
