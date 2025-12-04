@@ -294,56 +294,53 @@ func dropTargetRelease(this uintptr) (ret uintptr) {
 // IDropTarget::DragEnter
 // Signature: HRESULT DragEnter(IDataObject *pDataObject, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect)
 // On x64 Windows, POINTL is passed as a single 64-bit value (two 32-bit ints packed together)
+// CRITICAL: This callback runs on Windows' OLE thread - must return IMMEDIATELY or it freezes drag-drop system-wide
 func dropTargetDragEnter(this uintptr, pDataObject uintptr, grfKeyState uint32, pt uint64, pdwEffect *uint32) (ret uintptr) {
 	defer func() {
 		if r := recover(); r != nil {
 			debug.Log(debug.APP, "[Windows DnD] PANIC in DragEnter: %v", r)
-			ret = S_OK // Return S_OK to prevent further issues
+			ret = S_OK
 		}
 	}()
 
 	ptX := int32(pt & 0xFFFFFFFF)
 	ptY := int32(pt >> 32)
 
-	debug.Log(debug.APP, "[Windows DnD] >>> DragEnter CALLBACK FIRED! this=%x, pDataObject=%x, pt=%x, screenX=%d, screenY=%d",
-		this, pDataObject, pt, ptX, ptY)
+	debug.Log(debug.APP, "[Windows DnD] >>> DragEnter: pt=%x, screenX=%d, screenY=%d", pt, ptX, ptY)
 
 	dt := (*razorDropTarget)(unsafe.Pointer(this))
-	debug.Log(debug.APP, "[Windows DnD] DragEnter: dt.hwnd=%x", dt.hwnd)
 
-	// Reset drop target when drag starts
-	dropMu.Lock()
-	currentDropTarget = ""
-	dropMu.Unlock()
+	// Reset drop target when drag starts (non-blocking)
+	go func() {
+		dropMu.Lock()
+		currentDropTarget = ""
+		dropMu.Unlock()
+	}()
 
-	// Convert screen to client coordinates and notify handler
+	// Convert screen to client coordinates and notify handler asynchronously
 	x, y := screenToClient(dt.hwnd, ptX, ptY)
-	debug.Log(debug.APP, "[Windows DnD] DragEnter: client coords x=%d, y=%d", x, y)
 
 	dropMu.Lock()
 	handler := dragUpdateHandler
 	dropMu.Unlock()
 
 	if handler != nil {
-		debug.Log(debug.APP, "[Windows DnD] DragEnter: calling dragUpdateHandler")
-		handler(x, y)
-	} else {
-		debug.Log(debug.APP, "[Windows DnD] DragEnter: WARNING - dragUpdateHandler is nil!")
+		// Run handler in goroutine to not block the OLE thread
+		go handler(x, y)
 	}
 
 	// Accept copy operations
 	if pdwEffect != nil {
 		*pdwEffect = DROPEFFECT_COPY
-		debug.Log(debug.APP, "[Windows DnD] DragEnter: set effect to DROPEFFECT_COPY")
 	}
 
-	debug.Log(debug.APP, "[Windows DnD] DragEnter: returning S_OK")
 	return S_OK
 }
 
 // IDropTarget::DragOver
 // Signature: HRESULT DragOver(DWORD grfKeyState, POINTL pt, DWORD *pdwEffect)
 // On x64 Windows, POINTL is passed as a single 64-bit value
+// CRITICAL: Must return immediately - runs on OLE thread
 func dropTargetDragOver(this uintptr, grfKeyState uint32, pt uint64, pdwEffect *uint32) (ret uintptr) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -365,7 +362,8 @@ func dropTargetDragOver(this uintptr, grfKeyState uint32, pt uint64, pdwEffect *
 	dropMu.Unlock()
 
 	if handler != nil {
-		handler(x, y)
+		// Run handler in goroutine to not block the OLE thread
+		go handler(x, y)
 	}
 
 	if pdwEffect != nil {
@@ -377,6 +375,7 @@ func dropTargetDragOver(this uintptr, grfKeyState uint32, pt uint64, pdwEffect *
 
 // IDropTarget::DragLeave
 // Signature: HRESULT DragLeave(void)
+// CRITICAL: Must return immediately - runs on OLE thread
 func dropTargetDragLeave(this uintptr) (ret uintptr) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -385,7 +384,7 @@ func dropTargetDragLeave(this uintptr) (ret uintptr) {
 		}
 	}()
 
-	debug.Log(debug.APP, "[Windows DnD] >>> DragLeave CALLBACK FIRED! this=%x", this)
+	debug.Log(debug.APP, "[Windows DnD] >>> DragLeave")
 
 	dropMu.Lock()
 	handler := dragEndHandler
@@ -393,13 +392,9 @@ func dropTargetDragLeave(this uintptr) (ret uintptr) {
 	dropMu.Unlock()
 
 	if handler != nil {
-		debug.Log(debug.APP, "[Windows DnD] DragLeave: calling dragEndHandler")
 		go handler()
-	} else {
-		debug.Log(debug.APP, "[Windows DnD] DragLeave: WARNING - dragEndHandler is nil!")
 	}
 
-	debug.Log(debug.APP, "[Windows DnD] DragLeave: returning S_OK")
 	return S_OK
 }
 
