@@ -386,7 +386,9 @@ func (o *Orchestrator) restoreDirectory() bool {
 }
 
 func (o *Orchestrator) handleUIEvent(evt ui.UIEvent) {
-	debug.Log(debug.APP, "handleUIEvent: Action=%d NewIndex=%d OldIndex=%d", evt.Action, evt.NewIndex, evt.OldIndex)
+	if evt.Action != 0 || evt.NewIndex != 0 || evt.OldIndex != 0 {
+		debug.Log(debug.APP, "handleUIEvent: Action=%d NewIndex=%d OldIndex=%d", evt.Action, evt.NewIndex, evt.OldIndex)
+	}
 	switch evt.Action {
 	case ui.ActionNavigate:
 		o.resetUIState()
