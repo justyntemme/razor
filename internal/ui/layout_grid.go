@@ -248,11 +248,12 @@ func (r *Renderer) layoutFileGrid(gtx layout.Context, state *State, keyTag *layo
 		r.bgRightClickPending = false
 
 		// Handle pending background left-click - dismiss context menu and clear selection
+		// NOTE: Don't reset lastClickIndex/lastClickTime here - those are needed for
+		// double-click detection on items, and item click events are processed after
+		// background events in Gio's event system.
 		if r.bgLeftClickPending {
 			r.onLeftClick()
 			r.multiSelectMode = false
-			r.lastClickIndex = -1
-			r.lastClickTime = time.Time{}
 			if !r.settingsOpen && !r.deleteConfirmOpen && !r.createDialogOpen && !state.Conflict.Active {
 				*eventOut = UIEvent{Action: ActionClearSelection}
 				gtx.Execute(key.FocusCmd{Tag: keyTag})
