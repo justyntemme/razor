@@ -59,6 +59,32 @@ func (r *Renderer) layoutFileGrid(gtx layout.Context, state *State, keyTag *layo
 	anyDragging := false
 
 	return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		// === BACKGROUND CLICK DETECTION ===
+		// Create a hit area filling the entire available space behind the grid.
+		// This catches clicks that miss the items (empty space).
+		defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
+		event.Op(gtx.Ops, &r.bgRightClickTag)
+
+		// Process events for the background tag (both left and right clicks)
+		// NOTE: We track if an item was clicked to avoid triggering background actions
+		// when clicking on an item (since background is behind items in z-order with PassOp)
+		for {
+			ev, ok := gtx.Event(pointer.Filter{Target: &r.bgRightClickTag, Kinds: pointer.Press})
+			if !ok {
+				break
+			}
+			if e, ok := ev.(pointer.Event); ok && e.Kind == pointer.Press {
+				if e.Buttons.Contain(pointer.ButtonSecondary) {
+					// Right-click - mark as pending, show menu if no item handles it
+					r.bgRightClickPending = true
+					r.bgRightClickPos = r.mousePos
+				} else if e.Buttons.Contain(pointer.ButtonPrimary) {
+					// Left-click - mark as pending, process if no item handles it
+					r.bgLeftClickPending = true
+				}
+			}
+		}
+
 		// Track cumulative Y position for row bounds
 		cumulativeY := 0
 
@@ -207,6 +233,32 @@ func (r *Renderer) layoutFileGrid(gtx layout.Context, state *State, keyTag *layo
 			// Request redraw to keep tracking drag position
 			gtx.Execute(op.InvalidateCmd{})
 		}
+
+		// After processing all items, check if we have pending background clicks
+		// that weren't handled by any item (i.e., click was on empty space)
+		if r.bgRightClickPending {
+			r.menuVisible = true
+			r.menuPos = r.bgRightClickPos
+			r.menuPath = state.CurrentPath
+			r.menuIsDir = true
+			r.menuIsFav = false
+			r.menuIsBackground = true
+			gtx.Execute(op.InvalidateCmd{})
+		}
+		r.bgRightClickPending = false
+
+		// Handle pending background left-click - dismiss context menu and clear selection
+		if r.bgLeftClickPending {
+			r.onLeftClick()
+			r.multiSelectMode = false
+			r.lastClickIndex = -1
+			r.lastClickTime = time.Time{}
+			if !r.settingsOpen && !r.deleteConfirmOpen && !r.createDialogOpen && !state.Conflict.Active {
+				*eventOut = UIEvent{Action: ActionClearSelection}
+				gtx.Execute(key.FocusCmd{Tag: keyTag})
+			}
+		}
+		r.bgLeftClickPending = false
 
 		return dims
 	})
@@ -404,6 +456,7 @@ func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntr
 	if touchEvt != nil {
 		switch touchEvt.Type {
 		case TouchClick:
+			r.bgLeftClickPending = false // Cancel background left-click
 			r.onLeftClick()
 			now := time.Now()
 
@@ -430,6 +483,7 @@ func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntr
 			gtx.Execute(op.InvalidateCmd{})
 
 		case TouchRightClick:
+			r.bgRightClickPending = false // Cancel background right-click
 			r.menuVisible = true
 			r.menuPos = r.mousePos
 			r.menuPath = item.Path
