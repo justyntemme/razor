@@ -317,7 +317,16 @@ func (r *Renderer) processGlobalInput(gtx layout.Context, state *State, keyTag e
 				letter := rune(k.Name[0])
 				if letter >= 'A' && letter <= 'Z' {
 					if jumpIdx := r.findNextMatchingEntry(state, letter); jumpIdx >= 0 {
-						r.listState.ScrollTo(jumpIdx)
+						// In grid view, scroll to the row containing the item
+						if r.viewMode == ViewModeGrid {
+							cols := r.gridColumns
+							if cols < 1 {
+								cols = 1
+							}
+							r.listState.ScrollTo(jumpIdx / cols)
+						} else {
+							r.listState.ScrollTo(jumpIdx)
+						}
 						return UIEvent{Action: ActionJumpToLetter, NewIndex: jumpIdx}
 					}
 				}
