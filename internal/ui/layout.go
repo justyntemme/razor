@@ -91,8 +91,10 @@ func (r *Renderer) Layout(gtx layout.Context, state *State) UIEvent {
 	// ===== MAIN LAYOUT =====
 	layout.Stack{}.Layout(gtx,
 		// Background click handler (for dismissing menus)
+		// NOTE: Only process if no action was already set by an item click
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-			if r.bgClick.Clicked(gtx) {
+			if r.bgClick.Clicked(gtx) && eventOut.Action == ActionNone {
+				debug.Log(debug.UI, "bgClick handler: clicked, setting ActionClearSelection, multiSelectMode=%v->false", r.multiSelectMode)
 				r.onLeftClick() // Dismiss context menus, file menu, and exit path edit mode
 				r.searchEditorFocused = false // Dismiss search dropdown on background click
 				r.searchHistoryVisible = false

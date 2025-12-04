@@ -88,6 +88,9 @@ func (r *Renderer) layoutFileGrid(gtx layout.Context, state *State, keyTag *layo
 		// Track cumulative Y position for row bounds
 		cumulativeY := 0
 
+		// Track if any item was clicked (to prevent background click from overriding)
+		itemLeftClicked := false
+
 		dims := r.listState.Layout(gtx, rows, func(gtx layout.Context, rowIdx int) layout.Dimensions {
 			// Build row of grid items with DIRECT offset application
 			// No record/replay - offsets are applied directly to the ops stream
@@ -153,7 +156,10 @@ func (r *Renderer) layoutFileGrid(gtx layout.Context, state *State, keyTag *layo
 					debug.Log(debug.UI, "GridItem HOVERED: idx=%d col=%d name=%s itemX=%d", idx, colIdx, item.Name, itemX)
 				}
 
-				itemDims := r.layoutGridItem(itemGtx, state, item, idx, itemSize, keyTag, eventOut)
+				itemDims, clicked := r.layoutGridItem(itemGtx, state, item, idx, itemSize, keyTag, eventOut)
+				if clicked {
+					itemLeftClicked = true
+				}
 
 				if itemDims.Size.Y > rowHeight {
 					rowHeight = itemDims.Size.Y
@@ -266,10 +272,24 @@ func (r *Renderer) layoutFileGrid(gtx layout.Context, state *State, keyTag *layo
 		r.bgRightClickPending = false
 
 		// Handle pending background left-click - dismiss context menu and clear selection
+		// Only process if no item was clicked (similar to list view's rowLeftClicked check)
 		// NOTE: Don't reset lastClickIndex/lastClickTime here - those are needed for
 		// double-click detection on items, and item click events are processed after
 		// background events in Gio's event system.
+		// Check itemPressed AFTER items are laid out - this ensures gesture handlers
+		// have processed the current frame's events and Pressed() is accurate.
+		itemPressed := false
+		for i := 0; i < numItems; i++ {
+			if state.Entries[i].Touch.Pressed() {
+				itemPressed = true
+				break
+			}
+		}
 		if r.bgLeftClickPending {
+			debug.Log(debug.UI, "Grid BG check: bgLeftClickPending=true itemLeftClicked=%v itemPressed=%v", itemLeftClicked, itemPressed)
+		}
+		if r.bgLeftClickPending && !itemLeftClicked && !itemPressed {
+			debug.Log(debug.UI, "Grid BG: clearing selection and multiSelectMode")
 			r.onLeftClick()
 			r.multiSelectMode = false
 			if !r.settingsOpen && !r.deleteConfirmOpen && !r.createDialogOpen && !state.Conflict.Active {
@@ -283,7 +303,8 @@ func (r *Renderer) layoutFileGrid(gtx layout.Context, state *State, keyTag *layo
 	})
 }
 
-func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntry, idx, itemSize int, keyTag *layout.List, eventOut *UIEvent) layout.Dimensions {
+func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntry, idx, itemSize int, keyTag *layout.List, eventOut *UIEvent) (layout.Dimensions, bool) {
+	leftClicked := false // Track if this item was left-clicked
 	iconSize := itemSize - 20 // Leave room for padding
 	labelHeight := 30
 
@@ -548,8 +569,11 @@ func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntr
 
 	// Handle touch events
 	if touchEvt != nil {
+		debug.Log(debug.UI, "layoutGridItem: idx=%d got touchEvt type=%v", idx, touchEvt.Type)
 		switch touchEvt.Type {
 		case TouchClick:
+			debug.Log(debug.UI, "GridItem TouchClick: idx=%d name=%s modifiers=0x%x", idx, item.Name, int(touchEvt.Modifiers))
+			leftClicked = true
 			r.bgLeftClickPending = false // Cancel background left-click
 			r.onLeftClick()
 			r.CancelRename()
@@ -557,6 +581,7 @@ func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntr
 
 			// Check for shift key (for multi-select)
 			shiftHeld := touchEvt.Modifiers.Contain(key.ModShift)
+			debug.Log(debug.UI, "GridItem: shiftHeld=%v (ModShift=0x%x)", shiftHeld, int(key.ModShift))
 
 			isDoubleClick := r.lastClickIndex == idx &&
 				!r.lastClickTime.IsZero() &&
@@ -576,13 +601,16 @@ func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntr
 				// Shift+click: toggle checkbox (enter/extend multi-select)
 				r.lastClickIndex = idx
 				r.lastClickTime = now
+				debug.Log(debug.UI, "GridItem SHIFT-CLICK check: multiSelectMode=%v state.SelectedIndex=%d len(SelectedIndices)=%d", r.multiSelectMode, state.SelectedIndex, len(state.SelectedIndices))
 				if !r.multiSelectMode && state.SelectedIndex >= 0 {
 					// First shift+click: add current selection to multi-select, then toggle new item
 					r.multiSelectMode = true
 					*eventOut = UIEvent{Action: ActionToggleSelect, NewIndex: idx, OldIndex: state.SelectedIndex}
+					debug.Log(debug.UI, "GridItem SHIFT-CLICK (first): ActionToggleSelect idx=%d oldIdx=%d multiSelectMode=%v", idx, state.SelectedIndex, r.multiSelectMode)
 				} else {
 					r.multiSelectMode = true
 					*eventOut = UIEvent{Action: ActionToggleSelect, NewIndex: idx, OldIndex: -1}
+					debug.Log(debug.UI, "GridItem SHIFT-CLICK (continue): ActionToggleSelect idx=%d multiSelectMode=%v (reason: multiSelectMode=%v || SelectedIndex=%d)", idx, r.multiSelectMode, r.multiSelectMode, state.SelectedIndex)
 				}
 			} else {
 				// Single click: select immediately
@@ -631,7 +659,7 @@ func (r *Renderer) layoutGridItem(gtx layout.Context, state *State, item *UIEntr
 		*eventOut = *dropEvent
 	}
 
-	return dims
+	return dims, leftClicked
 }
 
 func (r *Renderer) drawGridIcon(gtx layout.Context, item *UIEntry, size int) layout.Dimensions {

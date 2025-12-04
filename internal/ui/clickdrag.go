@@ -13,6 +13,8 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+
+	"github.com/justyntemme/razor/internal/debug"
 )
 
 // Touchable is a widget that handles click, double-click, right-click, and drag gestures
@@ -158,6 +160,7 @@ func (t *Touchable) Layout(gtx layout.Context, w, drag layout.Widget) (layout.Di
 		if !ok {
 			break
 		}
+		debug.Log(debug.UI, "Touchable: click.Update Kind=%v Modifiers=0x%x dragStarted=%v", e.Kind, int(e.Modifiers), t.dragStarted)
 		switch e.Kind {
 		case gesture.KindClick:
 			// Only report click if we didn't start a drag
@@ -168,6 +171,7 @@ func (t *Touchable) Layout(gtx layout.Context, w, drag layout.Widget) (layout.Di
 					Modifiers: e.Modifiers,
 					NumClicks: e.NumClicks,
 				}
+				debug.Log(debug.UI, "Touchable: created TouchClick event with Modifiers=0x%x", int(e.Modifiers))
 			}
 		case gesture.KindCancel:
 			t.dragStarted = false
