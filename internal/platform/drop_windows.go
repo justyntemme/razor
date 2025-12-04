@@ -32,11 +32,13 @@ var (
 
 // SetDropHandler sets the callback for external file drops
 func SetDropHandler(handler DropHandler) {
+	debug.Log(debug.APP, "[Windows DnD] SetDropHandler called, handler=%v", handler != nil)
 	dropMu.Lock()
 	defer dropMu.Unlock()
 	dropHandler = handler
 
 	if len(pendingDrop) > 0 && handler != nil {
+		debug.Log(debug.APP, "[Windows DnD] SetDropHandler: delivering %d pending drops", len(pendingDrop))
 		handler(pendingDrop, "")
 		pendingDrop = nil
 	}
@@ -44,6 +46,7 @@ func SetDropHandler(handler DropHandler) {
 
 // SetDragUpdateHandler sets the callback for external drag position updates
 func SetDragUpdateHandler(handler DragUpdateHandler) {
+	debug.Log(debug.APP, "[Windows DnD] SetDragUpdateHandler called, handler=%v", handler != nil)
 	dropMu.Lock()
 	defer dropMu.Unlock()
 	dragUpdateHandler = handler
@@ -51,6 +54,7 @@ func SetDragUpdateHandler(handler DragUpdateHandler) {
 
 // SetDragEndHandler sets the callback for when external drag ends
 func SetDragEndHandler(handler DragEndHandler) {
+	debug.Log(debug.APP, "[Windows DnD] SetDragEndHandler called, handler=%v", handler != nil)
 	dropMu.Lock()
 	defer dropMu.Unlock()
 	dragEndHandler = handler
@@ -160,6 +164,7 @@ var (
 var globalVtbl *iDropTargetVtbl
 
 func init() {
+	debug.Log(debug.APP, "[Windows DnD] init() called - creating vtable callbacks")
 	globalVtbl = &iDropTargetVtbl{
 		QueryInterface: syscall.NewCallback(dropTargetQueryInterface),
 		AddRef:         syscall.NewCallback(dropTargetAddRef),
@@ -169,59 +174,76 @@ func init() {
 		DragLeave:      syscall.NewCallback(dropTargetDragLeave),
 		Drop:           syscall.NewCallback(dropTargetDrop),
 	}
+	debug.Log(debug.APP, "[Windows DnD] vtable created: QueryInterface=%x, DragEnter=%x, Drop=%x",
+		globalVtbl.QueryInterface, globalVtbl.DragEnter, globalVtbl.Drop)
 }
 
 // SetupExternalDrop configures the window to accept external file drops via OLE IDropTarget
 func SetupExternalDrop(hwnd uintptr) {
+	debug.Log(debug.APP, "[Windows DnD] SetupExternalDrop called with hwnd=%d (0x%x)", hwnd, hwnd)
+
 	if hwnd == 0 {
-		debug.Log(debug.APP, "SetupExternalDrop: hwnd is 0, skipping")
+		debug.Log(debug.APP, "[Windows DnD] SetupExternalDrop: hwnd is 0, skipping")
 		return
 	}
-
-	debug.Log(debug.APP, "SetupExternalDrop called with hwnd=%d", hwnd)
 
 	// Initialize OLE
-	hr, _, _ := procOleInitialize.Call(0)
+	debug.Log(debug.APP, "[Windows DnD] Calling OleInitialize...")
+	hr, _, err := procOleInitialize.Call(0)
+	debug.Log(debug.APP, "[Windows DnD] OleInitialize returned: hr=0x%x, err=%v", hr, err)
 	if hr != S_OK && hr != S_FALSE {
-		debug.Log(debug.APP, "OleInitialize failed: 0x%x", hr)
+		debug.Log(debug.APP, "[Windows DnD] OleInitialize FAILED: 0x%x", hr)
 		return
 	}
+	debug.Log(debug.APP, "[Windows DnD] OleInitialize succeeded (hr=0x%x)", hr)
 
 	// Create our drop target
+	debug.Log(debug.APP, "[Windows DnD] Creating razorDropTarget struct...")
 	dropTarget = &razorDropTarget{
 		vtbl:      globalVtbl,
 		refs:      1,
 		hwnd:      windows.HWND(hwnd),
 		oleInited: true,
 	}
+	debug.Log(debug.APP, "[Windows DnD] razorDropTarget created at %p, vtbl=%p", dropTarget, dropTarget.vtbl)
 
 	// Register for drag-drop
-	hr, _, _ = procRegisterDragDrop.Call(
+	debug.Log(debug.APP, "[Windows DnD] Calling RegisterDragDrop(hwnd=0x%x, dropTarget=%p)...", hwnd, dropTarget)
+	hr, _, err = procRegisterDragDrop.Call(
 		hwnd,
 		uintptr(unsafe.Pointer(dropTarget)),
 	)
+	debug.Log(debug.APP, "[Windows DnD] RegisterDragDrop returned: hr=0x%x, err=%v", hr, err)
 	if hr != S_OK {
-		debug.Log(debug.APP, "RegisterDragDrop failed: 0x%x", hr)
+		debug.Log(debug.APP, "[Windows DnD] RegisterDragDrop FAILED: 0x%x", hr)
+		// Common errors:
+		// 0x80040100 = DRAGDROP_E_NOTREGISTERED
+		// 0x80040101 = DRAGDROP_E_ALREADYREGISTERED
+		// 0x800401F0 = CO_E_NOTINITIALIZED
 		return
 	}
 
-	debug.Log(debug.APP, "SetupExternalDrop: successfully registered IDropTarget")
+	debug.Log(debug.APP, "[Windows DnD] SUCCESS - IDropTarget registered for hwnd=0x%x", hwnd)
 }
 
 // IDropTarget::QueryInterface
 func dropTargetQueryInterface(this uintptr, riid *windows.GUID, ppvObject *uintptr) uintptr {
+	debug.Log(debug.APP, "[Windows DnD] QueryInterface called, this=%x", this)
 	if riid == nil || ppvObject == nil {
+		debug.Log(debug.APP, "[Windows DnD] QueryInterface: nil riid or ppvObject")
 		return E_UNEXPECTED
 	}
 
 	*ppvObject = 0
 
 	if guidEqual(riid, &IID_IUnknown) || guidEqual(riid, &IID_IDropTarget) {
+		debug.Log(debug.APP, "[Windows DnD] QueryInterface: matched IUnknown or IDropTarget")
 		*ppvObject = this
 		dropTargetAddRef(this)
 		return S_OK
 	}
 
+	debug.Log(debug.APP, "[Windows DnD] QueryInterface: no interface match")
 	return E_NOINTERFACE
 }
 
@@ -229,6 +251,7 @@ func dropTargetQueryInterface(this uintptr, riid *windows.GUID, ppvObject *uintp
 func dropTargetAddRef(this uintptr) uintptr {
 	dt := (*razorDropTarget)(unsafe.Pointer(this))
 	dt.refs++
+	debug.Log(debug.APP, "[Windows DnD] AddRef: refs now %d", dt.refs)
 	return uintptr(dt.refs)
 }
 
@@ -236,7 +259,9 @@ func dropTargetAddRef(this uintptr) uintptr {
 func dropTargetRelease(this uintptr) uintptr {
 	dt := (*razorDropTarget)(unsafe.Pointer(this))
 	dt.refs--
+	debug.Log(debug.APP, "[Windows DnD] Release: refs now %d", dt.refs)
 	if dt.refs == 0 {
+		debug.Log(debug.APP, "[Windows DnD] Release: refs=0, calling OleUninitialize")
 		if dt.oleInited {
 			procOleUninitialize.Call()
 		}
@@ -247,9 +272,11 @@ func dropTargetRelease(this uintptr) uintptr {
 
 // IDropTarget::DragEnter
 func dropTargetDragEnter(this uintptr, pDataObject uintptr, grfKeyState uint32, ptX, ptY int32, pdwEffect *uint32) uintptr {
-	debug.Log(debug.APP, "DragEnter: x=%d, y=%d", ptX, ptY)
+	debug.Log(debug.APP, "[Windows DnD] >>> DragEnter CALLBACK FIRED! this=%x, pDataObject=%x, screenX=%d, screenY=%d",
+		this, pDataObject, ptX, ptY)
 
 	dt := (*razorDropTarget)(unsafe.Pointer(this))
+	debug.Log(debug.APP, "[Windows DnD] DragEnter: dt.hwnd=%x", dt.hwnd)
 
 	// Reset drop target when drag starts
 	dropMu.Lock()
@@ -258,25 +285,32 @@ func dropTargetDragEnter(this uintptr, pDataObject uintptr, grfKeyState uint32, 
 
 	// Convert screen to client coordinates and notify handler
 	x, y := screenToClient(dt.hwnd, ptX, ptY)
+	debug.Log(debug.APP, "[Windows DnD] DragEnter: client coords x=%d, y=%d", x, y)
 
 	dropMu.Lock()
 	handler := dragUpdateHandler
 	dropMu.Unlock()
 
 	if handler != nil {
+		debug.Log(debug.APP, "[Windows DnD] DragEnter: calling dragUpdateHandler")
 		handler(x, y)
+	} else {
+		debug.Log(debug.APP, "[Windows DnD] DragEnter: WARNING - dragUpdateHandler is nil!")
 	}
 
 	// Accept copy operations
 	if pdwEffect != nil {
 		*pdwEffect = DROPEFFECT_COPY
+		debug.Log(debug.APP, "[Windows DnD] DragEnter: set effect to DROPEFFECT_COPY")
 	}
 
+	debug.Log(debug.APP, "[Windows DnD] DragEnter: returning S_OK")
 	return S_OK
 }
 
 // IDropTarget::DragOver
 func dropTargetDragOver(this uintptr, grfKeyState uint32, ptX, ptY int32, pdwEffect *uint32) uintptr {
+	// Note: This is called very frequently, so only log occasionally or when debugging specific issues
 	dt := (*razorDropTarget)(unsafe.Pointer(this))
 
 	// Convert screen to client coordinates
@@ -299,7 +333,7 @@ func dropTargetDragOver(this uintptr, grfKeyState uint32, ptX, ptY int32, pdwEff
 
 // IDropTarget::DragLeave
 func dropTargetDragLeave(this uintptr) uintptr {
-	debug.Log(debug.APP, "DragLeave")
+	debug.Log(debug.APP, "[Windows DnD] >>> DragLeave CALLBACK FIRED! this=%x", this)
 
 	dropMu.Lock()
 	handler := dragEndHandler
@@ -307,20 +341,25 @@ func dropTargetDragLeave(this uintptr) uintptr {
 	dropMu.Unlock()
 
 	if handler != nil {
+		debug.Log(debug.APP, "[Windows DnD] DragLeave: calling dragEndHandler")
 		go handler()
+	} else {
+		debug.Log(debug.APP, "[Windows DnD] DragLeave: WARNING - dragEndHandler is nil!")
 	}
 
+	debug.Log(debug.APP, "[Windows DnD] DragLeave: returning S_OK")
 	return S_OK
 }
 
 // IDropTarget::Drop
 func dropTargetDrop(this uintptr, pDataObject uintptr, grfKeyState uint32, ptX, ptY int32, pdwEffect *uint32) uintptr {
-	debug.Log(debug.APP, "Drop: x=%d, y=%d", ptX, ptY)
+	debug.Log(debug.APP, "[Windows DnD] >>> Drop CALLBACK FIRED! this=%x, pDataObject=%x, x=%d, y=%d",
+		this, pDataObject, ptX, ptY)
 
 	// Get dropped files
 	paths := getDroppedFiles(pDataObject)
 
-	debug.Log(debug.APP, "Drop: got %d files", len(paths))
+	debug.Log(debug.APP, "[Windows DnD] Drop: got %d files: %v", len(paths), paths)
 
 	// End the drag state first
 	dropMu.Lock()
@@ -328,6 +367,7 @@ func dropTargetDrop(this uintptr, pDataObject uintptr, grfKeyState uint32, ptX, 
 	dropMu.Unlock()
 
 	if endHandler != nil {
+		debug.Log(debug.APP, "[Windows DnD] Drop: calling dragEndHandler")
 		go endHandler()
 	}
 
@@ -337,9 +377,13 @@ func dropTargetDrop(this uintptr, pDataObject uintptr, grfKeyState uint32, ptX, 
 	target := currentDropTarget
 	dropMu.Unlock()
 
+	debug.Log(debug.APP, "[Windows DnD] Drop: dropHandler=%v, target=%s", handler != nil, target)
+
 	if handler != nil && len(paths) > 0 {
+		debug.Log(debug.APP, "[Windows DnD] Drop: calling dropHandler with %d paths to target=%s", len(paths), target)
 		go handler(paths, target)
 	} else if len(paths) > 0 {
+		debug.Log(debug.APP, "[Windows DnD] Drop: no handler, storing %d paths as pending", len(paths))
 		dropMu.Lock()
 		pendingDrop = append(pendingDrop, paths...)
 		dropMu.Unlock()
@@ -349,6 +393,7 @@ func dropTargetDrop(this uintptr, pDataObject uintptr, grfKeyState uint32, ptX, 
 		*pdwEffect = DROPEFFECT_COPY
 	}
 
+	debug.Log(debug.APP, "[Windows DnD] Drop: returning S_OK")
 	return S_OK
 }
 
@@ -370,13 +415,16 @@ func screenToClient(hwnd windows.HWND, screenX, screenY int32) (int, int) {
 
 // getDroppedFiles extracts file paths from an IDataObject
 func getDroppedFiles(pDataObject uintptr) []string {
+	debug.Log(debug.APP, "[Windows DnD] getDroppedFiles called with pDataObject=%x", pDataObject)
 	if pDataObject == 0 {
+		debug.Log(debug.APP, "[Windows DnD] getDroppedFiles: pDataObject is nil!")
 		return nil
 	}
 
 	// Get IDataObject vtable
 	vtblPtr := *(*uintptr)(unsafe.Pointer(pDataObject))
 	vtbl := (*iDataObjectVtbl)(unsafe.Pointer(vtblPtr))
+	debug.Log(debug.APP, "[Windows DnD] getDroppedFiles: vtblPtr=%x, GetData=%x", vtblPtr, vtbl.GetData)
 
 	// Prepare FORMATETC for CF_HDROP
 	formatetc := FORMATETC{
@@ -390,6 +438,7 @@ func getDroppedFiles(pDataObject uintptr) []string {
 	var stgmedium STGMEDIUM
 
 	// Call GetData
+	debug.Log(debug.APP, "[Windows DnD] getDroppedFiles: calling IDataObject::GetData...")
 	hr, _, _ := syscall.SyscallN(
 		vtbl.GetData,
 		pDataObject,
@@ -398,9 +447,10 @@ func getDroppedFiles(pDataObject uintptr) []string {
 	)
 
 	if hr != S_OK {
-		debug.Log(debug.APP, "GetData failed: 0x%x", hr)
+		debug.Log(debug.APP, "[Windows DnD] getDroppedFiles: GetData FAILED: hr=0x%x", hr)
 		return nil
 	}
+	debug.Log(debug.APP, "[Windows DnD] getDroppedFiles: GetData succeeded, stgmedium.hGlobal=%x", stgmedium.hGlobal)
 
 	defer procReleaseStgMedium.Call(uintptr(unsafe.Pointer(&stgmedium)))
 
@@ -408,16 +458,17 @@ func getDroppedFiles(pDataObject uintptr) []string {
 
 	// Get file count
 	count, _, _ := procDragQueryFileW.Call(hdrop, 0xFFFFFFFF, 0, 0)
+	debug.Log(debug.APP, "[Windows DnD] getDroppedFiles: DragQueryFileW count=%d", count)
 	if count == 0 {
+		debug.Log(debug.APP, "[Windows DnD] getDroppedFiles: no files!")
 		return nil
 	}
-
-	debug.Log(debug.APP, "getDroppedFiles: count=%d", count)
 
 	var paths []string
 	for i := uintptr(0); i < count; i++ {
 		// Get required buffer size
 		size, _, _ := procDragQueryFileW.Call(hdrop, i, 0, 0)
+		debug.Log(debug.APP, "[Windows DnD] getDroppedFiles: file[%d] size=%d", i, size)
 		if size == 0 {
 			continue
 		}
@@ -427,10 +478,11 @@ func getDroppedFiles(pDataObject uintptr) []string {
 		procDragQueryFileW.Call(hdrop, i, uintptr(unsafe.Pointer(&buf[0])), size+1)
 
 		path := windows.UTF16ToString(buf)
-		debug.Log(debug.APP, "getDroppedFiles: path[%d]=%s", i, path)
+		debug.Log(debug.APP, "[Windows DnD] getDroppedFiles: path[%d]=%s", i, path)
 		paths = append(paths, path)
 	}
 
+	debug.Log(debug.APP, "[Windows DnD] getDroppedFiles: returning %d paths", len(paths))
 	return paths
 }
 
