@@ -137,16 +137,19 @@ type iDataObjectVtbl struct {
 	// ... other methods we don't need
 }
 
-// razorDropTarget implements IDropTarget
-// COM object layout: first field is pointer to vtable
-// Windows calls: obj->lpVtbl->Method(obj, ...)
-// Which means: (*(*vtbl)(obj))[methodIndex](obj, ...)
+// razorDropTarget implements IDropTarget using raw memory layout for COM compatibility
+// The struct is laid out exactly as COM expects:
+// Offset 0: pointer to vtable (8 bytes on x64)
+// Offset 8: ref count (4 bytes)
+// Offset 12: padding (4 bytes)
+// Offset 16: hwnd (8 bytes on x64)
+// Offset 24: oleInited (1 byte)
 type razorDropTarget struct {
-	lpVtbl    *iDropTargetVtbl // Pointer to vtable - MUST be first field and be a real pointer
-	refs      int32
-	_padding  uint32           // Ensure 8-byte alignment on 64-bit
-	hwnd      windows.HWND
-	oleInited bool
+	lpVtbl    uintptr      // Raw pointer to vtable - MUST be first, must be uintptr for exact memory layout
+	refs      int32        // Reference count
+	_padding  uint32       // Alignment padding
+	hwnd      windows.HWND // Window handle
+	oleInited bool         // Whether OLE was initialized
 }
 
 var (
@@ -164,12 +167,12 @@ var (
 	procGetDpiForWindow    = user32.NewProc("GetDpiForWindow")
 )
 
-// Global vtable instance (must stay alive for duration of program)
-var globalVtbl *iDropTargetVtbl
+// Global vtable - allocated as a value (not pointer) so it has stable address
+var globalVtbl iDropTargetVtbl
 
 func init() {
 	debug.Log(debug.APP, "[Windows DnD] init() called - creating vtable callbacks")
-	globalVtbl = &iDropTargetVtbl{
+	globalVtbl = iDropTargetVtbl{
 		QueryInterface: syscall.NewCallback(dropTargetQueryInterface),
 		AddRef:         syscall.NewCallback(dropTargetAddRef),
 		Release:        syscall.NewCallback(dropTargetRelease),
@@ -203,14 +206,17 @@ func SetupExternalDrop(hwnd uintptr) {
 
 	// Create our drop target
 	debug.Log(debug.APP, "[Windows DnD] Creating razorDropTarget struct...")
-	debug.Log(debug.APP, "[Windows DnD] globalVtbl at %p, DragEnter callback=0x%x", globalVtbl, globalVtbl.DragEnter)
+	vtblAddr := uintptr(unsafe.Pointer(&globalVtbl))
+	debug.Log(debug.APP, "[Windows DnD] globalVtbl at 0x%x, DragEnter callback=0x%x", vtblAddr, globalVtbl.DragEnter)
 	dropTarget = &razorDropTarget{
-		lpVtbl:    globalVtbl,
+		lpVtbl:    vtblAddr,
 		refs:      1,
 		hwnd:      windows.HWND(hwnd),
 		oleInited: true,
 	}
-	debug.Log(debug.APP, "[Windows DnD] razorDropTarget created at %p, lpVtbl=%p", dropTarget, dropTarget.lpVtbl)
+	debug.Log(debug.APP, "[Windows DnD] razorDropTarget at %p, lpVtbl=0x%x", dropTarget, dropTarget.lpVtbl)
+	// Verify the memory layout
+	debug.Log(debug.APP, "[Windows DnD] Verifying: *(uintptr*)dropTarget = 0x%x", *(*uintptr)(unsafe.Pointer(dropTarget)))
 
 	// Register for drag-drop
 	debug.Log(debug.APP, "[Windows DnD] Calling RegisterDragDrop(hwnd=0x%x, dropTarget=%p)...", hwnd, dropTarget)
