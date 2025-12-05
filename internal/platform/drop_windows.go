@@ -101,6 +101,7 @@ var (
 	procDragFinish       = shell32.NewProc("DragFinish")
 	procSetWindowLongPtr = user32.NewProc("SetWindowLongPtrW")
 	procCallWindowProc   = user32.NewProc("CallWindowProcW")
+	procDefWindowProc    = user32.NewProc("DefWindowProcW")
 )
 
 
@@ -113,7 +114,13 @@ func dropSubclassProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr 
 	}
 
 	// Call original window procedure for all other messages
-	ret, _, _ := procCallWindowProc.Call(originalWndProc, hwnd, uintptr(msg), wParam, lParam)
+	oldProc := originalWndProc
+	if oldProc == 0 {
+		// Safety: if original proc not set yet, use DefWindowProc
+		ret, _, _ := procDefWindowProc.Call(hwnd, uintptr(msg), wParam, lParam)
+		return ret
+	}
+	ret, _, _ := procCallWindowProc.Call(oldProc, hwnd, uintptr(msg), wParam, lParam)
 	return ret
 }
 
