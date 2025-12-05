@@ -246,7 +246,13 @@ func dtRelease(this uintptr) uintptr {
 	return uintptr(newCount)
 }
 
-func dtDragEnter(this uintptr, pDataObject uintptr, grfKeyState uint32, ptX int32, ptY int32, pdwEffect uintptr) uintptr {
+// POINTL packed as a single 64-bit value on x64: low 32 bits = X, high 32 bits = Y
+func unpackPOINTL(pt uintptr) (x, y int32) {
+	return int32(pt & 0xFFFFFFFF), int32(pt >> 32)
+}
+
+func dtDragEnter(this uintptr, pDataObject uintptr, grfKeyState uint32, pt uintptr, pdwEffect uintptr) uintptr {
+	ptX, ptY := unpackPOINTL(pt)
 	writeTraceFile(fmt.Sprintf(">>> DragEnter called: this=0x%x pDataObject=0x%x pt=(%d,%d) pdwEffect=0x%x", this, pDataObject, ptX, ptY, pdwEffect))
 	debug.Log(debug.APP, "[Windows DnD] DragEnter: this=%x pt=(%d,%d)", this, ptX, ptY)
 
@@ -280,7 +286,9 @@ func dtDragEnter(this uintptr, pDataObject uintptr, grfKeyState uint32, ptX int3
 	return S_OK
 }
 
-func dtDragOver(this uintptr, grfKeyState uint32, ptX int32, ptY int32, pdwEffect uintptr) uintptr {
+func dtDragOver(this uintptr, grfKeyState uint32, pt uintptr, pdwEffect uintptr) uintptr {
+	ptX, ptY := unpackPOINTL(pt)
+
 	if pdwEffect != 0 {
 		*(*uint32)(unsafe.Pointer(pdwEffect)) = DROPEFFECT_COPY
 	}
@@ -322,12 +330,15 @@ func dtDragLeave(this uintptr) uintptr {
 	return S_OK
 }
 
-func dtDrop(this uintptr, pDataObject uintptr, grfKeyState uint32, ptX int32, ptY int32, pdwEffect uintptr) uintptr {
+func dtDrop(this uintptr, pDataObject uintptr, grfKeyState uint32, pt uintptr, pdwEffect uintptr) uintptr {
+	ptX, ptY := unpackPOINTL(pt)
 	debug.Log(debug.APP, "[Windows DnD] Drop: this=%x pDataObject=%x pt=(%d,%d)", this, pDataObject, ptX, ptY)
+	writeTraceFile(fmt.Sprintf(">>> Drop called: this=0x%x pDataObject=0x%x pt=(%d,%d)", this, pDataObject, ptX, ptY))
 
 	// Extract files synchronously before returning
 	paths := getDroppedFiles(pDataObject)
 	debug.Log(debug.APP, "[Windows DnD] Drop: extracted %d files", len(paths))
+	writeTraceFile(fmt.Sprintf("Drop: extracted %d files", len(paths)))
 
 	if pdwEffect != 0 {
 		*(*uint32)(unsafe.Pointer(pdwEffect)) = DROPEFFECT_COPY
