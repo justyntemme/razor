@@ -11,3 +11,9 @@ package platform
 #include <windows.h>
 */
 import "C"
+
+// CgoEnabled returns true if CGO is properly linked.
+// This function MUST be called from drop_windows.go to force CGO linking.
+func CgoEnabled() bool {
+	return C.int(1) == 1
+}

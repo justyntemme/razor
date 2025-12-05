@@ -7,6 +7,8 @@ package platform
 // Key insight: COM vtables must be in Windows-allocated memory, not Go heap.
 
 import (
+	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -172,9 +174,11 @@ func globalFree(ptr uintptr) {
 // Callback functions - these must have the exact Windows x64 calling convention signatures
 
 func dtQueryInterface(this uintptr, riid uintptr, ppvObject uintptr) uintptr {
+	writeTraceFile(fmt.Sprintf(">>> QueryInterface called: this=0x%x riid=0x%x ppvObject=0x%x", this, riid, ppvObject))
 	debug.Log(debug.APP, "[Windows DnD] QueryInterface called: this=%x", this)
 
 	if riid == 0 || ppvObject == 0 {
+		writeTraceFile("QueryInterface: riid or ppvObject is 0, returning E_UNEXPECTED")
 		return E_UNEXPECTED
 	}
 
@@ -183,17 +187,20 @@ func dtQueryInterface(this uintptr, riid uintptr, ppvObject uintptr) uintptr {
 	*ppv = 0
 
 	if guidEqual(guid, &IID_IUnknown) || guidEqual(guid, &IID_IDropTarget) {
+		writeTraceFile("QueryInterface: matched IDropTarget/IUnknown")
 		debug.Log(debug.APP, "[Windows DnD] QueryInterface: matched IDropTarget/IUnknown")
 		*ppv = this
 		dtAddRef(this)
 		return S_OK
 	}
 
+	writeTraceFile("QueryInterface: E_NOINTERFACE")
 	debug.Log(debug.APP, "[Windows DnD] QueryInterface: E_NOINTERFACE")
 	return E_NOINTERFACE
 }
 
 func dtAddRef(this uintptr) uintptr {
+	writeTraceFile(fmt.Sprintf(">>> AddRef called: this=0x%x", this))
 	debug.Log(debug.APP, "[Windows DnD] AddRef called: this=%x", this)
 
 	comObjectsMu.RLock()
@@ -201,11 +208,13 @@ func dtAddRef(this uintptr) uintptr {
 	comObjectsMu.RUnlock()
 
 	if impl == nil {
+		writeTraceFile("AddRef: impl not found!")
 		debug.Log(debug.APP, "[Windows DnD] AddRef: impl not found!")
 		return 1
 	}
 
 	newCount := atomic.AddInt32(&impl.refCount, 1)
+	writeTraceFile(fmt.Sprintf("AddRef: count=%d", newCount))
 	debug.Log(debug.APP, "[Windows DnD] AddRef: count=%d", newCount)
 	return uintptr(newCount)
 }
@@ -238,10 +247,12 @@ func dtRelease(this uintptr) uintptr {
 }
 
 func dtDragEnter(this uintptr, pDataObject uintptr, grfKeyState uint32, ptX int32, ptY int32, pdwEffect uintptr) uintptr {
+	writeTraceFile(fmt.Sprintf(">>> DragEnter called: this=0x%x pDataObject=0x%x pt=(%d,%d) pdwEffect=0x%x", this, pDataObject, ptX, ptY, pdwEffect))
 	debug.Log(debug.APP, "[Windows DnD] DragEnter: this=%x pt=(%d,%d)", this, ptX, ptY)
 
 	if pdwEffect != 0 {
 		*(*uint32)(unsafe.Pointer(pdwEffect)) = DROPEFFECT_COPY
+		writeTraceFile("DragEnter: set pdwEffect to DROPEFFECT_COPY")
 	}
 
 	comObjectsMu.RLock()
@@ -249,6 +260,7 @@ func dtDragEnter(this uintptr, pDataObject uintptr, grfKeyState uint32, ptX int3
 	comObjectsMu.RUnlock()
 
 	if impl != nil {
+		writeTraceFile("DragEnter: found impl, calling handler")
 		go func() {
 			dropMu.Lock()
 			handler := dragUpdateHandler
@@ -260,8 +272,11 @@ func dtDragEnter(this uintptr, pDataObject uintptr, grfKeyState uint32, ptX int3
 				handler(x, y)
 			}
 		}()
+	} else {
+		writeTraceFile("DragEnter: impl not found!")
 	}
 
+	writeTraceFile("DragEnter: returning S_OK")
 	return S_OK
 }
 
@@ -344,21 +359,43 @@ func dtDrop(this uintptr, pDataObject uintptr, grfKeyState uint32, ptX int32, pt
 	return S_OK
 }
 
+// writeTraceFile writes debug info to a file for tracing
+func writeTraceFile(msg string) {
+	f, err := os.OpenFile(`C:\razor_dnd_trace.txt`, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.WriteString(msg + "\n")
+}
+
+// init forces CGO to be linked by calling CgoEnabled from cgo_windows.go
+func init() {
+	if CgoEnabled() {
+		writeTraceFile("CGO is enabled")
+	}
+}
+
 // SetupExternalDrop configures the window to accept external file drops
 func SetupExternalDrop(hwnd uintptr) {
 	debug.Log(debug.APP, "[Windows DnD] SetupExternalDrop called with hwnd=%d (0x%x)", hwnd, hwnd)
+	writeTraceFile(fmt.Sprintf("SetupExternalDrop called with hwnd=%d (0x%x)", hwnd, hwnd))
 
 	if hwnd == 0 {
 		debug.Log(debug.APP, "[Windows DnD] SetupExternalDrop: hwnd is 0, skipping")
+		writeTraceFile("hwnd is 0, skipping")
 		return
 	}
 
 	// Initialize OLE
 	debug.Log(debug.APP, "[Windows DnD] Calling OleInitialize...")
+	writeTraceFile("Calling OleInitialize...")
 	hr, _, err := procOleInitialize.Call(0)
 	debug.Log(debug.APP, "[Windows DnD] OleInitialize returned: hr=0x%x, err=%v", hr, err)
+	writeTraceFile(fmt.Sprintf("OleInitialize returned: hr=0x%x, err=%v", hr, err))
 	if hr != S_OK && hr != S_FALSE {
 		debug.Log(debug.APP, "[Windows DnD] OleInitialize FAILED: 0x%x", hr)
+		writeTraceFile(fmt.Sprintf("OleInitialize FAILED: 0x%x", hr))
 		return
 	}
 
@@ -367,18 +404,44 @@ func SetupExternalDrop(hwnd uintptr) {
 	vtable := globalAlloc(vtableSize)
 	if vtable == 0 {
 		debug.Log(debug.APP, "[Windows DnD] Failed to allocate vtable")
+		writeTraceFile("Failed to allocate vtable")
 		return
 	}
+	writeTraceFile(fmt.Sprintf("Allocated vtable at 0x%x", vtable))
+
+	// Create callbacks and trace their addresses
+	cbQueryInterface := windows.NewCallback(dtQueryInterface)
+	cbAddRef := windows.NewCallback(dtAddRef)
+	cbRelease := windows.NewCallback(dtRelease)
+	cbDragEnter := windows.NewCallback(dtDragEnter)
+	cbDragOver := windows.NewCallback(dtDragOver)
+	cbDragLeave := windows.NewCallback(dtDragLeave)
+	cbDrop := windows.NewCallback(dtDrop)
+
+	writeTraceFile(fmt.Sprintf("Callbacks created:"))
+	writeTraceFile(fmt.Sprintf("  QueryInterface: 0x%x", cbQueryInterface))
+	writeTraceFile(fmt.Sprintf("  AddRef: 0x%x", cbAddRef))
+	writeTraceFile(fmt.Sprintf("  Release: 0x%x", cbRelease))
+	writeTraceFile(fmt.Sprintf("  DragEnter: 0x%x", cbDragEnter))
+	writeTraceFile(fmt.Sprintf("  DragOver: 0x%x", cbDragOver))
+	writeTraceFile(fmt.Sprintf("  DragLeave: 0x%x", cbDragLeave))
+	writeTraceFile(fmt.Sprintf("  Drop: 0x%x", cbDrop))
 
 	// Fill vtable with callback pointers
 	vtableSlice := (*[7]uintptr)(unsafe.Pointer(vtable))
-	vtableSlice[0] = windows.NewCallback(dtQueryInterface)
-	vtableSlice[1] = windows.NewCallback(dtAddRef)
-	vtableSlice[2] = windows.NewCallback(dtRelease)
-	vtableSlice[3] = windows.NewCallback(dtDragEnter)
-	vtableSlice[4] = windows.NewCallback(dtDragOver)
-	vtableSlice[5] = windows.NewCallback(dtDragLeave)
-	vtableSlice[6] = windows.NewCallback(dtDrop)
+	vtableSlice[0] = cbQueryInterface
+	vtableSlice[1] = cbAddRef
+	vtableSlice[2] = cbRelease
+	vtableSlice[3] = cbDragEnter
+	vtableSlice[4] = cbDragOver
+	vtableSlice[5] = cbDragLeave
+	vtableSlice[6] = cbDrop
+
+	// Verify vtable contents
+	writeTraceFile(fmt.Sprintf("VTable contents at 0x%x:", vtable))
+	for i := 0; i < 7; i++ {
+		writeTraceFile(fmt.Sprintf("  [%d] = 0x%x", i, vtableSlice[i]))
+	}
 
 	debug.Log(debug.APP, "[Windows DnD] vtable=%x callbacks: QI=%x AddRef=%x Release=%x DragEnter=%x DragOver=%x DragLeave=%x Drop=%x",
 		vtable, vtableSlice[0], vtableSlice[1], vtableSlice[2], vtableSlice[3], vtableSlice[4], vtableSlice[5], vtableSlice[6])
@@ -387,12 +450,19 @@ func SetupExternalDrop(hwnd uintptr) {
 	vtablePtr := globalAlloc(8)
 	if vtablePtr == 0 {
 		debug.Log(debug.APP, "[Windows DnD] Failed to allocate vtablePtr")
+		writeTraceFile("Failed to allocate vtablePtr")
 		globalFree(vtable)
 		return
 	}
+	writeTraceFile(fmt.Sprintf("Allocated vtablePtr at 0x%x", vtablePtr))
 
 	// Store pointer to vtable
 	*(*uintptr)(unsafe.Pointer(vtablePtr)) = vtable
+	writeTraceFile(fmt.Sprintf("Stored vtable pointer: *0x%x = 0x%x", vtablePtr, vtable))
+
+	// Verify the indirection
+	storedVtable := *(*uintptr)(unsafe.Pointer(vtablePtr))
+	writeTraceFile(fmt.Sprintf("Verification: reading *0x%x = 0x%x", vtablePtr, storedVtable))
 
 	// Create Go-side impl struct
 	impl := &dropTargetImpl{
@@ -409,13 +479,17 @@ func SetupExternalDrop(hwnd uintptr) {
 	comObjectsMu.Unlock()
 
 	debug.Log(debug.APP, "[Windows DnD] Created COM object: vtablePtr=%x vtable=%x", vtablePtr, vtable)
+	writeTraceFile(fmt.Sprintf("Created COM object: vtablePtr=0x%x vtable=0x%x", vtablePtr, vtable))
 
 	// Register with Windows
 	debug.Log(debug.APP, "[Windows DnD] Calling RegisterDragDrop...")
+	writeTraceFile(fmt.Sprintf("Calling RegisterDragDrop(hwnd=0x%x, pDropTarget=0x%x)", hwnd, vtablePtr))
 	hr, _, err = procRegisterDragDrop.Call(hwnd, vtablePtr)
 	debug.Log(debug.APP, "[Windows DnD] RegisterDragDrop returned: hr=0x%x, err=%v", hr, err)
+	writeTraceFile(fmt.Sprintf("RegisterDragDrop returned: hr=0x%x, err=%v", hr, err))
 	if hr != S_OK {
 		debug.Log(debug.APP, "[Windows DnD] RegisterDragDrop FAILED: 0x%x", hr)
+		writeTraceFile(fmt.Sprintf("RegisterDragDrop FAILED: 0x%x", hr))
 		comObjectsMu.Lock()
 		delete(comObjects, vtablePtr)
 		comObjectsMu.Unlock()
@@ -426,6 +500,8 @@ func SetupExternalDrop(hwnd uintptr) {
 	}
 
 	debug.Log(debug.APP, "[Windows DnD] SUCCESS - IDropTarget registered")
+	writeTraceFile("SUCCESS - IDropTarget registered")
+	writeTraceFile("---")
 }
 
 // screenToClient converts screen coordinates to client coordinates
