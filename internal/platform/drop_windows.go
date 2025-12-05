@@ -35,6 +35,7 @@ var (
 	// Store original window proc for subclassing
 	originalWndProc uintptr
 	subclassHwnd    uintptr
+	subclassCallback uintptr // prevent GC of callback
 )
 
 // SetDropHandler sets the callback for external file drops
@@ -180,13 +181,13 @@ func SetupExternalDrop(hwnd uintptr) {
 
 	// Subclass the window to intercept WM_DROPFILES
 	subclassHwnd = hwnd
-	newProc := syscall.NewCallback(dropSubclassProc)
-	oldProc, _, err := procSetWindowLongPtr.Call(hwnd, gwlpWndProc, newProc)
+	subclassCallback = syscall.NewCallback(dropSubclassProc) // store to prevent GC
+	oldProc, _, err := procSetWindowLongPtr.Call(hwnd, gwlpWndProc, subclassCallback)
 	if oldProc == 0 {
 		debug.Log(debug.APP, "[Windows DnD] SetWindowLongPtr failed: %v", err)
 		return
 	}
 	originalWndProc = oldProc
-	debug.Log(debug.APP, "[Windows DnD] Window subclassed: oldProc=0x%x newProc=0x%x", oldProc, newProc)
+	debug.Log(debug.APP, "[Windows DnD] Window subclassed: oldProc=0x%x newProc=0x%x", oldProc, subclassCallback)
 }
 

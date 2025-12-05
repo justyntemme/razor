@@ -77,35 +77,50 @@ MinGW setup produces invalid executables when CGO is enabled:
 
 **Deleted `cgo_windows.go`** to fix the invalid executable issue. The CGO approach doesn't work with the current MinGW setup and isn't needed for WM_DROPFILES.
 
-## Next Steps
+## Resolution - WM_DROPFILES Implementation (Attempt 7)
 
-1. **Implement WM_DROPFILES approach** - simpler API that doesn't require external thread callbacks
-2. If hover highlighting is critical later, revisit CGO/MinGW setup
+Successfully implemented WM_DROPFILES approach using window subclassing:
 
-## WM_DROPFILES Implementation Plan
+### Implementation Details
 
-Use the legacy `DragAcceptFiles` API instead of IDropTarget:
+1. **DragAcceptFiles** - Called on HWND to enable drop acceptance
+2. **SetWindowLongPtr(GWLP_WNDPROC)** - Subclasses Gio's window to intercept messages
+3. **WM_DROPFILES handler** - Extracts file paths using DragQueryFileW
+4. **DragFinish** - Releases HDROP handle after processing
+
+### Key Code
 
 ```go
-// Enable drop acceptance
-shell32.DragAcceptFiles(hwnd, true)
+// Enable drag-and-drop
+procDragAcceptFiles.Call(hwnd, 1)
 
-// Handle WM_DROPFILES message (0x233) in window proc
-// Use DragQueryFileW to get file paths
+// Subclass window to intercept WM_DROPFILES
+newProc := syscall.NewCallback(dropSubclassProc)
+oldProc, _, _ := procSetWindowLongPtr.Call(hwnd, gwlpWndProc, newProc)
+originalWndProc = oldProc
+
+// In dropSubclassProc:
+if msg == WM_DROPFILES {
+    handleDropFiles(wParam) // wParam is HDROP
+    return 0
+}
+return procCallWindowProc.Call(originalWndProc, hwnd, msg, wParam, lParam)
 ```
 
-**Pros:**
-- No CGO required
-- No callbacks from external threads
-- Simpler implementation
-- Works reliably
+### Why This Works (Unlike IDropTarget)
 
-**Cons:**
-- No hover highlighting during drag
-- Only notified on final drop, not during drag
-- Can't update drop target in real-time
+- WM_DROPFILES is a regular Windows message delivered to the window's message loop
+- Gio's message loop (GetMessage/DispatchMessage) runs on the Go thread
+- Our subclass procedure is called from the same thread context
+- No cross-thread callback issues like with IDropTarget's OLE callbacks
 
-**Implementation approach:**
-- May need to subclass Gio's window or hook into message loop
-- Check if Gio exposes WM_DROPFILES handling
-- Alternative: use SetWindowLongPtr to install custom WndProc
+### Limitations
+
+- No hover highlighting during drag (only notified on drop)
+- Cannot update drop target in real-time during drag
+- No DragEnter/DragOver/DragLeave events
+
+### Files Modified
+
+- `internal/platform/drop_windows.go` - Replaced IDropTarget with WM_DROPFILES
+- `internal/app/orchestrator_windows.go` - Simplified, removed debug file writes
