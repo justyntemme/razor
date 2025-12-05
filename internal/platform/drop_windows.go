@@ -92,19 +92,9 @@ var (
 
 // SetupExternalDrop configures the window to accept external file drops
 // Note: On Windows, WM_DROPFILES handling requires either CGO or a custom message loop.
-// For now, we just enable drop acceptance - actual drop handling is not implemented.
+// For now, this is a no-op - actual drop handling is not implemented.
 func SetupExternalDrop(hwnd uintptr) {
-	debug.Log(debug.APP, "[Windows DnD] SetupExternalDrop called with hwnd=0x%x", hwnd)
-
-	if hwnd == 0 {
-		debug.Log(debug.APP, "[Windows DnD] SetupExternalDrop: hwnd is 0, skipping")
-		return
-	}
-
-	// Enable drag-and-drop for this window
-	// Without CGO, we cannot subclass the window to receive WM_DROPFILES
-	// due to Go issue #20823 (callbacks from external threads don't work)
-	procDragAcceptFiles.Call(hwnd, 1)
-	debug.Log(debug.APP, "[Windows DnD] DragAcceptFiles called (drop handling requires CGO)")
+	debug.Log(debug.APP, "[Windows DnD] SetupExternalDrop called with hwnd=0x%x (disabled)", hwnd)
+	// Disabled - causes crash. Need to investigate why.
 }
 
