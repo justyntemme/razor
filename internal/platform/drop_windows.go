@@ -2,6 +2,16 @@
 
 package platform
 
+// NOTE: This file requires CGO to be enabled when building on Windows.
+// Build with: CGO_ENABLED=1 go build
+// This is required for syscall.NewCallback to work properly when called
+// from Windows OLE threads. See: https://github.com/golang/go/issues/20823
+
+/*
+#include <stdlib.h>
+*/
+import "C"
+
 import (
 	"sync"
 	"syscall"
