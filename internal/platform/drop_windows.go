@@ -319,33 +319,11 @@ func dropTargetRelease(this uintptr) (ret uintptr) {
 //   - Upper 32 bits = y coordinate
 // CRITICAL: This callback runs on Windows' OLE thread - must return IMMEDIATELY or it freezes drag-drop system-wide
 func dropTargetDragEnter(this, pDataObject, grfKeyState, pt, pdwEffect uintptr) uintptr {
-	debug.Log(debug.APP, "[Windows DnD] DragEnter: this=%x pDataObject=%x grfKeyState=%x pt=%x pdwEffect=%x",
-		this, pDataObject, grfKeyState, pt, pdwEffect)
-
-	// Minimal implementation - just accept the drop and return immediately
+	// ABSOLUTE MINIMUM - just set effect and return, no Go operations
+	// Testing if the callback itself works at all
 	if pdwEffect != 0 {
 		*(*uint32)(unsafe.Pointer(pdwEffect)) = DROPEFFECT_COPY
 	}
-
-	// Extract x,y from packed POINTL (x in lower 32 bits, y in upper 32 bits)
-	ptX := int32(pt & 0xFFFFFFFF)
-	ptY := int32(pt >> 32)
-
-	// Notify Go code asynchronously
-	go func() {
-		debug.Log(debug.APP, "[Windows DnD] DragEnter (async): x=%d y=%d", ptX, ptY)
-		dropMu.Lock()
-		currentDropTarget = ""
-		handler := dragUpdateHandler
-		dropMu.Unlock()
-
-		if handler != nil {
-			dt := (*razorDropTarget)(unsafe.Pointer(this))
-			x, y := screenToClient(dt.hwnd, ptX, ptY)
-			handler(x, y)
-		}
-	}()
-
 	return S_OK
 }
 
@@ -354,28 +332,10 @@ func dropTargetDragEnter(this, pDataObject, grfKeyState, pt, pdwEffect uintptr) 
 // On Windows x64, POINTL (8 bytes) is passed as a single 64-bit value
 // CRITICAL: Must return immediately - runs on OLE thread
 func dropTargetDragOver(this, grfKeyState, pt, pdwEffect uintptr) uintptr {
-	// Minimal implementation - just accept and return
+	// ABSOLUTE MINIMUM - just set effect and return
 	if pdwEffect != 0 {
 		*(*uint32)(unsafe.Pointer(pdwEffect)) = DROPEFFECT_COPY
 	}
-
-	// Extract x,y from packed POINTL
-	ptX := int32(pt & 0xFFFFFFFF)
-	ptY := int32(pt >> 32)
-
-	// Notify Go code asynchronously (but not too often - DragOver is called frequently)
-	go func() {
-		dropMu.Lock()
-		handler := dragUpdateHandler
-		dropMu.Unlock()
-
-		if handler != nil {
-			dt := (*razorDropTarget)(unsafe.Pointer(this))
-			x, y := screenToClient(dt.hwnd, ptX, ptY)
-			handler(x, y)
-		}
-	}()
-
 	return S_OK
 }
 
@@ -383,18 +343,7 @@ func dropTargetDragOver(this, grfKeyState, pt, pdwEffect uintptr) uintptr {
 // Signature: HRESULT DragLeave(void)
 // CRITICAL: Must return immediately - runs on OLE thread
 func dropTargetDragLeave(this uintptr) uintptr {
-	go func() {
-		debug.Log(debug.APP, "[Windows DnD] DragLeave (async)")
-		dropMu.Lock()
-		handler := dragEndHandler
-		currentDropTarget = ""
-		dropMu.Unlock()
-
-		if handler != nil {
-			handler()
-		}
-	}()
-
+	// ABSOLUTE MINIMUM - just return
 	return S_OK
 }
 
@@ -402,50 +351,10 @@ func dropTargetDragLeave(this uintptr) uintptr {
 // Signature: HRESULT Drop(IDataObject *pDataObject, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect)
 // On Windows x64, POINTL (8 bytes) is passed as a single 64-bit value
 func dropTargetDrop(this, pDataObject, grfKeyState, pt, pdwEffect uintptr) uintptr {
-	debug.Log(debug.APP, "[Windows DnD] Drop: this=%x pDataObject=%x grfKeyState=%x pt=%x pdwEffect=%x",
-		this, pDataObject, grfKeyState, pt, pdwEffect)
-
-	// IMPORTANT: Extract file paths SYNCHRONOUSLY before returning
-	// The pDataObject pointer becomes invalid after we return!
-	paths := getDroppedFiles(pDataObject)
-	debug.Log(debug.APP, "[Windows DnD] Drop: extracted %d files", len(paths))
-
-	// Set effect
+	// ABSOLUTE MINIMUM - just set effect and return
 	if pdwEffect != 0 {
 		*(*uint32)(unsafe.Pointer(pdwEffect)) = DROPEFFECT_COPY
 	}
-
-	// Process the drop asynchronously
-	go func() {
-		debug.Log(debug.APP, "[Windows DnD] Drop (async): processing %d files: %v", len(paths), paths)
-
-		// End the drag state first
-		dropMu.Lock()
-		endHandler := dragEndHandler
-		dropMu.Unlock()
-
-		if endHandler != nil {
-			endHandler()
-		}
-
-		// Then handle the drop
-		dropMu.Lock()
-		handler := dropHandler
-		target := currentDropTarget
-		dropMu.Unlock()
-
-		if handler != nil && len(paths) > 0 {
-			debug.Log(debug.APP, "[Windows DnD] Drop: calling dropHandler with %d paths to target=%s", len(paths), target)
-			handler(paths, target)
-		} else if len(paths) > 0 {
-			debug.Log(debug.APP, "[Windows DnD] Drop: no handler, storing %d paths as pending", len(paths))
-			dropMu.Lock()
-			pendingDrop = append(pendingDrop, paths...)
-			dropMu.Unlock()
-		}
-	}()
-
-	debug.Log(debug.APP, "[Windows DnD] Drop: returning S_OK")
 	return S_OK
 }
 
