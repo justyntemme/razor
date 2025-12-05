@@ -32,9 +32,8 @@ var (
 	pendingDrop       []string
 	currentDropTarget string
 
-	// Store original window proc for subclassing
-	originalWndProc uintptr
-	subclassHwnd    uintptr
+	// Store for subclassing
+	subclassHwnd     uintptr
 	subclassCallback uintptr // prevent GC of callback
 )
 
@@ -87,40 +86,34 @@ const (
 	WM_DROPFILES = 0x0233
 )
 
-// GWLP_WNDPROC is -4, but needs proper conversion for uintptr
-var gwlpWndProc = ^uintptr(4 - 1) // -4 as uintptr
-
 // Windows API
 var (
-	shell32 = windows.NewLazySystemDLL("shell32.dll")
-	user32  = windows.NewLazySystemDLL("user32.dll")
+	shell32  = windows.NewLazySystemDLL("shell32.dll")
+	comctl32 = windows.NewLazySystemDLL("comctl32.dll")
 
-	procDragAcceptFiles  = shell32.NewProc("DragAcceptFiles")
-	procDragQueryFileW   = shell32.NewProc("DragQueryFileW")
-	procDragQueryPoint   = shell32.NewProc("DragQueryPoint")
-	procDragFinish       = shell32.NewProc("DragFinish")
-	procSetWindowLongPtr = user32.NewProc("SetWindowLongPtrW")
-	procCallWindowProc   = user32.NewProc("CallWindowProcW")
-	procDefWindowProc    = user32.NewProc("DefWindowProcW")
+	procDragAcceptFiles    = shell32.NewProc("DragAcceptFiles")
+	procDragQueryFileW     = shell32.NewProc("DragQueryFileW")
+	procDragQueryPoint     = shell32.NewProc("DragQueryPoint")
+	procDragFinish         = shell32.NewProc("DragFinish")
+	procSetWindowSubclass  = comctl32.NewProc("SetWindowSubclass")
+	procDefSubclassProc    = comctl32.NewProc("DefSubclassProc")
 )
 
 
+// Subclass ID for our handler
+const dropSubclassID = 1
+
 // dropSubclassProc handles WM_DROPFILES messages
-func dropSubclassProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
+// Signature for SetWindowSubclass: SUBCLASSPROC(HWND, UINT, WPARAM, LPARAM, UINT_PTR uIdSubclass, DWORD_PTR dwRefData)
+func dropSubclassProc(hwnd uintptr, msg uint32, wParam, lParam, uIdSubclass, dwRefData uintptr) uintptr {
 	if msg == WM_DROPFILES {
 		debug.Log(debug.APP, "[Windows DnD] WM_DROPFILES received! wParam=0x%x", wParam)
 		handleDropFiles(wParam)
 		return 0
 	}
 
-	// Call original window procedure for all other messages
-	oldProc := originalWndProc
-	if oldProc == 0 {
-		// Safety: if original proc not set yet, use DefWindowProc
-		ret, _, _ := procDefWindowProc.Call(hwnd, uintptr(msg), wParam, lParam)
-		return ret
-	}
-	ret, _, _ := procCallWindowProc.Call(oldProc, hwnd, uintptr(msg), wParam, lParam)
+	// Call next handler in subclass chain
+	ret, _, _ := procDefSubclassProc.Call(hwnd, uintptr(msg), wParam, lParam)
 	return ret
 }
 
@@ -186,15 +179,14 @@ func SetupExternalDrop(hwnd uintptr) {
 	procDragAcceptFiles.Call(hwnd, 1)
 	debug.Log(debug.APP, "[Windows DnD] DragAcceptFiles called")
 
-	// Subclass the window to intercept WM_DROPFILES
+	// Subclass the window using comctl32 SetWindowSubclass (safer than SetWindowLongPtr)
 	subclassHwnd = hwnd
 	subclassCallback = syscall.NewCallback(dropSubclassProc) // store to prevent GC
-	oldProc, _, err := procSetWindowLongPtr.Call(hwnd, gwlpWndProc, subclassCallback)
-	if oldProc == 0 {
-		debug.Log(debug.APP, "[Windows DnD] SetWindowLongPtr failed: %v", err)
+	ret, _, err := procSetWindowSubclass.Call(hwnd, subclassCallback, dropSubclassID, 0)
+	if ret == 0 {
+		debug.Log(debug.APP, "[Windows DnD] SetWindowSubclass failed: %v", err)
 		return
 	}
-	originalWndProc = oldProc
-	debug.Log(debug.APP, "[Windows DnD] Window subclassed: oldProc=0x%x newProc=0x%x", oldProc, subclassCallback)
+	debug.Log(debug.APP, "[Windows DnD] Window subclassed with SetWindowSubclass")
 }
 
