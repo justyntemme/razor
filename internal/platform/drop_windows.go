@@ -369,12 +369,6 @@ func writeTraceFile(msg string) {
 	f.WriteString(msg + "\n")
 }
 
-// init forces CGO to be linked by calling CgoEnabled from cgo_windows.go
-func init() {
-	if CgoEnabled() {
-		writeTraceFile("CGO is enabled")
-	}
-}
 
 // SetupExternalDrop configures the window to accept external file drops
 func SetupExternalDrop(hwnd uintptr) {
