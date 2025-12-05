@@ -91,10 +91,19 @@ var (
 
 
 // SetupExternalDrop configures the window to accept external file drops
-// Note: On Windows, WM_DROPFILES handling requires either CGO or a custom message loop.
-// For now, this is a no-op - actual drop handling is not implemented.
+// Note: On Windows, WM_DROPFILES handling requires CGO to subclass the window.
+// For now, we just enable drop acceptance so the cursor shows correctly.
+// The actual drop won't be handled until CGO support is added.
 func SetupExternalDrop(hwnd uintptr) {
-	debug.Log(debug.APP, "[Windows DnD] SetupExternalDrop called with hwnd=0x%x (disabled)", hwnd)
-	// Disabled - causes crash. Need to investigate why.
+	debug.Log(debug.APP, "[Windows DnD] SetupExternalDrop called with hwnd=0x%x", hwnd)
+
+	if hwnd == 0 {
+		debug.Log(debug.APP, "[Windows DnD] SetupExternalDrop: hwnd is 0, skipping")
+		return
+	}
+
+	// Enable drag-and-drop cursor for this window
+	procDragAcceptFiles.Call(hwnd, 1)
+	debug.Log(debug.APP, "[Windows DnD] DragAcceptFiles called - drop cursor enabled (handler not implemented)")
 }
 
