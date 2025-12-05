@@ -375,14 +375,15 @@ func SetupExternalDrop(hwnd uintptr) {
 	}
 	writeTraceFile(fmt.Sprintf("Allocated vtable at 0x%x", vtable))
 
-	// Create callbacks and trace their addresses
-	cbQueryInterface := windows.NewCallback(dtQueryInterface)
-	cbAddRef := windows.NewCallback(dtAddRef)
-	cbRelease := windows.NewCallback(dtRelease)
-	cbDragEnter := windows.NewCallback(dtDragEnter)
-	cbDragOver := windows.NewCallback(dtDragOver)
-	cbDragLeave := windows.NewCallback(dtDragLeave)
-	cbDrop := windows.NewCallback(dtDrop)
+	// Create callbacks using syscall.NewCallback
+	// Note: syscall.NewCallback may work differently than windows.NewCallback
+	cbQueryInterface := syscall.NewCallback(dtQueryInterface)
+	cbAddRef := syscall.NewCallback(dtAddRef)
+	cbRelease := syscall.NewCallback(dtRelease)
+	cbDragEnter := syscall.NewCallback(dtDragEnter)
+	cbDragOver := syscall.NewCallback(dtDragOver)
+	cbDragLeave := syscall.NewCallback(dtDragLeave)
+	cbDrop := syscall.NewCallback(dtDrop)
 
 	writeTraceFile(fmt.Sprintf("Callbacks created:"))
 	writeTraceFile(fmt.Sprintf("  QueryInterface: 0x%x", cbQueryInterface))
