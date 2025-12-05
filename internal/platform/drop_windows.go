@@ -314,17 +314,26 @@ func dropTargetRelease(this uintptr) (ret uintptr) {
 
 // IDropTarget::DragEnter
 // Signature: HRESULT DragEnter(IDataObject *pDataObject, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect)
-// All parameters as uintptr for syscall.NewCallback compatibility
+// On Windows x64, POINTL (8 bytes) is passed as a single 64-bit value in a register:
+//   - Lower 32 bits = x coordinate
+//   - Upper 32 bits = y coordinate
 // CRITICAL: This callback runs on Windows' OLE thread - must return IMMEDIATELY or it freezes drag-drop system-wide
-func dropTargetDragEnter(this, pDataObject, grfKeyState, ptLo, ptHi, pdwEffect uintptr) uintptr {
+func dropTargetDragEnter(this, pDataObject, grfKeyState, pt, pdwEffect uintptr) uintptr {
+	debug.Log(debug.APP, "[Windows DnD] DragEnter: this=%x pDataObject=%x grfKeyState=%x pt=%x pdwEffect=%x",
+		this, pDataObject, grfKeyState, pt, pdwEffect)
+
 	// Minimal implementation - just accept the drop and return immediately
 	if pdwEffect != 0 {
 		*(*uint32)(unsafe.Pointer(pdwEffect)) = DROPEFFECT_COPY
 	}
 
+	// Extract x,y from packed POINTL (x in lower 32 bits, y in upper 32 bits)
+	ptX := int32(pt & 0xFFFFFFFF)
+	ptY := int32(pt >> 32)
+
 	// Notify Go code asynchronously
 	go func() {
-		debug.Log(debug.APP, "[Windows DnD] DragEnter (async): this=%x", this)
+		debug.Log(debug.APP, "[Windows DnD] DragEnter (async): x=%d y=%d", ptX, ptY)
 		dropMu.Lock()
 		currentDropTarget = ""
 		handler := dragUpdateHandler
@@ -332,7 +341,7 @@ func dropTargetDragEnter(this, pDataObject, grfKeyState, ptLo, ptHi, pdwEffect u
 
 		if handler != nil {
 			dt := (*razorDropTarget)(unsafe.Pointer(this))
-			x, y := screenToClient(dt.hwnd, int32(ptLo), int32(ptHi))
+			x, y := screenToClient(dt.hwnd, ptX, ptY)
 			handler(x, y)
 		}
 	}()
@@ -342,13 +351,17 @@ func dropTargetDragEnter(this, pDataObject, grfKeyState, ptLo, ptHi, pdwEffect u
 
 // IDropTarget::DragOver
 // Signature: HRESULT DragOver(DWORD grfKeyState, POINTL pt, DWORD *pdwEffect)
-// All parameters as uintptr for syscall.NewCallback compatibility
+// On Windows x64, POINTL (8 bytes) is passed as a single 64-bit value
 // CRITICAL: Must return immediately - runs on OLE thread
-func dropTargetDragOver(this, grfKeyState, ptLo, ptHi, pdwEffect uintptr) uintptr {
+func dropTargetDragOver(this, grfKeyState, pt, pdwEffect uintptr) uintptr {
 	// Minimal implementation - just accept and return
 	if pdwEffect != 0 {
 		*(*uint32)(unsafe.Pointer(pdwEffect)) = DROPEFFECT_COPY
 	}
+
+	// Extract x,y from packed POINTL
+	ptX := int32(pt & 0xFFFFFFFF)
+	ptY := int32(pt >> 32)
 
 	// Notify Go code asynchronously (but not too often - DragOver is called frequently)
 	go func() {
@@ -358,7 +371,7 @@ func dropTargetDragOver(this, grfKeyState, ptLo, ptHi, pdwEffect uintptr) uintpt
 
 		if handler != nil {
 			dt := (*razorDropTarget)(unsafe.Pointer(this))
-			x, y := screenToClient(dt.hwnd, int32(ptLo), int32(ptHi))
+			x, y := screenToClient(dt.hwnd, ptX, ptY)
 			handler(x, y)
 		}
 	}()
@@ -387,9 +400,10 @@ func dropTargetDragLeave(this uintptr) uintptr {
 
 // IDropTarget::Drop
 // Signature: HRESULT Drop(IDataObject *pDataObject, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect)
-// All parameters as uintptr for syscall.NewCallback compatibility
-func dropTargetDrop(this, pDataObject, grfKeyState, ptLo, ptHi, pdwEffect uintptr) uintptr {
-	debug.Log(debug.APP, "[Windows DnD] Drop: this=%x, pDataObject=%x", this, pDataObject)
+// On Windows x64, POINTL (8 bytes) is passed as a single 64-bit value
+func dropTargetDrop(this, pDataObject, grfKeyState, pt, pdwEffect uintptr) uintptr {
+	debug.Log(debug.APP, "[Windows DnD] Drop: this=%x pDataObject=%x grfKeyState=%x pt=%x pdwEffect=%x",
+		this, pDataObject, grfKeyState, pt, pdwEffect)
 
 	// IMPORTANT: Extract file paths SYNCHRONOUSLY before returning
 	// The pDataObject pointer becomes invalid after we return!
