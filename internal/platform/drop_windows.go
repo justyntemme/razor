@@ -13,6 +13,7 @@ package platform
 import "C"
 
 import (
+	"runtime"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -204,12 +205,17 @@ func SetupExternalDrop(hwnd uintptr) {
 		return
 	}
 
+	// Lock this goroutine to the OS thread - OLE requires thread affinity
+	runtime.LockOSThread()
+	debug.Log(debug.APP, "[Windows DnD] Locked to OS thread")
+
 	// Initialize OLE
 	debug.Log(debug.APP, "[Windows DnD] Calling OleInitialize...")
 	hr, _, err := procOleInitialize.Call(0)
 	debug.Log(debug.APP, "[Windows DnD] OleInitialize returned: hr=0x%x, err=%v", hr, err)
 	if hr != S_OK && hr != S_FALSE {
 		debug.Log(debug.APP, "[Windows DnD] OleInitialize FAILED: 0x%x", hr)
+		runtime.UnlockOSThread()
 		return
 	}
 	debug.Log(debug.APP, "[Windows DnD] OleInitialize succeeded (hr=0x%x)", hr)
@@ -319,8 +325,10 @@ func dropTargetRelease(this uintptr) (ret uintptr) {
 //   - Upper 32 bits = y coordinate
 // CRITICAL: This callback runs on Windows' OLE thread - must return IMMEDIATELY or it freezes drag-drop system-wide
 func dropTargetDragEnter(this, pDataObject, grfKeyState, pt, pdwEffect uintptr) uintptr {
+	// Write to a file to prove we got here - debug.Log might not work from COM thread
+	writeDebugFile("DragEnter called")
+
 	// ABSOLUTE MINIMUM - just set effect and return, no Go operations
-	// Testing if the callback itself works at all
 	if pdwEffect != 0 {
 		*(*uint32)(unsafe.Pointer(pdwEffect)) = DROPEFFECT_COPY
 	}
@@ -356,6 +364,40 @@ func dropTargetDrop(this, pDataObject, grfKeyState, pt, pdwEffect uintptr) uintp
 		*(*uint32)(unsafe.Pointer(pdwEffect)) = DROPEFFECT_COPY
 	}
 	return S_OK
+}
+
+// writeDebugFile appends a message to a debug file - used to debug callbacks from COM threads
+// where normal Go logging might not work
+func writeDebugFile(msg string) {
+	// Use Windows API directly to avoid Go runtime as much as possible
+	kernel32 := windows.NewLazySystemDLL("kernel32.dll")
+	createFile := kernel32.NewProc("CreateFileW")
+	writeFile := kernel32.NewProc("WriteFile")
+	closeHandle := kernel32.NewProc("CloseHandle")
+
+	path, _ := windows.UTF16PtrFromString("C:\\razor_dnd_debug.txt")
+	h, _, _ := createFile.Call(
+		uintptr(unsafe.Pointer(path)),
+		0x40000000, // GENERIC_WRITE
+		0x00000001, // FILE_SHARE_READ
+		0,
+		4,          // OPEN_ALWAYS
+		0x00000080, // FILE_ATTRIBUTE_NORMAL
+		0,
+	)
+	if h == 0 || h == ^uintptr(0) {
+		return
+	}
+	defer closeHandle.Call(h)
+
+	// Seek to end
+	setFilePointer := kernel32.NewProc("SetFilePointer")
+	setFilePointer.Call(h, 0, 0, 2) // FILE_END
+
+	// Write message with newline
+	data := []byte(msg + "\n")
+	var written uint32
+	writeFile.Call(h, uintptr(unsafe.Pointer(&data[0])), uintptr(len(data)), uintptr(unsafe.Pointer(&written)), 0)
 }
 
 // screenToClient converts screen coordinates to client coordinates with DPI scaling
