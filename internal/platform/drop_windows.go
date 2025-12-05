@@ -251,65 +251,26 @@ func unpackPOINTL(pt uintptr) (x, y int32) {
 	return int32(pt & 0xFFFFFFFF), int32(pt >> 32)
 }
 
+// Minimal DragEnter - just set effect and return
 func dtDragEnter(this uintptr, pDataObject uintptr, grfKeyState uint32, pt uintptr, pdwEffect uintptr) uintptr {
-	ptX, ptY := unpackPOINTL(pt)
-	writeTraceFile(fmt.Sprintf(">>> DragEnter called: this=0x%x pDataObject=0x%x pt=(%d,%d) pdwEffect=0x%x", this, pDataObject, ptX, ptY, pdwEffect))
-	debug.Log(debug.APP, "[Windows DnD] DragEnter: this=%x pt=(%d,%d)", this, ptX, ptY)
+	// Write to file FIRST to see if we even get here
+	f, _ := os.OpenFile(`C:\razor_callback.txt`, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if f != nil {
+		f.WriteString("DragEnter called!\n")
+		f.Close()
+	}
 
 	if pdwEffect != 0 {
 		*(*uint32)(unsafe.Pointer(pdwEffect)) = DROPEFFECT_COPY
-		writeTraceFile("DragEnter: set pdwEffect to DROPEFFECT_COPY")
 	}
-
-	comObjectsMu.RLock()
-	impl := comObjects[this]
-	comObjectsMu.RUnlock()
-
-	if impl != nil {
-		writeTraceFile("DragEnter: found impl, calling handler")
-		go func() {
-			dropMu.Lock()
-			handler := dragUpdateHandler
-			currentDropTarget = ""
-			dropMu.Unlock()
-
-			if handler != nil {
-				x, y := screenToClient(impl.hwnd, ptX, ptY)
-				handler(x, y)
-			}
-		}()
-	} else {
-		writeTraceFile("DragEnter: impl not found!")
-	}
-
-	writeTraceFile("DragEnter: returning S_OK")
 	return S_OK
 }
 
+// Minimal DragOver - just set effect and return
 func dtDragOver(this uintptr, grfKeyState uint32, pt uintptr, pdwEffect uintptr) uintptr {
-	ptX, ptY := unpackPOINTL(pt)
-
 	if pdwEffect != 0 {
 		*(*uint32)(unsafe.Pointer(pdwEffect)) = DROPEFFECT_COPY
 	}
-
-	comObjectsMu.RLock()
-	impl := comObjects[this]
-	comObjectsMu.RUnlock()
-
-	if impl != nil {
-		go func() {
-			dropMu.Lock()
-			handler := dragUpdateHandler
-			dropMu.Unlock()
-
-			if handler != nil {
-				x, y := screenToClient(impl.hwnd, ptX, ptY)
-				handler(x, y)
-			}
-		}()
-	}
-
 	return S_OK
 }
 
