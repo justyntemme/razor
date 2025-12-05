@@ -2,9 +2,9 @@
 
 package platform
 
-// Windows IDropTarget implementation based on rodrigocfd/windigo pattern.
-// Key insight: COM uses double-pointer indirection (ppvt **vtbl pattern).
-// No CGO required - pure Go syscalls.
+// Windows IDropTarget implementation using GlobalAlloc for COM-compatible memory.
+// Based on wailsapp/go-webview2 combridge pattern.
+// Key insight: COM vtables must be in Windows-allocated memory, not Go heap.
 
 import (
 	"sync"
@@ -33,22 +33,9 @@ var (
 	pendingDrop       []string
 	currentDropTarget string
 
-	// Pointer cache to prevent GC from collecting COM objects
-	ptrCache     = make(map[uintptr]struct{})
-	ptrCacheMu   sync.Mutex
+	// Global drop target - prevent GC
+	globalDropTarget *dropTargetImpl
 )
-
-func ptrCacheAdd(p unsafe.Pointer) {
-	ptrCacheMu.Lock()
-	ptrCache[uintptr(p)] = struct{}{}
-	ptrCacheMu.Unlock()
-}
-
-func ptrCacheDelete(p unsafe.Pointer) {
-	ptrCacheMu.Lock()
-	delete(ptrCache, uintptr(p))
-	ptrCacheMu.Unlock()
-}
 
 // SetDropHandler sets the callback for external file drops
 func SetDropHandler(handler DropHandler) {
@@ -96,17 +83,19 @@ func GetCurrentDropTarget() string {
 
 // COM/OLE constants
 const (
-	S_OK            = 0
-	S_FALSE         = 1
-	E_NOINTERFACE   = 0x80004002
-	E_UNEXPECTED    = 0x8000FFFF
-	DROPEFFECT_NONE = 0
-	DROPEFFECT_COPY = 1
-	DROPEFFECT_MOVE = 2
-	DROPEFFECT_LINK = 4
-	CF_HDROP        = 15
+	S_OK             = 0
+	S_FALSE          = 1
+	E_NOINTERFACE    = 0x80004002
+	E_UNEXPECTED     = 0x8000FFFF
+	DROPEFFECT_NONE  = 0
+	DROPEFFECT_COPY  = 1
+	DROPEFFECT_MOVE  = 2
+	DROPEFFECT_LINK  = 4
+	CF_HDROP         = 15
 	DVASPECT_CONTENT = 1
-	TYMED_HGLOBAL   = 1
+	TYMED_HGLOBAL    = 1
+	GMEM_FIXED       = 0x0000
+	GMEM_ZEROINIT    = 0x0040
 )
 
 // GUIDs
@@ -115,8 +104,8 @@ var (
 	IID_IDropTarget = windows.GUID{0x00000122, 0x0000, 0x0000, [8]byte{0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}}
 )
 
-// POINT structure (matches Windows POINT)
-type POINT struct {
+// POINTL structure for drag coordinates (must match Windows POINTL exactly)
+type POINTL struct {
 	X int32
 	Y int32
 }
@@ -137,42 +126,16 @@ type STGMEDIUM struct {
 	pUnkForRelease uintptr
 }
 
-// _IUnknownVt is the base COM vtable
-type _IUnknownVt struct {
-	QueryInterface uintptr
-	AddRef         uintptr
-	Release        uintptr
-}
-
-// _IDropTargetVt extends IUnknown vtable with IDropTarget methods
-type _IDropTargetVt struct {
-	_IUnknownVt
-	DragEnter uintptr
-	DragOver  uintptr
-	DragLeave uintptr
-	Drop      uintptr
-}
-
-// _IDropTargetImpl is our implementation struct
-// Critical: vt must be first field (vtable)
-type _IDropTargetImpl struct {
-	vt      _IDropTargetVt
-	counter uint32
-	hwnd    windows.HWND
-}
-
-// Global vtable pointers - initialized once
-var dropTargetVtPtrs _IDropTargetVt
-var dropTargetVtInit bool
-
 // Windows API
 var (
-	ole32   = windows.NewLazySystemDLL("ole32.dll")
-	shell32 = windows.NewLazySystemDLL("shell32.dll")
-	user32  = windows.NewLazySystemDLL("user32.dll")
+	kernel32 = windows.NewLazySystemDLL("kernel32.dll")
+	ole32    = windows.NewLazySystemDLL("ole32.dll")
+	shell32  = windows.NewLazySystemDLL("shell32.dll")
+	user32   = windows.NewLazySystemDLL("user32.dll")
 
+	procGlobalAlloc      = kernel32.NewProc("GlobalAlloc")
+	procGlobalFree       = kernel32.NewProc("GlobalFree")
 	procOleInitialize    = ole32.NewProc("OleInitialize")
-	procOleUninitialize  = ole32.NewProc("OleUninitialize")
 	procRegisterDragDrop = ole32.NewProc("RegisterDragDrop")
 	procRevokeDragDrop   = ole32.NewProc("RevokeDragDrop")
 	procReleaseStgMedium = ole32.NewProc("ReleaseStgMedium")
@@ -180,150 +143,205 @@ var (
 	procScreenToClient   = user32.NewProc("ScreenToClient")
 )
 
-func initDropTargetVt() {
-	if dropTargetVtInit {
-		return
-	}
-	dropTargetVtInit = true
-
-	debug.Log(debug.APP, "[Windows DnD] Initializing vtable callbacks")
-
-	dropTargetVtPtrs = _IDropTargetVt{
-		_IUnknownVt: _IUnknownVt{
-			QueryInterface: syscall.NewCallback(dropTargetQueryInterface),
-			AddRef: syscall.NewCallback(func(p uintptr) uintptr {
-				debug.Log(debug.APP, "[Windows DnD] AddRef called, p=%x", p)
-				ppImpl := (**_IDropTargetImpl)(unsafe.Pointer(p))
-				newCount := atomic.AddUint32(&(*ppImpl).counter, 1)
-				debug.Log(debug.APP, "[Windows DnD] AddRef: count now %d", newCount)
-				return uintptr(newCount)
-			}),
-			Release: syscall.NewCallback(func(p uintptr) uintptr {
-				debug.Log(debug.APP, "[Windows DnD] Release called, p=%x", p)
-				ppImpl := (**_IDropTargetImpl)(unsafe.Pointer(p))
-				newCount := atomic.AddUint32(&(*ppImpl).counter, ^uint32(0)) // decrement
-				debug.Log(debug.APP, "[Windows DnD] Release: count now %d", newCount)
-				if newCount == 0 {
-					ptrCacheDelete(unsafe.Pointer(*ppImpl))
-					ptrCacheDelete(unsafe.Pointer(ppImpl))
-				}
-				return uintptr(newCount)
-			}),
-		},
-		DragEnter: syscall.NewCallback(func(p uintptr, vtDataObj uintptr, grfKeyState uint32, pt POINT, pdwEffect *uint32) uintptr {
-			debug.Log(debug.APP, "[Windows DnD] DragEnter: p=%x pt=(%d,%d)", p, pt.X, pt.Y)
-			if pdwEffect != nil {
-				*pdwEffect = DROPEFFECT_COPY
-			}
-
-			// Notify handler asynchronously
-			go func() {
-				dropMu.Lock()
-				handler := dragUpdateHandler
-				currentDropTarget = ""
-				dropMu.Unlock()
-
-				if handler != nil {
-					ppImpl := (**_IDropTargetImpl)(unsafe.Pointer(p))
-					x, y := screenToClient((*ppImpl).hwnd, pt.X, pt.Y)
-					handler(x, y)
-				}
-			}()
-
-			return S_OK
-		}),
-		DragOver: syscall.NewCallback(func(p uintptr, grfKeyState uint32, pt POINT, pdwEffect *uint32) uintptr {
-			if pdwEffect != nil {
-				*pdwEffect = DROPEFFECT_COPY
-			}
-
-			go func() {
-				dropMu.Lock()
-				handler := dragUpdateHandler
-				dropMu.Unlock()
-
-				if handler != nil {
-					ppImpl := (**_IDropTargetImpl)(unsafe.Pointer(p))
-					x, y := screenToClient((*ppImpl).hwnd, pt.X, pt.Y)
-					handler(x, y)
-				}
-			}()
-
-			return S_OK
-		}),
-		DragLeave: syscall.NewCallback(func(p uintptr) uintptr {
-			debug.Log(debug.APP, "[Windows DnD] DragLeave: p=%x", p)
-			go func() {
-				dropMu.Lock()
-				handler := dragEndHandler
-				currentDropTarget = ""
-				dropMu.Unlock()
-
-				if handler != nil {
-					handler()
-				}
-			}()
-			return S_OK
-		}),
-		Drop: syscall.NewCallback(func(p uintptr, vtDataObj uintptr, grfKeyState uint32, pt POINT, pdwEffect *uint32) uintptr {
-			debug.Log(debug.APP, "[Windows DnD] Drop: p=%x vtDataObj=%x pt=(%d,%d)", p, vtDataObj, pt.X, pt.Y)
-
-			// Extract files synchronously before returning
-			paths := getDroppedFiles(vtDataObj)
-			debug.Log(debug.APP, "[Windows DnD] Drop: extracted %d files", len(paths))
-
-			if pdwEffect != nil {
-				*pdwEffect = DROPEFFECT_COPY
-			}
-
-			go func() {
-				dropMu.Lock()
-				endHandler := dragEndHandler
-				dropMu.Unlock()
-				if endHandler != nil {
-					endHandler()
-				}
-
-				dropMu.Lock()
-				handler := dropHandler
-				target := currentDropTarget
-				dropMu.Unlock()
-
-				if handler != nil && len(paths) > 0 {
-					debug.Log(debug.APP, "[Windows DnD] Drop: calling handler with %d paths", len(paths))
-					handler(paths, target)
-				} else if len(paths) > 0 {
-					dropMu.Lock()
-					pendingDrop = append(pendingDrop, paths...)
-					dropMu.Unlock()
-				}
-			}()
-
-			return S_OK
-		}),
-	}
-
-	debug.Log(debug.APP, "[Windows DnD] vtable initialized: DragEnter=%x Drop=%x",
-		dropTargetVtPtrs.DragEnter, dropTargetVtPtrs.Drop)
+// dropTargetImpl holds our IDropTarget state
+// The COM object pointer points to vtablePtr, which points to the vtable
+type dropTargetImpl struct {
+	vtablePtr uintptr      // Points to vtable (allocated with GlobalAlloc)
+	vtable    uintptr      // The vtable itself (allocated with GlobalAlloc)
+	refCount  int32        // Reference count
+	hwnd      windows.HWND // Window handle
 }
 
-// QueryInterface callback
-func dropTargetQueryInterface(p uintptr, riid *windows.GUID, ppvObject *uintptr) uintptr {
-	debug.Log(debug.APP, "[Windows DnD] QueryInterface: p=%x", p)
-	if riid == nil || ppvObject == nil {
+// Global map from COM pointer to Go object
+var (
+	comObjects   = make(map[uintptr]*dropTargetImpl)
+	comObjectsMu sync.RWMutex
+)
+
+// globalAlloc allocates Windows memory that won't be moved by Go GC
+func globalAlloc(size int) uintptr {
+	ptr, _, _ := procGlobalAlloc.Call(GMEM_FIXED|GMEM_ZEROINIT, uintptr(size))
+	return ptr
+}
+
+// globalFree frees Windows memory
+func globalFree(ptr uintptr) {
+	procGlobalFree.Call(ptr)
+}
+
+// Callback functions - these must have the exact Windows x64 calling convention signatures
+
+func dtQueryInterface(this uintptr, riid uintptr, ppvObject uintptr) uintptr {
+	debug.Log(debug.APP, "[Windows DnD] QueryInterface called: this=%x", this)
+
+	if riid == 0 || ppvObject == 0 {
 		return E_UNEXPECTED
 	}
-	*ppvObject = 0
 
-	if guidEqual(riid, &IID_IUnknown) || guidEqual(riid, &IID_IDropTarget) {
-		debug.Log(debug.APP, "[Windows DnD] QueryInterface: matched")
-		*ppvObject = p
-		// Call AddRef
-		ppImpl := (**_IDropTargetImpl)(unsafe.Pointer(p))
-		atomic.AddUint32(&(*ppImpl).counter, 1)
+	guid := (*windows.GUID)(unsafe.Pointer(riid))
+	ppv := (*uintptr)(unsafe.Pointer(ppvObject))
+	*ppv = 0
+
+	if guidEqual(guid, &IID_IUnknown) || guidEqual(guid, &IID_IDropTarget) {
+		debug.Log(debug.APP, "[Windows DnD] QueryInterface: matched IDropTarget/IUnknown")
+		*ppv = this
+		dtAddRef(this)
 		return S_OK
 	}
+
+	debug.Log(debug.APP, "[Windows DnD] QueryInterface: E_NOINTERFACE")
 	return E_NOINTERFACE
+}
+
+func dtAddRef(this uintptr) uintptr {
+	debug.Log(debug.APP, "[Windows DnD] AddRef called: this=%x", this)
+
+	comObjectsMu.RLock()
+	impl := comObjects[this]
+	comObjectsMu.RUnlock()
+
+	if impl == nil {
+		debug.Log(debug.APP, "[Windows DnD] AddRef: impl not found!")
+		return 1
+	}
+
+	newCount := atomic.AddInt32(&impl.refCount, 1)
+	debug.Log(debug.APP, "[Windows DnD] AddRef: count=%d", newCount)
+	return uintptr(newCount)
+}
+
+func dtRelease(this uintptr) uintptr {
+	debug.Log(debug.APP, "[Windows DnD] Release called: this=%x", this)
+
+	comObjectsMu.RLock()
+	impl := comObjects[this]
+	comObjectsMu.RUnlock()
+
+	if impl == nil {
+		debug.Log(debug.APP, "[Windows DnD] Release: impl not found!")
+		return 0
+	}
+
+	newCount := atomic.AddInt32(&impl.refCount, -1)
+	debug.Log(debug.APP, "[Windows DnD] Release: count=%d", newCount)
+
+	if newCount == 0 {
+		comObjectsMu.Lock()
+		delete(comObjects, this)
+		comObjectsMu.Unlock()
+		// Free Windows memory
+		globalFree(impl.vtable)
+		globalFree(impl.vtablePtr)
+	}
+
+	return uintptr(newCount)
+}
+
+func dtDragEnter(this uintptr, pDataObject uintptr, grfKeyState uint32, ptX int32, ptY int32, pdwEffect uintptr) uintptr {
+	debug.Log(debug.APP, "[Windows DnD] DragEnter: this=%x pt=(%d,%d)", this, ptX, ptY)
+
+	if pdwEffect != 0 {
+		*(*uint32)(unsafe.Pointer(pdwEffect)) = DROPEFFECT_COPY
+	}
+
+	comObjectsMu.RLock()
+	impl := comObjects[this]
+	comObjectsMu.RUnlock()
+
+	if impl != nil {
+		go func() {
+			dropMu.Lock()
+			handler := dragUpdateHandler
+			currentDropTarget = ""
+			dropMu.Unlock()
+
+			if handler != nil {
+				x, y := screenToClient(impl.hwnd, ptX, ptY)
+				handler(x, y)
+			}
+		}()
+	}
+
+	return S_OK
+}
+
+func dtDragOver(this uintptr, grfKeyState uint32, ptX int32, ptY int32, pdwEffect uintptr) uintptr {
+	if pdwEffect != 0 {
+		*(*uint32)(unsafe.Pointer(pdwEffect)) = DROPEFFECT_COPY
+	}
+
+	comObjectsMu.RLock()
+	impl := comObjects[this]
+	comObjectsMu.RUnlock()
+
+	if impl != nil {
+		go func() {
+			dropMu.Lock()
+			handler := dragUpdateHandler
+			dropMu.Unlock()
+
+			if handler != nil {
+				x, y := screenToClient(impl.hwnd, ptX, ptY)
+				handler(x, y)
+			}
+		}()
+	}
+
+	return S_OK
+}
+
+func dtDragLeave(this uintptr) uintptr {
+	debug.Log(debug.APP, "[Windows DnD] DragLeave: this=%x", this)
+
+	go func() {
+		dropMu.Lock()
+		handler := dragEndHandler
+		currentDropTarget = ""
+		dropMu.Unlock()
+
+		if handler != nil {
+			handler()
+		}
+	}()
+
+	return S_OK
+}
+
+func dtDrop(this uintptr, pDataObject uintptr, grfKeyState uint32, ptX int32, ptY int32, pdwEffect uintptr) uintptr {
+	debug.Log(debug.APP, "[Windows DnD] Drop: this=%x pDataObject=%x pt=(%d,%d)", this, pDataObject, ptX, ptY)
+
+	// Extract files synchronously before returning
+	paths := getDroppedFiles(pDataObject)
+	debug.Log(debug.APP, "[Windows DnD] Drop: extracted %d files", len(paths))
+
+	if pdwEffect != 0 {
+		*(*uint32)(unsafe.Pointer(pdwEffect)) = DROPEFFECT_COPY
+	}
+
+	go func() {
+		dropMu.Lock()
+		endHandler := dragEndHandler
+		dropMu.Unlock()
+		if endHandler != nil {
+			endHandler()
+		}
+
+		dropMu.Lock()
+		handler := dropHandler
+		target := currentDropTarget
+		dropMu.Unlock()
+
+		if handler != nil && len(paths) > 0 {
+			debug.Log(debug.APP, "[Windows DnD] Drop: calling handler with %d paths", len(paths))
+			handler(paths, target)
+		} else if len(paths) > 0 {
+			dropMu.Lock()
+			pendingDrop = append(pendingDrop, paths...)
+			dropMu.Unlock()
+		}
+	}()
+
+	return S_OK
 }
 
 // SetupExternalDrop configures the window to accept external file drops
@@ -335,9 +353,6 @@ func SetupExternalDrop(hwnd uintptr) {
 		return
 	}
 
-	// Initialize vtable
-	initDropTargetVt()
-
 	// Initialize OLE
 	debug.Log(debug.APP, "[Windows DnD] Calling OleInitialize...")
 	hr, _, err := procOleInitialize.Call(0)
@@ -347,31 +362,66 @@ func SetupExternalDrop(hwnd uintptr) {
 		return
 	}
 
-	// Create implementation struct (on Go heap)
-	pImpl := &_IDropTargetImpl{
-		vt:      dropTargetVtPtrs, // copy vtable pointers
-		counter: 1,
-		hwnd:    windows.HWND(hwnd),
+	// Allocate vtable in Windows memory (7 function pointers)
+	vtableSize := 7 * 8 // 7 pointers, 8 bytes each on x64
+	vtable := globalAlloc(vtableSize)
+	if vtable == 0 {
+		debug.Log(debug.APP, "[Windows DnD] Failed to allocate vtable")
+		return
 	}
-	ptrCacheAdd(unsafe.Pointer(pImpl)) // prevent GC
 
-	// Create pointer-to-pointer (COM expects this indirection)
-	ppImpl := &pImpl
-	ptrCacheAdd(unsafe.Pointer(ppImpl)) // prevent GC of this too
+	// Fill vtable with callback pointers
+	vtableSlice := (*[7]uintptr)(unsafe.Pointer(vtable))
+	vtableSlice[0] = windows.NewCallback(dtQueryInterface)
+	vtableSlice[1] = windows.NewCallback(dtAddRef)
+	vtableSlice[2] = windows.NewCallback(dtRelease)
+	vtableSlice[3] = windows.NewCallback(dtDragEnter)
+	vtableSlice[4] = windows.NewCallback(dtDragOver)
+	vtableSlice[5] = windows.NewCallback(dtDragLeave)
+	vtableSlice[6] = windows.NewCallback(dtDrop)
 
-	debug.Log(debug.APP, "[Windows DnD] Created: pImpl=%p ppImpl=%p", pImpl, ppImpl)
+	debug.Log(debug.APP, "[Windows DnD] vtable=%x callbacks: QI=%x AddRef=%x Release=%x DragEnter=%x DragOver=%x DragLeave=%x Drop=%x",
+		vtable, vtableSlice[0], vtableSlice[1], vtableSlice[2], vtableSlice[3], vtableSlice[4], vtableSlice[5], vtableSlice[6])
 
-	// Register with Windows - pass ppImpl (pointer to pointer)
+	// Allocate COM object (just a pointer to vtable)
+	vtablePtr := globalAlloc(8)
+	if vtablePtr == 0 {
+		debug.Log(debug.APP, "[Windows DnD] Failed to allocate vtablePtr")
+		globalFree(vtable)
+		return
+	}
+
+	// Store pointer to vtable
+	*(*uintptr)(unsafe.Pointer(vtablePtr)) = vtable
+
+	// Create Go-side impl struct
+	impl := &dropTargetImpl{
+		vtablePtr: vtablePtr,
+		vtable:    vtable,
+		refCount:  1,
+		hwnd:      windows.HWND(hwnd),
+	}
+	globalDropTarget = impl // Prevent GC
+
+	// Register in map
+	comObjectsMu.Lock()
+	comObjects[vtablePtr] = impl
+	comObjectsMu.Unlock()
+
+	debug.Log(debug.APP, "[Windows DnD] Created COM object: vtablePtr=%x vtable=%x", vtablePtr, vtable)
+
+	// Register with Windows
 	debug.Log(debug.APP, "[Windows DnD] Calling RegisterDragDrop...")
-	hr, _, err = procRegisterDragDrop.Call(
-		hwnd,
-		uintptr(unsafe.Pointer(ppImpl)),
-	)
+	hr, _, err = procRegisterDragDrop.Call(hwnd, vtablePtr)
 	debug.Log(debug.APP, "[Windows DnD] RegisterDragDrop returned: hr=0x%x, err=%v", hr, err)
 	if hr != S_OK {
 		debug.Log(debug.APP, "[Windows DnD] RegisterDragDrop FAILED: 0x%x", hr)
-		ptrCacheDelete(unsafe.Pointer(pImpl))
-		ptrCacheDelete(unsafe.Pointer(ppImpl))
+		comObjectsMu.Lock()
+		delete(comObjects, vtablePtr)
+		comObjectsMu.Unlock()
+		globalFree(vtable)
+		globalFree(vtablePtr)
+		globalDropTarget = nil
 		return
 	}
 
@@ -380,7 +430,10 @@ func SetupExternalDrop(hwnd uintptr) {
 
 // screenToClient converts screen coordinates to client coordinates
 func screenToClient(hwnd windows.HWND, screenX, screenY int32) (int, int) {
-	pt := POINT{screenX, screenY}
+	type point struct {
+		X, Y int32
+	}
+	pt := point{screenX, screenY}
 	procScreenToClient.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&pt)))
 	return int(pt.X), int(pt.Y)
 }
