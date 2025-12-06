@@ -134,3 +134,8 @@ func razor_onExternalDrop(pathCStr *C.char) {
 		dropMu.Unlock()
 	}
 }
+
+// CleanupExternalDrop cleans up external drop resources (no-op on macOS)
+func CleanupExternalDrop() {
+	// macOS doesn't need explicit cleanup - the NSView handles it
+}

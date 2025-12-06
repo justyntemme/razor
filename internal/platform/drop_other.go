@@ -28,3 +28,6 @@ func GetCurrentDropTarget() string { return "" }
 
 // SetupExternalDrop configures external file drop handling (no-op on this platform)
 func SetupExternalDrop(viewPtr uintptr) {}
+
+// CleanupExternalDrop cleans up external drop resources (no-op on this platform)
+func CleanupExternalDrop() {}

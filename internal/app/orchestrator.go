@@ -326,6 +326,7 @@ func (o *Orchestrator) Run(startPath string) error {
 
 		switch e := e.(type) {
 		case app.DestroyEvent:
+			platform.CleanupExternalDrop()
 			return e.Err
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, e)
