@@ -1863,9 +1863,32 @@ Gio has a PR (#111) adding external drag-and-drop for macOS, but Windows support
 
 Based on this research, here are the recommended approaches in order of preference:
 
-### 1. Test windigo's IDropTarget (Low Risk)
+### 1. Test windigo's IDropTarget (Low Risk) - IMPLEMENTED
 
 **Rationale**: windigo claims to work without CGO and has a complete IDropTarget implementation. If it works with Gio windows, this would be the simplest solution.
+
+**Status**: IMPLEMENTED (December 2024)
+
+**Implementation Details**:
+- Uses `win.NewIDropTargetImpl()` from windigo to create IDropTarget
+- Registers with Gio window HWND via `HWND.RegisterDragDrop()`
+- Extracts file paths using `CF_HDROP` format from `IDataObject`
+- Properly initializes OLE with `win.OleInitialize()` (not CoInitialize)
+- Cleanup via `RevokeDragDrop()` and `OleUninitialize()` on window close
+
+**Architecture Limitation**:
+- **windigo does NOT support Windows ARM64** - only AMD64
+- Build tags used: `//go:build windows && amd64` for full implementation
+- ARM64 uses stub file `drop_windows_arm64.go` (no-op)
+
+**Files**:
+- `internal/platform/drop_windows.go` - Full IDropTarget implementation (AMD64 only)
+- `internal/platform/drop_windows_arm64.go` - Stub for ARM64
+
+**If reverting or reimplementing**:
+1. Remove windigo dependency from go.mod
+2. Either implement COM callbacks manually or use CGO approach
+3. For ARM64 support, would need a different library or manual syscall implementation
 
 **Steps**:
 1. Create a minimal test app that uses windigo's IDropTarget with a Gio window
